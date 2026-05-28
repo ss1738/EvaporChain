@@ -169,10 +169,7 @@ fn non_decrement_assigns_var(t: &Term, var: &str) -> bool {
             then_body,
             else_body,
             ..
-        } => {
-            non_decrement_assigns_var(then_body, var)
-                || non_decrement_assigns_var(else_body, var)
-        }
+        } => non_decrement_assigns_var(then_body, var) || non_decrement_assigns_var(else_body, var),
         Term::BoundedFor { body, .. } | Term::BoundedWhile { body, .. } => {
             non_decrement_assigns_var(body, var)
         }
@@ -736,7 +733,7 @@ mod tests {
             cond: bin(BinOp::Gt, var("inner_r"), lit(0)),
             ranking_var: "inner_r".into(),
             body: Box::new(seq(vec![
-                assign("r", lit(100)),   // resets OUTER ranking var
+                assign("r", lit(100)), // resets OUTER ranking var
                 dec("inner_r", 1),
             ])),
         };

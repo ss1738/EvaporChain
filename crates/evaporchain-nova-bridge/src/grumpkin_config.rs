@@ -48,9 +48,8 @@ impl SWCurveConfig for GrumpkinConfig {
     const COEFF_A: Bn254Fr = MontFp!("0");
     /// B = −17 mod p, p = BN254 Fr modulus
     /// (21888242871839275222246405745257275088548364400416034343698204186575808495617).
-    const COEFF_B: Bn254Fr = MontFp!(
-        "21888242871839275222246405745257275088548364400416034343698204186575808495600"
-    );
+    const COEFF_B: Bn254Fr =
+        MontFp!("21888242871839275222246405745257275088548364400416034343698204186575808495600");
     /// halo2curves canonical generator (x = 1).
     const GENERATOR: Affine<Self> = Affine::new_unchecked(
         MontFp!("1"),
@@ -67,7 +66,10 @@ mod tests {
     #[test]
     fn generator_is_on_curve() {
         let g = GrumpkinConfig::GENERATOR;
-        assert!(!ark_ec::AffineRepr::is_zero(&g), "generator must not be the identity");
+        assert!(
+            !ark_ec::AffineRepr::is_zero(&g),
+            "generator must not be the identity"
+        );
         let rhs = g.x * g.x * g.x + GrumpkinConfig::COEFF_B;
         assert_eq!(g.y * g.y, rhs, "y^2 must equal x^3 - 17");
         assert!(g.is_on_curve(), "ark is_on_curve must agree");

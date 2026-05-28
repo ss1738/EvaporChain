@@ -546,14 +546,18 @@ mod tests {
     #[test]
     fn t1_20_custom_bytecode_op_add() {
         // [E=10, t=20] → ADD → 30
-        let curve = DecayCurve::Custom { bytecode: vec![0x02] };
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x02],
+        };
         assert_eq!(compute_energy(&curve, 10, 20, None), 30);
     }
 
     #[test]
     fn t1_20_custom_bytecode_op_sub_saturates() {
         // [E=20, t=30] → SUB → saturating_sub → 0 (not underflow)
-        let curve = DecayCurve::Custom { bytecode: vec![0x03] };
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x03],
+        };
         assert_eq!(compute_energy(&curve, 20, 30, None), 0);
         // Normal subtraction works too.
         assert_eq!(compute_energy(&curve, 30, 10, None), 20);
@@ -562,17 +566,23 @@ mod tests {
     #[test]
     fn t1_20_custom_bytecode_op_mul_saturates() {
         // [E=100, t=10] → MUL → 1000
-        let curve = DecayCurve::Custom { bytecode: vec![0x04] };
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x04],
+        };
         assert_eq!(compute_energy(&curve, 100, 10, None), 1_000);
     }
 
     #[test]
     fn t1_20_custom_bytecode_op_shr() {
         // [E=1024, t=2] → SHR → 1024 >> 2 = 256
-        let curve = DecayCurve::Custom { bytecode: vec![0x06] };
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x06],
+        };
         assert_eq!(compute_energy(&curve, 1024, 2, None), 256);
         // Shift ≥ 64 → 0.
-        let curve = DecayCurve::Custom { bytecode: vec![0x06] };
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x06],
+        };
         assert_eq!(compute_energy(&curve, 1024, 64, None), 0);
     }
 

@@ -68,7 +68,9 @@ mod press_claim_tests {
         AntichainError,
     };
 
-    fn id(b: u8) -> BlockId { [b; 32] }
+    fn id(b: u8) -> BlockId {
+        [b; 32]
+    }
 
     /// Diamond DAG: genesis → {1, 2} → 3.  Blocks 1 and 2 are concurrent.
     fn diamond() -> LightCone {
@@ -76,11 +78,14 @@ mod press_claim_tests {
         lc.insert(Block::new(id(0), vec![], 1_000, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2))
+            .unwrap();
         lc
     }
 
-    fn cl() -> ChainLambda { ChainLambda::new(Lambda::from_epochs(100)) }
+    fn cl() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(100))
+    }
 
     // ── 1. Antichain invariant ────────────────────────────────────────
 
@@ -90,9 +95,8 @@ mod press_claim_tests {
         // Concurrent: id(1) ∥ id(2) — neither precedes the other.
         Antichain::from_set([id(1), id(2)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap();
         // Comparable: id(0) < id(1).
-        let err = Antichain::from_set(
-            [id(0), id(1)].into_iter().collect::<BTreeSet<_>>(), &lc,
-        ).unwrap_err();
+        let err = Antichain::from_set([id(0), id(1)].into_iter().collect::<BTreeSet<_>>(), &lc)
+            .unwrap_err();
         assert!(matches!(err, AntichainError::Comparable { .. }));
     }
 
@@ -103,8 +107,10 @@ mod press_claim_tests {
         let lc = diamond();
         let seed = Antichain::from_set([id(1)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap();
         let maximal = extend_to_maximal(&seed, &lc, lc.ids()).unwrap();
-        assert!(is_maximal_antichain(&maximal, &lc),
-            "extended antichain must be maximal — no concurrent candidate was skipped");
+        assert!(
+            is_maximal_antichain(&maximal, &lc),
+            "extended antichain must be maximal — no concurrent candidate was skipped"
+        );
     }
 
     // ── 3. Energy-threshold gate ──────────────────────────────────────
@@ -112,11 +118,16 @@ mod press_claim_tests {
     #[test]
     fn antichain_clears_threshold_at_sum_energy() {
         let lc = diamond();
-        let a = Antichain::from_set([id(1), id(2)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap();
+        let a =
+            Antichain::from_set([id(1), id(2)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap();
         // Total at epoch 1 (issued at epoch 1, elapsed=0): 900 + 900 = 1800.
-        assert!(total_energy_meets_threshold(&a, &lc, cl(), 1, 1800),
-            "antichain must clear a threshold equal to its exact total energy");
-        assert!(!total_energy_meets_threshold(&a, &lc, cl(), 1, 1801),
-            "antichain must not clear a threshold one above its total energy");
+        assert!(
+            total_energy_meets_threshold(&a, &lc, cl(), 1, 1800),
+            "antichain must clear a threshold equal to its exact total energy"
+        );
+        assert!(
+            !total_energy_meets_threshold(&a, &lc, cl(), 1, 1801),
+            "antichain must not clear a threshold one above its total energy"
+        );
     }
 }

@@ -38,11 +38,21 @@ use evaporchain_singh_lineage::{
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-fn lid(b: u8) -> LineageId { [b; 32] }
-fn alice() -> [u8; 32] { [0xAA; 32] }
-fn carol() -> [u8; 32] { [0xCC; 32] }
-fn dave()  -> [u8; 32] { [0xDD; 32] }
-fn eve()   -> [u8; 32] { [0xEE; 32] }
+fn lid(b: u8) -> LineageId {
+    [b; 32]
+}
+fn alice() -> [u8; 32] {
+    [0xAA; 32]
+}
+fn carol() -> [u8; 32] {
+    [0xCC; 32]
+}
+fn dave() -> [u8; 32] {
+    [0xDD; 32]
+}
+fn eve() -> [u8; 32] {
+    [0xEE; 32]
+}
 
 fn carol_50pct() -> Successor {
     Successor::new(carol(), 5_000, "carol", alice()).unwrap()
@@ -65,7 +75,7 @@ fn two_child_estate() -> Lineage {
 fn fixture_living_issuer_has_zero_authority() {
     let l = two_child_estate();
     // Before first dormancy tier (epoch < 90): zero authority.
-    assert_eq!(l.authority_at(0,  &carol()), 0);
+    assert_eq!(l.authority_at(0, &carol()), 0);
     assert_eq!(l.authority_at(50, &carol()), 0);
     assert_eq!(l.authority_at(89, &carol()), 0);
     assert_eq!(l.total_authority_at(50), 0);
@@ -76,16 +86,20 @@ fn fixture_tier1_at_90_epochs_grants_25pct_share() {
     // dormancy=90: share=2_500bp. Each child: 2_500 × 5_000/10_000 = 1_250.
     let l = two_child_estate();
     assert_eq!(l.authority_at(90, &carol()), 1_250);
-    assert_eq!(l.authority_at(90, &dave()),  1_250);
-    assert_eq!(l.total_authority_at(90),     2_500, "total = share × 1.00 (two 50% heirs)");
+    assert_eq!(l.authority_at(90, &dave()), 1_250);
+    assert_eq!(
+        l.total_authority_at(90),
+        2_500,
+        "total = share × 1.00 (two 50% heirs)"
+    );
 }
 
 #[test]
 fn fixture_tier2_at_180_epochs_grants_50pct_share() {
     let l = two_child_estate();
     assert_eq!(l.authority_at(180, &carol()), 2_500);
-    assert_eq!(l.authority_at(180, &dave()),  2_500);
-    assert_eq!(l.total_authority_at(180),     5_000);
+    assert_eq!(l.authority_at(180, &dave()), 2_500);
+    assert_eq!(l.total_authority_at(180), 5_000);
 }
 
 #[test]
@@ -93,9 +107,12 @@ fn fixture_tier3_at_365_epochs_grants_full_authority() {
     // dormancy=365: share=10_000bp (full). Each child: 5_000bp. Total = 10_000.
     let l = two_child_estate();
     assert_eq!(l.authority_at(365, &carol()), 5_000);
-    assert_eq!(l.authority_at(365, &dave()),  5_000);
+    assert_eq!(l.authority_at(365, &dave()), 5_000);
     let total = l.total_authority_at(365);
-    assert_eq!(total, 10_000, "total at full dormancy must == FULL_AUTHORITY_BP");
+    assert_eq!(
+        total, 10_000,
+        "total at full dormancy must == FULL_AUTHORITY_BP"
+    );
     // Heirs sum to full — no double-spend.
     assert_eq!(
         l.authority_at(365, &carol()) + l.authority_at(365, &dave()),
@@ -126,7 +143,10 @@ fn fixture_graduated_accrual_across_all_tiers() {
     let mut prev = 0u32;
     for &e in &epochs {
         let auth = l.authority_at(e, &carol());
-        assert!(auth >= prev, "authority not monotone at epoch {e}: {auth} < {prev}");
+        assert!(
+            auth >= prev,
+            "authority not monotone at epoch {e}: {auth} < {prev}"
+        );
         prev = auth;
     }
 }
@@ -134,12 +154,12 @@ fn fixture_graduated_accrual_across_all_tiers() {
 #[test]
 fn fixture_dormancy_epochs_measures_silence() {
     let mut l = Lineage::register(lid(2), alice(), Ladder::doctrine_default(1).unwrap(), 0);
-    assert_eq!(l.dormancy_epochs(0),   0);
+    assert_eq!(l.dormancy_epochs(0), 0);
     assert_eq!(l.dormancy_epochs(100), 100);
     l.touch(alice(), 50).unwrap();
-    assert_eq!(l.dormancy_epochs(50),  0);
-    assert_eq!(l.dormancy_epochs(90),  40);
-    assert_eq!(l.dormancy_epochs(20),  0); // saturating: clock-skew defensive
+    assert_eq!(l.dormancy_epochs(50), 0);
+    assert_eq!(l.dormancy_epochs(90), 40);
+    assert_eq!(l.dormancy_epochs(20), 0); // saturating: clock-skew defensive
 }
 
 #[test]
@@ -148,7 +168,11 @@ fn fixture_remove_successor_reduces_total_authority() {
     l.remove_successor(alice(), carol()).unwrap();
     // Only Dave remains at 50% weight. Total at full dormancy = 5_000.
     assert_eq!(l.total_authority_at(365), 5_000);
-    assert_eq!(l.authority_at(365, &carol()), 0, "removed successor has zero authority");
+    assert_eq!(
+        l.authority_at(365, &carol()),
+        0,
+        "removed successor has zero authority"
+    );
 }
 
 // ── Doctrine tests ────────────────────────────────────────────────────────
@@ -167,7 +191,11 @@ fn doctrine_total_authority_never_exceeds_full() {
 #[test]
 fn doctrine_unknown_successor_returns_zero() {
     let l = two_child_estate();
-    assert_eq!(l.authority_at(365, &eve()), 0, "unknown address → zero authority");
+    assert_eq!(
+        l.authority_at(365, &eve()),
+        0,
+        "unknown address → zero authority"
+    );
     assert_eq!(l.authority_at(365, &[0xFF; 32]), 0);
 }
 
@@ -177,9 +205,9 @@ fn doctrine_unknown_successor_returns_zero() {
 fn adversarial_over_weighted_successors_rejected() {
     let mut l = Lineage::register(lid(3), alice(), Ladder::doctrine_default(1).unwrap(), 0);
     l.add_successor(alice(), carol_50pct()).unwrap(); // 5_000bp
-    // Dave would push total to 10_000bp (just fine).
+                                                      // Dave would push total to 10_000bp (just fine).
     l.add_successor(alice(), dave_50pct()).unwrap(); // total=10_000bp
-    // Eve would push over FULL_AUTHORITY_BP.
+                                                     // Eve would push over FULL_AUTHORITY_BP.
     let eve_tiny = Successor::new(eve(), 1, "eve", alice()).unwrap();
     let err = l.add_successor(alice(), eve_tiny).unwrap_err();
     assert!(matches!(err, LineageError::OverWeighted { .. }));
@@ -221,7 +249,13 @@ fn adversarial_touch_backwards_in_time_rejected() {
     let mut l = two_child_estate();
     l.touch(alice(), 100).unwrap();
     let err = l.touch(alice(), 50).unwrap_err();
-    assert!(matches!(err, LineageError::TouchBackwardsInTime { now: 50, last_seen: 100 }));
+    assert!(matches!(
+        err,
+        LineageError::TouchBackwardsInTime {
+            now: 50,
+            last_seen: 100
+        }
+    ));
 }
 
 #[test]
@@ -232,18 +266,32 @@ fn adversarial_empty_ladder_rejected() {
 #[test]
 fn adversarial_non_monotone_ladder_threshold_rejected() {
     let err = Ladder::new(vec![
-        DormancyTier { epochs_dormant: 100, authority_share_bp: 2_500 },
-        DormancyTier { epochs_dormant: 50,  authority_share_bp: 5_000 },
-    ]).unwrap_err();
+        DormancyTier {
+            epochs_dormant: 100,
+            authority_share_bp: 2_500,
+        },
+        DormancyTier {
+            epochs_dormant: 50,
+            authority_share_bp: 5_000,
+        },
+    ])
+    .unwrap_err();
     assert!(matches!(err, LadderError::NonMonotoneThreshold { .. }));
 }
 
 #[test]
 fn adversarial_decreasing_authority_in_ladder_rejected() {
     let err = Ladder::new(vec![
-        DormancyTier { epochs_dormant: 100, authority_share_bp: 5_000 },
-        DormancyTier { epochs_dormant: 200, authority_share_bp: 2_500 },
-    ]).unwrap_err();
+        DormancyTier {
+            epochs_dormant: 100,
+            authority_share_bp: 5_000,
+        },
+        DormancyTier {
+            epochs_dormant: 200,
+            authority_share_bp: 2_500,
+        },
+    ])
+    .unwrap_err();
     assert!(matches!(err, LadderError::AuthorityDecreased { .. }));
 }
 

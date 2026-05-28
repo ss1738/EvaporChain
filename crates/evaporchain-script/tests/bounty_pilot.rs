@@ -39,10 +39,8 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("Bounty failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("Bounty failed to compile: {e:?}"))
+    let ast = parser::parse(SOURCE).unwrap_or_else(|e| panic!("Bounty failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("Bounty failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -55,12 +53,7 @@ fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
     state
 }
 
-fn post(
-    bc: &EvaporBytecode,
-    poster: [u8; 32],
-    task: &str,
-    reward: u64,
-) -> HashMap<String, Value> {
+fn post(bc: &EvaporBytecode, poster: [u8; 32], task: &str, reward: u64) -> HashMap<String, Value> {
     let r = EvaporVM::execute(
         bc,
         "set_bounty",

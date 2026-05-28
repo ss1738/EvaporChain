@@ -34,9 +34,10 @@ fn keygen_deterministic(seed: u64) -> (Scalar, G1Affine) {
 }
 
 fn sign(sk: Scalar, msg: &[u8]) -> G2Affine {
-    let h: G2Projective = <G2Projective as HashToCurve<
-        ExpandMsgXmd<sha2_old_for_bls::Sha256>,
-    >>::hash_to_curve(msg, BLS_DST);
+    let h: G2Projective =
+        <G2Projective as HashToCurve<ExpandMsgXmd<sha2_old_for_bls::Sha256>>>::hash_to_curve(
+            msg, BLS_DST,
+        );
     (h * sk).into()
 }
 
@@ -116,9 +117,7 @@ fn generate_evaporation_dispatch_fixture() {
         target_evaporated_at_height,
         target_final_energy,
     );
-    let mut leaves: Vec<[u8; 32]> = (0..8u8)
-        .map(|i| keccak(&[i; 32]))
-        .collect();
+    let mut leaves: Vec<[u8; 32]> = (0..8u8).map(|i| keccak(&[i; 32])).collect();
     let target_index: usize = 5;
     leaves[target_index] = target_leaf;
 

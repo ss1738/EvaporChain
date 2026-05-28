@@ -65,7 +65,9 @@ pub(crate) fn decode_grumpkin_point(hex: &str) -> Result<GAffine, ExtractError> 
 
 /// `pp_json["ck_secondary"]` → (`ck` bases, blinding `h`).
 pub fn extract_secondary_ck(pp_json: &Value) -> Result<(Vec<GAffine>, GAffine), ExtractError> {
-    let ck_sec = pp_json.get("ck_secondary").ok_or(ExtractError::MissingPath)?;
+    let ck_sec = pp_json
+        .get("ck_secondary")
+        .ok_or(ExtractError::MissingPath)?;
     let ck_arr = ck_sec
         .get("ck")
         .and_then(|c| c.as_array())

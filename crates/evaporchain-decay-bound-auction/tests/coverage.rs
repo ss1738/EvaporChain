@@ -72,10 +72,20 @@ fn unrevealed_bidder_does_not_win() {
     let price_revealed = 2_000u64;
     let price_silent = 9_000u64;
 
-    let c1 =
-        DecayBoundAuction::compute_commitment(&a.chain_id, &a.auction_id, &revealer, price_revealed, &nonce);
-    let c2 =
-        DecayBoundAuction::compute_commitment(&a.chain_id, &a.auction_id, &silent, price_silent, &nonce);
+    let c1 = DecayBoundAuction::compute_commitment(
+        &a.chain_id,
+        &a.auction_id,
+        &revealer,
+        price_revealed,
+        &nonce,
+    );
+    let c2 = DecayBoundAuction::compute_commitment(
+        &a.chain_id,
+        &a.auction_id,
+        &silent,
+        price_silent,
+        &nonce,
+    );
     a.submit_commitment(revealer, c1).unwrap();
     a.submit_commitment(silent, c2).unwrap();
     a.close_commits(100).unwrap();
@@ -95,7 +105,9 @@ fn unrevealed_bidder_does_not_win() {
 fn submit_after_commit_closed_rejected() {
     let mut a = make_auction();
     a.close_commits(100).unwrap();
-    let err = a.submit_commitment(addr(1), BidCommitment([0u8; 32])).unwrap_err();
+    let err = a
+        .submit_commitment(addr(1), BidCommitment([0u8; 32]))
+        .unwrap_err();
     assert_eq!(err, AuctionError::NotOpen(AuctionPhase::CommitClosed));
 }
 
@@ -119,7 +131,10 @@ fn settle_before_reveal_closed_rejected() {
     let mut a = make_auction();
     a.close_commits(100).unwrap();
     let err = a.settle(150).unwrap_err();
-    assert_eq!(err, AuctionError::NotRevealClosed(AuctionPhase::CommitClosed));
+    assert_eq!(
+        err,
+        AuctionError::NotRevealClosed(AuctionPhase::CommitClosed)
+    );
 }
 
 #[test]
@@ -151,7 +166,11 @@ fn reveal_with_wrong_nonce_rejected() {
     let wrong_nonce = [0xBB; 32];
     let price = 1_500u64;
     let c = DecayBoundAuction::compute_commitment(
-        &a.chain_id, &a.auction_id, &bidder, price, &real_nonce,
+        &a.chain_id,
+        &a.auction_id,
+        &bidder,
+        price,
+        &real_nonce,
     );
     a.submit_commitment(bidder, c).unwrap();
     a.close_commits(100).unwrap();

@@ -31,11 +31,7 @@
 //! increments work from a real number.
 
 use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr, G1Affine, G1Projective};
-use ark_r1cs_std::{
-    convert::ToBitsGadget,
-    fields::emulated_fp::EmulatedFpVar,
-    groups::CurveVar,
-};
+use ark_r1cs_std::{convert::ToBitsGadget, fields::emulated_fp::EmulatedFpVar, groups::CurveVar};
 use ark_relations::gr1cs::SynthesisError;
 
 /// In-circuit BN254-G1 variable, NATIVE over a Bn254Fq circuit
@@ -81,16 +77,10 @@ mod tests {
         let expected = (Bn254G1Proj::from(p_aff) * s).into_affine();
 
         let cs = ConstraintSystem::<Bn254Fq>::new_ref();
-        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_witness(
-            cs.clone(),
-            || Ok(s),
-        )
-        .unwrap();
+        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_witness(cs.clone(), || Ok(s)).unwrap();
         let q = cyclefold_aux_scalar_mul(p_aff, &s_var).expect("synth");
-        let expected_var = Bn254G1Var::new_witness(cs.clone(), || {
-            Ok(Bn254G1Proj::from(expected))
-        })
-        .unwrap();
+        let expected_var =
+            Bn254G1Var::new_witness(cs.clone(), || Ok(Bn254G1Proj::from(expected))).unwrap();
         q.enforce_equal(&expected_var).unwrap();
 
         assert!(
@@ -115,17 +105,11 @@ mod tests {
         let g = Bn254G1Proj::from(G1Affine::generator());
 
         let cs = ConstraintSystem::<Bn254Fq>::new_ref();
-        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_witness(
-            cs.clone(),
-            || Ok(s),
-        )
-        .unwrap();
+        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_witness(cs.clone(), || Ok(s)).unwrap();
         let q = cyclefold_aux_scalar_mul(p_aff, &s_var).expect("synth");
         // Tamper: claimed = expected + G (off by a generator).
-        let bad = Bn254G1Var::new_witness(cs.clone(), || {
-            Ok(Bn254G1Proj::from(expected) + g)
-        })
-        .unwrap();
+        let bad =
+            Bn254G1Var::new_witness(cs.clone(), || Ok(Bn254G1Proj::from(expected) + g)).unwrap();
         q.enforce_equal(&bad).unwrap();
 
         assert!(
@@ -149,16 +133,10 @@ mod tests {
         let expected = (Bn254G1Proj::from(p_aff) * s).into_affine();
 
         let cs = ConstraintSystem::<Bn254Fq>::new_ref();
-        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_witness(
-            cs.clone(),
-            || Ok(s),
-        )
-        .unwrap();
+        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_witness(cs.clone(), || Ok(s)).unwrap();
         let q = cyclefold_aux_scalar_mul(p_aff, &s_var).expect("synth");
-        let expected_var = Bn254G1Var::new_witness(cs.clone(), || {
-            Ok(Bn254G1Proj::from(expected))
-        })
-        .unwrap();
+        let expected_var =
+            Bn254G1Var::new_witness(cs.clone(), || Ok(Bn254G1Proj::from(expected))).unwrap();
         q.enforce_equal(&expected_var).unwrap();
 
         let n_cons = cs.num_constraints();

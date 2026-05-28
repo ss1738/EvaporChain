@@ -174,7 +174,10 @@ mod tests {
         // [3,4,0,0] has norm=5; after normalise → [0.6, 0.8, 0, 0]
         let mut t = Tensor::from_vec(vec![3.0, 4.0, 0.0, 0.0]);
         t.normalise();
-        assert!((t.norm() - 1.0).abs() < 1e-10, "must be unit after normalise");
+        assert!(
+            (t.norm() - 1.0).abs() < 1e-10,
+            "must be unit after normalise"
+        );
         assert!((t.data[0] - 0.6).abs() < 1e-10);
         assert!((t.data[1] - 0.8).abs() < 1e-10);
     }

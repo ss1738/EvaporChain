@@ -376,7 +376,7 @@ mod tests {
                 total_energy: 0,
                 avg_half_life: 0,
             }, // dead → AllEvaporated
-            make_health(2, 3, 50), // cold + live → BelowEnergyThreshold
+            make_health(2, 3, 50),       // cold + live → BelowEnergyThreshold
         ];
         let candidates = find_candidates(&healths, 100);
         assert_eq!(candidates.len(), 2);
@@ -507,18 +507,34 @@ mod tests {
         // Vary source_shard.
         let mut diff = base.clone();
         diff.source_shard = ShardId(8);
-        assert_ne!(base_hash, diff.compute_hash(), "source_shard must be in digest");
+        assert_ne!(
+            base_hash,
+            diff.compute_hash(),
+            "source_shard must be in digest"
+        );
         // Vary target_shard.
         let mut diff = base.clone();
         diff.target_shard = ShardId(99);
-        assert_ne!(base_hash, diff.compute_hash(), "target_shard must be in digest");
+        assert_ne!(
+            base_hash,
+            diff.compute_hash(),
+            "target_shard must be in digest"
+        );
         // Vary objects_reassigned.
         let mut diff = base.clone();
         diff.objects_reassigned = 8;
-        assert_ne!(base_hash, diff.compute_hash(), "objects_reassigned must be in digest");
+        assert_ne!(
+            base_hash,
+            diff.compute_hash(),
+            "objects_reassigned must be in digest"
+        );
         // Vary energy_at_compaction.
         let mut diff = base;
         diff.energy_at_compaction = 101;
-        assert_ne!(base_hash, diff.compute_hash(), "energy_at_compaction must be in digest");
+        assert_ne!(
+            base_hash,
+            diff.compute_hash(),
+            "energy_at_compaction must be in digest"
+        );
     }
 }

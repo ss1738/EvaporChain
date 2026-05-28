@@ -75,8 +75,7 @@ pub struct NeptuneDumpShape {
 pub fn parse_dump<P: AsRef<Path>>(path: P) -> Result<NeptuneDumpShape, String> {
     let bytes =
         fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
-    let v: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| format!("parse JSON: {e}"))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
 
     let rf = v
         .get("rf")
@@ -180,8 +179,7 @@ pub fn decode_hex_scalar(hex: &str) -> Result<Fr, String> {
 pub fn extract_compressed_round_constants<P: AsRef<Path>>(path: P) -> Result<Vec<Fr>, String> {
     let bytes =
         fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
-    let v: Value =
-        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
 
     let crc = v
         .get("crc")
@@ -190,9 +188,10 @@ pub fn extract_compressed_round_constants<P: AsRef<Path>>(path: P) -> Result<Vec
 
     let mut out: Vec<Fr> = Vec::with_capacity(crc.len());
     for (i, cell) in crc.iter().enumerate() {
-        let hex = cell.as_str().ok_or_else(|| format!("crc[{i}] not a string"))?;
-        let fr =
-            decode_hex_scalar(hex).map_err(|e| format!("decode crc[{i}]: {e}"))?;
+        let hex = cell
+            .as_str()
+            .ok_or_else(|| format!("crc[{i}] not a string"))?;
+        let fr = decode_hex_scalar(hex).map_err(|e| format!("decode crc[{i}]: {e}"))?;
         out.push(fr);
     }
     Ok(out)
@@ -204,7 +203,9 @@ pub fn extract_compressed_round_constants<P: AsRef<Path>>(path: P) -> Result<Vec
 /// SBOX-trick-optimized layout (the full-round ARK is plain;
 /// partial-round ARK is compressed to one scalar per round).
 pub fn expected_crc_len(full_rounds: usize, partial_rounds: usize, width: usize) -> usize {
-    full_rounds.saturating_mul(width).saturating_add(partial_rounds)
+    full_rounds
+        .saturating_mul(width)
+        .saturating_add(partial_rounds)
 }
 
 /// Parse a neptune dump JSON and extract the PLAIN MDS matrix `m`
@@ -220,8 +221,7 @@ pub fn expected_crc_len(full_rounds: usize, partial_rounds: usize, width: usize)
 pub fn extract_mds_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
     let bytes =
         fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
-    let v: Value =
-        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
 
     let m = v
         .get("mds")
@@ -256,8 +256,7 @@ pub fn extract_mds_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, Strin
 pub fn extract_mds_inverse_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
     let bytes =
         fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
-    let v: Value =
-        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
 
     let m = v
         .get("mds")
@@ -292,8 +291,7 @@ fn extract_mds_sub_matrix<P: AsRef<Path>>(
 ) -> Result<Vec<Vec<Fr>>, String> {
     let bytes =
         fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
-    let v: Value =
-        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
     let m = v
         .get("mds")
         .and_then(|m| m.get(field_name))
@@ -306,12 +304,11 @@ fn extract_mds_sub_matrix<P: AsRef<Path>>(
             .ok_or_else(|| format!("mds.{field_name}[{row_idx}] not an array"))?;
         let mut row_frs: Vec<Fr> = Vec::with_capacity(cells.len());
         for (col_idx, cell) in cells.iter().enumerate() {
-            let hex = cell.as_str().ok_or_else(|| {
-                format!("mds.{field_name}[{row_idx}][{col_idx}] not a string")
-            })?;
-            let fr = decode_hex_scalar(hex).map_err(|e| {
-                format!("decode mds.{field_name}[{row_idx}][{col_idx}]: {e}")
-            })?;
+            let hex = cell
+                .as_str()
+                .ok_or_else(|| format!("mds.{field_name}[{row_idx}][{col_idx}] not a string"))?;
+            let fr = decode_hex_scalar(hex)
+                .map_err(|e| format!("decode mds.{field_name}[{row_idx}][{col_idx}]: {e}"))?;
             row_frs.push(fr);
         }
         out.push(row_frs);
@@ -362,7 +359,9 @@ pub fn extract_pre_sparse_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>
 
     let mut out: Vec<Vec<Fr>> = Vec::with_capacity(psm.len());
     for (i, row) in psm.iter().enumerate() {
-        let row_arr = row.as_array().ok_or_else(|| format!("psm[{i}] is not an array"))?;
+        let row_arr = row
+            .as_array()
+            .ok_or_else(|| format!("psm[{i}] is not an array"))?;
         let mut row_vec: Vec<Fr> = Vec::with_capacity(row_arr.len());
         for (j, cell) in row_arr.iter().enumerate() {
             let hex = cell
@@ -396,9 +395,7 @@ pub struct ParsedSparseMatrix {
 /// Used by [`crate::neptune_permutation_gadget::NeptuneParams::sparse_matrices`]
 /// after converting each `ParsedSparseMatrix` into a
 /// `NeptuneSparseMatrix` (same shape, no field-order conversion needed).
-pub fn extract_sparse_matrices<P: AsRef<Path>>(
-    path: P,
-) -> Result<Vec<ParsedSparseMatrix>, String> {
+pub fn extract_sparse_matrices<P: AsRef<Path>>(path: P) -> Result<Vec<ParsedSparseMatrix>, String> {
     let bytes = fs::read_to_string(path.as_ref())
         .map_err(|e| format!("read {}: {}", path.as_ref().display(), e))?;
     let v: Value = serde_json::from_str(&bytes).map_err(|e| format!("json parse: {e}"))?;
@@ -428,9 +425,7 @@ pub fn extract_sparse_matrices<P: AsRef<Path>>(
             let hex = cell
                 .as_str()
                 .ok_or_else(|| format!("sm[{idx}].w_hat[{i}] is not a hex string"))?;
-            w_hat.push(
-                decode_hex_scalar(hex).map_err(|e| format!("sm[{idx}].w_hat[{i}]: {e}"))?,
-            );
+            w_hat.push(decode_hex_scalar(hex).map_err(|e| format!("sm[{idx}].w_hat[{i}]: {e}"))?);
         }
 
         let mut v_rest: Vec<Fr> = Vec::with_capacity(v_rest_arr.len());
@@ -438,9 +433,7 @@ pub fn extract_sparse_matrices<P: AsRef<Path>>(
             let hex = cell
                 .as_str()
                 .ok_or_else(|| format!("sm[{idx}].v_rest[{i}] is not a hex string"))?;
-            v_rest.push(
-                decode_hex_scalar(hex).map_err(|e| format!("sm[{idx}].v_rest[{i}]: {e}"))?,
-            );
+            v_rest.push(decode_hex_scalar(hex).map_err(|e| format!("sm[{idx}].v_rest[{i}]: {e}"))?);
         }
 
         out.push(ParsedSparseMatrix { w_hat, v_rest });
@@ -656,9 +649,15 @@ mod tests {
         fs::write(&path, json).unwrap();
         let sm = extract_sparse_matrices(&path).expect("extract sm");
         assert_eq!(sm.len(), 2);
-        assert_eq!(sm[0].w_hat, vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+        assert_eq!(
+            sm[0].w_hat,
+            vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]
+        );
         assert_eq!(sm[0].v_rest, vec![Fr::from(4u64), Fr::from(5u64)]);
-        assert_eq!(sm[1].w_hat, vec![Fr::from(6u64), Fr::from(7u64), Fr::from(8u64)]);
+        assert_eq!(
+            sm[1].w_hat,
+            vec![Fr::from(6u64), Fr::from(7u64), Fr::from(8u64)]
+        );
         assert_eq!(sm[1].v_rest, vec![Fr::from(9u64), Fr::from(10u64)]);
         let _ = fs::remove_file(&path);
     }
@@ -676,7 +675,11 @@ mod tests {
         }
 
         let sm = extract_sparse_matrices(path).expect("sm");
-        assert_eq!(sm.len(), 59, "must have 59 sparse matrices (= partial_rounds)");
+        assert_eq!(
+            sm.len(),
+            59,
+            "must have 59 sparse matrices (= partial_rounds)"
+        );
         for (i, m) in sm.iter().enumerate() {
             assert_eq!(m.w_hat.len(), 25, "sm[{i}].w_hat must be width = 25");
             assert_eq!(m.v_rest.len(), 24, "sm[{i}].v_rest must be width-1 = 24");

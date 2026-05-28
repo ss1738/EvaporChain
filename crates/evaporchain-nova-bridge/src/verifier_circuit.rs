@@ -48,8 +48,8 @@ use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::convert::ToBitsGadget;
 use ark_r1cs_std::eq::EqGadget;
-use ark_r1cs_std::GR1CSVar;
 use ark_r1cs_std::fields::fp::FpVar;
+use ark_r1cs_std::GR1CSVar;
 use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use thiserror::Error;
 
@@ -226,8 +226,7 @@ impl NovaVerifierCircuit {
     /// binding constraints are part of the keyed circuit. The
     /// `#[deprecated]` insecure-randomness caveat in `groth16_wrapper`
     /// still applies (S5/MPC ceremony is the separate, unchanged gap).
-    pub fn setup_shape(
-    ) -> Result<Self, crate::l_u_secondary_extract::ExtractError> {
+    pub fn setup_shape() -> Result<Self, crate::l_u_secondary_extract::ExtractError> {
         let pp = crate::recursive_snark_fixture::canonical_public_params()
             .map_err(crate::l_u_secondary_extract::ExtractError::Serialize)?;
         let mut c = Self::dummy();
@@ -309,10 +308,7 @@ impl NovaVerifierCircuit {
 }
 
 impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
-    fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<Bn254Fr>,
-    ) -> Result<(), SynthesisError> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Bn254Fr>) -> Result<(), SynthesisError> {
         // ── Section 1: Structural checks ────────────────────────────
         //
         // Off-circuit precondition gate: cheap shape checks that reject
@@ -424,9 +420,7 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
             let x_primary_vars: Vec<FpVar<Bn254Fr>> = s3
                 .x_primary
                 .iter()
-                .map(|&val| {
-                    FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(val))
-                })
+                .map(|&val| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(val)))
                 .collect::<Result<_, _>>()?;
             enforce_primary_relaxed_r1cs_sat(cs.clone(), s3, &x_primary_vars)?;
         }
@@ -558,13 +552,8 @@ mod tests {
     /// Empty `z0` is rejected with the typed error variant.
     #[test]
     fn validate_structurally_rejects_empty_state() {
-        let circuit = NovaVerifierCircuit::new(
-            1,
-            vec![],
-            vec![],
-            Bn254Fr::from(0u64),
-            Bn254Fr::from(0u64),
-        );
+        let circuit =
+            NovaVerifierCircuit::new(1, vec![], vec![], Bn254Fr::from(0u64), Bn254Fr::from(0u64));
         assert_eq!(
             circuit.validate_structurally(),
             Err(StructuralValidationError::EmptyState),
@@ -619,7 +608,11 @@ mod tests {
     fn generate_constraints_rejects_mismatched_arity_as_unsatisfiable() {
         let circuit = NovaVerifierCircuit::new(
             5,
-            vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)],
+            vec![
+                Bn254Fr::from(1u64),
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(3u64),
+            ],
             vec![Bn254Fr::from(4u64)],
             Bn254Fr::from(0u64),
             Bn254Fr::from(0u64),
@@ -637,13 +630,8 @@ mod tests {
     /// `Unsatisfiable` at the top of `generate_constraints`.
     #[test]
     fn generate_constraints_rejects_empty_state_as_unsatisfiable() {
-        let circuit = NovaVerifierCircuit::new(
-            5,
-            vec![],
-            vec![],
-            Bn254Fr::from(0u64),
-            Bn254Fr::from(0u64),
-        );
+        let circuit =
+            NovaVerifierCircuit::new(5, vec![], vec![], Bn254Fr::from(0u64), Bn254Fr::from(0u64));
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         let result = circuit.generate_constraints(cs.clone());
         assert!(
@@ -714,11 +702,17 @@ mod tests {
     fn structural_validation_error_displays_all_variants() {
         let zero = StructuralValidationError::NumStepsZero.to_string();
         let empty = StructuralValidationError::EmptyState.to_string();
-        let mismatch = StructuralValidationError::MismatchedArity { z0_len: 7, zi_len: 9 }
-            .to_string();
+        let mismatch = StructuralValidationError::MismatchedArity {
+            z0_len: 7,
+            zi_len: 9,
+        }
+        .to_string();
         assert!(zero.contains("num_steps"), "got: {zero}");
         assert!(empty.contains("z0"), "got: {empty}");
-        assert!(mismatch.contains("7") && mismatch.contains("9"), "got: {mismatch}");
+        assert!(
+            mismatch.contains("7") && mismatch.contains("9"),
+            "got: {mismatch}"
+        );
     }
 
     /// `StructuralValidationError` Clone + PartialEq smoke (derived,
@@ -726,11 +720,17 @@ mod tests {
     /// downstream callers may use `assert_eq!` on these errors).
     #[test]
     fn structural_validation_error_clone_and_eq() {
-        let a = StructuralValidationError::MismatchedArity { z0_len: 1, zi_len: 2 };
+        let a = StructuralValidationError::MismatchedArity {
+            z0_len: 1,
+            zi_len: 2,
+        };
         assert_eq!(a.clone(), a);
         assert_ne!(
             a,
-            StructuralValidationError::MismatchedArity { z0_len: 1, zi_len: 3 },
+            StructuralValidationError::MismatchedArity {
+                z0_len: 1,
+                zi_len: 3
+            },
         );
         assert_ne!(a, StructuralValidationError::NumStepsZero);
     }
@@ -741,13 +741,8 @@ mod tests {
     /// the arity-match check.
     #[test]
     fn empty_state_takes_precedence_over_arity_match() {
-        let c = NovaVerifierCircuit::new(
-            1,
-            vec![],
-            vec![],
-            Bn254Fr::from(0u64),
-            Bn254Fr::from(0u64),
-        );
+        let c =
+            NovaVerifierCircuit::new(1, vec![], vec![], Bn254Fr::from(0u64), Bn254Fr::from(0u64));
         assert_eq!(
             c.validate_structurally(),
             Err(StructuralValidationError::EmptyState),

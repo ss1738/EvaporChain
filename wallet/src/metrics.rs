@@ -783,7 +783,8 @@ mod tests {
     #[test]
     fn test_reset_histogram_covers_lines_288_293() {
         let mut r = reg();
-        r.register_histogram("h", "hist", vec![10.0, 100.0], BTreeMap::new()).unwrap();
+        r.register_histogram("h", "hist", vec![10.0, 100.0], BTreeMap::new())
+            .unwrap();
         r.histogram_observe("h", 5.0).unwrap();
         r.reset();
         let h = r.histogram_get("h").unwrap();

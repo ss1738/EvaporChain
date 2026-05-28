@@ -111,7 +111,11 @@ fn sentinel_future_vote_does_not_panic() {
     // last_vote > epoch: saturating_sub clamps elapsed to 0.
     let sys = ChainAutopoiesis::new(AlwaysAcceptVerifier, 0, 10);
     let r = sys.health_report(&empty_book(), &[], Some(200), 100);
-    assert_eq!(r.sentinel, SubsystemHealth::Healthy, "future vote clamps elapsed");
+    assert_eq!(
+        r.sentinel,
+        SubsystemHealth::Healthy,
+        "future vote clamps elapsed"
+    );
 }
 
 #[test]
@@ -200,7 +204,8 @@ fn status_lattice_three_at_risk_is_inviable_even_with_mixed_severity() {
     assert_eq!(r.sentinel, SubsystemHealth::Degraded);
     assert_eq!(r.llsa, SubsystemHealth::Degraded);
     assert_eq!(
-        r.status, AutopoieticStatus::Inviable,
+        r.status,
+        AutopoieticStatus::Inviable,
         "3-of-3 at-risk is Inviable even when each is only Degraded"
     );
 }
@@ -222,7 +227,11 @@ fn health_report_epoch_field_propagates() {
 
 #[test]
 fn subsystem_health_serde_round_trips() {
-    for h in [SubsystemHealth::Healthy, SubsystemHealth::Degraded, SubsystemHealth::Failed] {
+    for h in [
+        SubsystemHealth::Healthy,
+        SubsystemHealth::Degraded,
+        SubsystemHealth::Failed,
+    ] {
         let json = serde_json::to_string(&h).expect("serialize");
         let back: SubsystemHealth = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, h);

@@ -22,12 +22,14 @@ use evaporchain_consensus::{empty_block_data_root, ConsensusError, MockConsensus
 use evaporchain_state::{InMemoryStateDB, StateDB};
 use evaporchain_types::{Account, Transaction, TransferTx};
 
-fn addr(b: u8) -> [u8; 32] { [b; 32] }
+fn addr(b: u8) -> [u8; 32] {
+    [b; 32]
+}
 
 fn transfer(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
     Transaction::Transfer(TransferTx {
         from: addr(from),
-        to:   addr(to),
+        to: addr(to),
         amount,
         nonce,
         signature: None,
@@ -65,8 +67,10 @@ fn empty_block_data_root_binds_height() {
     let parent = [0xAA; 32];
     let r_h1 = empty_block_data_root(1, &parent);
     let r_h2 = empty_block_data_root(2, &parent);
-    assert_ne!(r_h1, r_h2,
-        "different heights must produce different roots (DA anti-replay)");
+    assert_ne!(
+        r_h1, r_h2,
+        "different heights must produce different roots (DA anti-replay)"
+    );
 }
 
 #[test]
@@ -75,8 +79,10 @@ fn empty_block_data_root_binds_parent_hash() {
     let parent_b = [0xBB; 32];
     let r_a = empty_block_data_root(1, &parent_a);
     let r_b = empty_block_data_root(1, &parent_b);
-    assert_ne!(r_a, r_b,
-        "different parent hashes must produce different roots (fork anti-replay)");
+    assert_ne!(
+        r_a, r_b,
+        "different parent hashes must produce different roots (fork anti-replay)"
+    );
 }
 
 #[test]
@@ -108,7 +114,7 @@ fn produce_empty_block_increments_block_number_and_epoch() {
     let mut db = InMemoryStateDB::new();
     let result = mc.produce_block(&mut db).unwrap();
     assert_eq!(result.block.number, 1, "first block must be number 1");
-    assert_eq!(result.block.epoch,  1, "first block must be epoch 1");
+    assert_eq!(result.block.epoch, 1, "first block must be epoch 1");
     assert_eq!(mc.block_number(), 1);
     assert_eq!(mc.epoch(), 1);
 }
@@ -125,8 +131,10 @@ fn produce_empty_block_state_root_is_deterministic() {
     let mut db2 = InMemoryStateDB::new();
     let r2 = mc2.produce_block(&mut db2).unwrap();
 
-    assert_eq!(r1.execution.state_root, r2.execution.state_root,
-        "empty blocks from identical fresh state must have the same state root");
+    assert_eq!(
+        r1.execution.state_root, r2.execution.state_root,
+        "empty blocks from identical fresh state must have the same state root"
+    );
 }
 
 #[test]
@@ -134,7 +142,11 @@ fn empty_block_has_no_transactions() {
     let mut mc = MockConsensus::new(10);
     let mut db = InMemoryStateDB::new();
     let result = mc.produce_block(&mut db).unwrap();
-    assert_eq!(result.block.transactions.len(), 0, "empty mempool → 0 txs in block");
+    assert_eq!(
+        result.block.transactions.len(),
+        0,
+        "empty mempool → 0 txs in block"
+    );
 }
 
 #[test]
@@ -144,7 +156,7 @@ fn sequential_blocks_increment_monotonically() {
     for i in 1u64..=3 {
         let r = mc.produce_block(&mut db).unwrap();
         assert_eq!(r.block.number, i, "block {i} must have number {i}");
-        assert_eq!(r.block.epoch,  i, "block {i} must have epoch {i}");
+        assert_eq!(r.block.epoch, i, "block {i} must have epoch {i}");
     }
     assert_eq!(mc.block_number(), 3);
 }
@@ -158,11 +170,15 @@ fn block_carries_parent_hash_of_predecessor() {
     // Block 1's parent_hash was [0u8;32] (genesis). Block 2's parent_hash
     // must be derived from block 1's content, so it differs from genesis.
     let r2 = mc.produce_block(&mut db).unwrap();
-    assert_ne!(r2.block.parent_hash, [0u8; 32],
-        "block 2 parent_hash must not be the genesis sentinel");
+    assert_ne!(
+        r2.block.parent_hash, [0u8; 32],
+        "block 2 parent_hash must not be the genesis sentinel"
+    );
     // The content commitment changes: block 2's parent_hash must differ from block 1's.
-    assert_ne!(r2.block.parent_hash, r1.block.parent_hash,
-        "consecutive blocks must have distinct parent hashes");
+    assert_ne!(
+        r2.block.parent_hash, r1.block.parent_hash,
+        "consecutive blocks must have distinct parent hashes"
+    );
 }
 
 #[test]
@@ -177,7 +193,10 @@ fn mempool_drains_after_produce_block() {
     // Both txs were drained into the block.
     assert_eq!(r.block.transactions.len(), 2);
     // Mempool is empty after production.
-    assert!(mc.mempool.is_empty(), "mempool must be empty after produce_block");
+    assert!(
+        mc.mempool.is_empty(),
+        "mempool must be empty after produce_block"
+    );
 }
 
 #[test]
@@ -191,8 +210,14 @@ fn block_with_funded_transfer_executes_successfully() {
     let result = mc.produce_block(&mut db).unwrap();
     assert_eq!(result.block.transactions.len(), 1, "one tx in block");
     // Execution succeeded — at least one tx ran.
-    assert_eq!(result.execution.txs_executed, 1, "transfer must be executed");
-    assert_eq!(result.execution.txs_failed,   0, "funded transfer must not fail");
+    assert_eq!(
+        result.execution.txs_executed, 1,
+        "transfer must be executed"
+    );
+    assert_eq!(
+        result.execution.txs_failed, 0,
+        "funded transfer must not fail"
+    );
 }
 
 #[test]
@@ -205,8 +230,10 @@ fn block_with_unfunded_transfer_does_not_abort_production() {
     let result = mc.produce_block(&mut db).unwrap();
     assert_eq!(result.block.transactions.len(), 1);
     // Execution records the failure but does not abort block production.
-    assert_eq!(result.execution.txs_failed, 1,
-        "insufficient-balance transfer must be counted in txs_failed");
+    assert_eq!(
+        result.execution.txs_failed, 1,
+        "insufficient-balance transfer must be counted in txs_failed"
+    );
 }
 
 #[test]
@@ -217,10 +244,17 @@ fn consensus_error_variants_are_representable() {
     let err = ConsensusError::ExecutionFailed("exec".into());
     assert!(!err.to_string().is_empty());
 
-    let err = ConsensusError::NotLeader { validator_id: 1, epoch: 5, leader_id: 2 };
+    let err = ConsensusError::NotLeader {
+        validator_id: 1,
+        epoch: 5,
+        leader_id: 2,
+    };
     assert!(err.to_string().contains("1") || err.to_string().contains("leader"));
 
-    let err = ConsensusError::InvalidProducer { producer_id: 3, expected_id: 4 };
+    let err = ConsensusError::InvalidProducer {
+        producer_id: 3,
+        expected_id: 4,
+    };
     assert!(err.to_string().contains("3") || err.to_string().contains("producer"));
 }
 
@@ -239,8 +273,7 @@ fn nadia_block_production_full_arc() {
         let r = mc.produce_block(&mut db).unwrap();
         let ph = r.block.parent_hash;
         assert!(
-            !seen_parent_hashes.contains(&r.block.parent_hash)
-                || r.block.number == 1,
+            !seen_parent_hashes.contains(&r.block.parent_hash) || r.block.number == 1,
             "parent hash must be unique per block (no DA replay)"
         );
         seen_parent_hashes.push(ph);

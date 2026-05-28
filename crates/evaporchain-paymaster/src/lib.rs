@@ -766,10 +766,7 @@ impl IdempotencyCache {
             .filter(|p| !p.as_os_str().is_empty())
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
-        let tmp = parent.join(format!(
-            ".idempotency_cache.tmp.{}",
-            std::process::id()
-        ));
+        let tmp = parent.join(format!(".idempotency_cache.tmp.{}", std::process::id()));
         use std::io::Write;
         let mut f = match std::fs::File::create(&tmp) {
             Ok(f) => f,
@@ -812,8 +809,7 @@ impl IdempotencyCache {
         // miss path so we record this as a fresh-but-overwriting
         // event. `Entry::Occupied` is the clippy-preferred form
         // (avoids the contains_key + insert double-lookup).
-        if let std::collections::hash_map::Entry::Occupied(mut e) =
-            self.entries.entry(key.clone())
+        if let std::collections::hash_map::Entry::Occupied(mut e) = self.entries.entry(key.clone())
         {
             e.insert((response, Instant::now()));
             self.save();
@@ -858,9 +854,7 @@ pub enum SponsorOutcome {
 impl SponsorOutcome {
     pub fn paymaster_nonce(&self) -> u64 {
         match self {
-            Self::Fresh { paymaster_nonce } | Self::Replay { paymaster_nonce } => {
-                *paymaster_nonce
-            }
+            Self::Fresh { paymaster_nonce } | Self::Replay { paymaster_nonce } => *paymaster_nonce,
         }
     }
 }
@@ -943,8 +937,7 @@ impl Paymaster {
         let address: AccountAddress = evaporchain_types::address_from_pubkey(&pk);
         let nonce_file: PathBuf = nonce_file.into();
         let next = load_nonce(&nonce_file)?;
-        let rate_limiter =
-            RateLimiter::new(config.per_sender_rps, config.per_sender_burst);
+        let rate_limiter = RateLimiter::new(config.per_sender_rps, config.per_sender_burst);
         let audit_log = if let Some(path) = config.audit_log.clone() {
             // Open with append + create. Each write is followed by
             // an explicit fsync to land the line on disk before the
@@ -954,10 +947,7 @@ impl Paymaster {
                 .append(true)
                 .open(&path)
                 .map_err(|e| {
-                    PaymasterError::AuditIo(format!(
-                        "open audit log {}: {e}",
-                        path.display()
-                    ))
+                    PaymasterError::AuditIo(format!("open audit log {}: {e}", path.display()))
                 })?;
             Some(Arc::new(Mutex::new(AuditLogger { file })))
         } else {
@@ -1113,11 +1103,7 @@ impl Paymaster {
         })
     }
 
-    fn try_replay_from_cache(
-        &self,
-        user_op: &mut UserOpTx,
-        key: &str,
-    ) -> Option<SponsorOutcome> {
+    fn try_replay_from_cache(&self, user_op: &mut UserOpTx, key: &str) -> Option<SponsorOutcome> {
         let mut cache = self.idempotency.lock().expect("idempotency mutex");
         let cached = cache.get(key)?.clone();
         drop(cache);
@@ -1201,18 +1187,13 @@ impl Paymaster {
         if let Some(ref allowed) = self.config.allowed_inner_variants {
             if !user_op.call_data.is_empty() {
                 let inner: Transaction = serde_json::from_slice(&user_op.call_data)
-                    .map_err(|e| {
-                        PaymasterError::CallDataDecode(format!("decode: {e}"))
-                    })?;
+                    .map_err(|e| PaymasterError::CallDataDecode(format!("decode: {e}")))?;
                 let variant = InnerVariant::from_transaction(&inner).ok_or_else(|| {
                     // Variant the chain doesn't accept as inner — the
                     // chain would reject this anyway, but surface
                     // earlier with a clearer message.
                     PaymasterError::InnerVariantNotAllowed {
-                        variant: format!(
-                            "{:?}",
-                            std::mem::discriminant(&inner)
-                        ),
+                        variant: format!("{:?}", std::mem::discriminant(&inner)),
                     }
                 })?;
                 if !allowed.contains(&variant) {
@@ -1312,9 +1293,11 @@ impl Paymaster {
             } else {
                 None
             },
-            allowed_inner_variants: self.config.allowed_inner_variants.as_ref().map(|set| {
-                set.iter().map(|v| v.as_str().to_string()).collect()
-            }),
+            allowed_inner_variants: self
+                .config
+                .allowed_inner_variants
+                .as_ref()
+                .map(|set| set.iter().map(|v| v.as_str().to_string()).collect()),
             idempotency_max_keys: self.config.idempotency_max_keys,
             idempotency_ttl_secs: self.config.idempotency_ttl_secs,
         }
@@ -1364,10 +1347,7 @@ impl Paymaster {
             .append(true)
             .open(path)
             .map_err(|e| {
-                PaymasterError::AuditIo(format!(
-                    "reopen audit log {}: {e}",
-                    path.display()
-                ))
+                PaymasterError::AuditIo(format!("reopen audit log {}: {e}", path.display()))
             })?;
         let mut g = logger.lock().expect("audit log mutex");
         // Replace the file handle. The old handle drops here, closing
@@ -1422,9 +1402,7 @@ impl Paymaster {
              Next sponsorship nonce that will be assigned.\n\
              # TYPE evaporchain_paymaster_next_nonce gauge\n",
         );
-        out.push_str(&format!(
-            "evaporchain_paymaster_next_nonce {next_nonce}\n"
-        ));
+        out.push_str(&format!("evaporchain_paymaster_next_nonce {next_nonce}\n"));
         out.push_str(
             "# HELP evaporchain_paymaster_active_senders \
              Number of senders currently held in the rate-limiter \
@@ -1439,9 +1417,7 @@ impl Paymaster {
              Process uptime in seconds since paymaster construction.\n\
              # TYPE evaporchain_paymaster_uptime_seconds gauge\n",
         );
-        out.push_str(&format!(
-            "evaporchain_paymaster_uptime_seconds {uptime}\n"
-        ));
+        out.push_str(&format!("evaporchain_paymaster_uptime_seconds {uptime}\n"));
         out.push_str(
             "# HELP evaporchain_paymaster_idempotent_replays_total \
              Number of /sponsor calls served from the idempotency cache.\n\
@@ -1509,10 +1485,7 @@ fn persist_nonce(path: &Path, next: u64) -> Result<(), PaymasterError> {
         .filter(|p| !p.as_os_str().is_empty())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
-    let tmp = parent.join(format!(
-        ".paymaster_nonce.tmp.{}",
-        std::process::id()
-    ));
+    let tmp = parent.join(format!(".paymaster_nonce.tmp.{}", std::process::id()));
     {
         let mut f = std::fs::File::create(&tmp)?;
         writeln!(f, "{next}")?;
@@ -1555,12 +1528,12 @@ pub fn load_keypair_from_file(path: &Path) -> anyhow::Result<HybridKeypair> {
         .map_err(|e| anyhow::anyhow!("read keypair file {}: {e}", path.display()))?;
     let parsed: OnDisk = serde_json::from_str(&raw)
         .map_err(|e| anyhow::anyhow!("parse keypair file {}: {e}", path.display()))?;
-    let ecdsa_sk = hex::decode(parsed.ecdsa_secret_hex)
-        .map_err(|e| anyhow::anyhow!("ecdsa hex: {e}"))?;
-    let mldsa_pk = hex::decode(parsed.mldsa_public_hex)
-        .map_err(|e| anyhow::anyhow!("mldsa pk hex: {e}"))?;
-    let mldsa_sk = hex::decode(parsed.mldsa_secret_hex)
-        .map_err(|e| anyhow::anyhow!("mldsa sk hex: {e}"))?;
+    let ecdsa_sk =
+        hex::decode(parsed.ecdsa_secret_hex).map_err(|e| anyhow::anyhow!("ecdsa hex: {e}"))?;
+    let mldsa_pk =
+        hex::decode(parsed.mldsa_public_hex).map_err(|e| anyhow::anyhow!("mldsa pk hex: {e}"))?;
+    let mldsa_sk =
+        hex::decode(parsed.mldsa_secret_hex).map_err(|e| anyhow::anyhow!("mldsa sk hex: {e}"))?;
     let ecdsa = EcdsaKeypair::from_bytes(&ecdsa_sk)
         .map_err(|e| anyhow::anyhow!("ecdsa from bytes: {e}"))?;
     let mldsa = MlDsaKeypair::from_bytes(&mldsa_pk, &mldsa_sk)
@@ -1655,13 +1628,9 @@ mod tests {
             // `Paymaster::new` consumes it; we don't call `new` twice
             // with the same kp here — the persistence test only cares
             // about the nonce counter.
-            let pm = Paymaster::new_with_config(
-                kp,
-                "test",
-                &nonce_file,
-                PaymasterConfig::permissive(),
-            )
-            .unwrap();
+            let pm =
+                Paymaster::new_with_config(kp, "test", &nonce_file, PaymasterConfig::permissive())
+                    .unwrap();
             pm.sponsor(&mut blank_user_op()).unwrap();
             pm.sponsor(&mut blank_user_op()).unwrap();
             assert_eq!(pm.next_paymaster_nonce(), 2);
@@ -1672,13 +1641,9 @@ mod tests {
         // Sanity: regenerating gives a different pk (so it's a real
         // restart-with-new-key scenario).
         assert_ne!(pk_bytes, kp2.public_key_bytes());
-        let pm2 = Paymaster::new_with_config(
-            kp2,
-            "test",
-            &nonce_file,
-            PaymasterConfig::permissive(),
-        )
-        .unwrap();
+        let pm2 =
+            Paymaster::new_with_config(kp2, "test", &nonce_file, PaymasterConfig::permissive())
+                .unwrap();
         assert_eq!(pm2.next_paymaster_nonce(), 2);
     }
 
@@ -1776,12 +1741,10 @@ mod tests {
     /// the canonical message the chain (and now the paymaster) check
     /// against. Returns (UserOp, user_keypair) so callers can mutate
     /// + re-sign for tampering tests.
-    fn user_signed_user_op_for(
-        pm: &Paymaster,
-        sender_byte: u8,
-    ) -> (UserOpTx, HybridKeypair) {
+    fn user_signed_user_op_for(pm: &Paymaster, sender_byte: u8) -> (UserOpTx, HybridKeypair) {
         let user_kp = HybridKeypair::generate();
-        let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
+        let sender: AccountAddress =
+            evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
         let _ = sender_byte; // sender derived from key; param kept for tests that may want a fixed slot
         let mut user_op = UserOpTx {
             sender,
@@ -1851,7 +1814,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let pm = strict_paymaster(&tmp, "test");
         let user_kp = HybridKeypair::generate();
-        let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
+        let sender: AccountAddress =
+            evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
         let mut user_op = UserOpTx {
             sender,
             nonce: 0,
@@ -2015,16 +1979,14 @@ mod tests {
 
         {
             let kp = HybridKeypair::generate();
-            let pm =
-                Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
+            let pm = Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
             for _ in 0..2 {
                 pm.sponsor(&mut blank_user_op()).unwrap();
             }
         }
         {
             let kp = HybridKeypair::generate();
-            let pm =
-                Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
+            let pm = Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
             for _ in 0..2 {
                 pm.sponsor(&mut blank_user_op()).unwrap();
             }
@@ -2072,10 +2034,7 @@ mod tests {
 
         let mut uo = blank_user_op();
         uo.call_data = b"hello-paymaster".to_vec();
-        let expected = format!(
-            "0x{}",
-            hex::encode(blake3::hash(&uo.call_data).as_bytes())
-        );
+        let expected = format!("0x{}", hex::encode(blake3::hash(&uo.call_data).as_bytes()));
         pm.sponsor(&mut uo).unwrap();
 
         let contents = std::fs::read_to_string(&audit_file).unwrap();
@@ -2112,9 +2071,7 @@ mod tests {
         .unwrap()
     }
 
-    fn user_op_wrapping(
-        inner: Transaction,
-    ) -> UserOpTx {
+    fn user_op_wrapping(inner: Transaction) -> UserOpTx {
         UserOpTx {
             sender: [1u8; 32],
             nonce: 0,
@@ -2164,21 +2121,18 @@ mod tests {
             }),
         ] {
             let mut uo = user_op_wrapping(inner);
-            pm.sponsor(&mut uo).expect("None whitelist allows everything");
+            pm.sponsor(&mut uo)
+                .expect("None whitelist allows everything");
         }
     }
 
     #[test]
     fn inner_whitelist_transfer_only_rejects_call_script() {
         let tmp = TempDir::new().unwrap();
-        let pm = permissive_with_inner_whitelist(
-            &tmp,
-            "test",
-            Some(vec![InnerVariant::Transfer]),
-        );
+        let pm = permissive_with_inner_whitelist(&tmp, "test", Some(vec![InnerVariant::Transfer]));
         // Transfer accepted.
-        let mut transfer_uo = user_op_wrapping(Transaction::Transfer(
-            evaporchain_types::TransferTx {
+        let mut transfer_uo =
+            user_op_wrapping(Transaction::Transfer(evaporchain_types::TransferTx {
                 from: [1u8; 32],
                 to: [2u8; 32],
                 amount: 1,
@@ -2186,13 +2140,12 @@ mod tests {
                 signature: None,
                 public_key: None,
                 mev_refund_eligible: None,
-            },
-        ));
+            }));
         pm.sponsor(&mut transfer_uo).expect("Transfer in whitelist");
 
         // CallScript rejected even though it's in the chain's V1 set.
-        let mut script_uo = user_op_wrapping(Transaction::CallScript(
-            evaporchain_types::CallScriptTx {
+        let mut script_uo =
+            user_op_wrapping(Transaction::CallScript(evaporchain_types::CallScriptTx {
                 caller: [1u8; 32],
                 contract_id: 1,
                 method: "noop".into(),
@@ -2200,8 +2153,7 @@ mod tests {
                 epoch: 0,
                 signature: None,
                 public_key: None,
-            },
-        ));
+            }));
         let r = pm.sponsor(&mut script_uo);
         assert!(
             matches!(
@@ -2223,7 +2175,8 @@ mod tests {
         let pm = permissive_with_inner_whitelist(&tmp, "test", Some(vec![]));
         let mut uo = blank_user_op();
         // call_data is `vec![]` from blank_user_op.
-        pm.sponsor(&mut uo).expect("empty call_data bypasses whitelist");
+        pm.sponsor(&mut uo)
+            .expect("empty call_data bypasses whitelist");
     }
 
     #[test]
@@ -2231,11 +2184,7 @@ mod tests {
         // Chain rejects MultiSig as inner; paymaster surfaces this
         // earlier via from_transaction returning None.
         let tmp = TempDir::new().unwrap();
-        let pm = permissive_with_inner_whitelist(
-            &tmp,
-            "test",
-            Some(vec![InnerVariant::Transfer]),
-        );
+        let pm = permissive_with_inner_whitelist(&tmp, "test", Some(vec![InnerVariant::Transfer]));
         let inner = Transaction::MultiSig(evaporchain_types::MultiSigTx {
             multisig_address: [1u8; 32],
             threshold: 1,
@@ -2260,11 +2209,7 @@ mod tests {
         // decode and the chain handles it later. With the whitelist
         // active, we decode here and reject early.
         let tmp = TempDir::new().unwrap();
-        let pm = permissive_with_inner_whitelist(
-            &tmp,
-            "test",
-            Some(vec![InnerVariant::Transfer]),
-        );
+        let pm = permissive_with_inner_whitelist(&tmp, "test", Some(vec![InnerVariant::Transfer]));
         let mut uo = blank_user_op();
         uo.call_data = b"not-json".to_vec();
         let r = pm.sponsor(&mut uo);
@@ -2468,10 +2413,7 @@ mod tests {
         pm.sponsor_idempotent(Some("k"), &mut b).unwrap(); // Replay → replay metric
         let m = pm.metrics();
         assert_eq!(m.sponsorships_ok.load(Ordering::Relaxed), 1);
-        assert_eq!(
-            m.sponsorships_idempotent_replay.load(Ordering::Relaxed),
-            1
-        );
+        assert_eq!(m.sponsorships_idempotent_replay.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -2611,7 +2553,8 @@ mod tests {
         .unwrap();
 
         for k in ["k1", "k2", "k3"] {
-            pm.sponsor_idempotent(Some(k), &mut blank_user_op()).unwrap();
+            pm.sponsor_idempotent(Some(k), &mut blank_user_op())
+                .unwrap();
         }
         // Cache state after 3 inserts: [k2, k3]; k1 evicted as oldest.
         // Retry k2 + k3 first — both must Replay.
@@ -2682,8 +2625,7 @@ mod tests {
         let first_responses;
         {
             let kp = HybridKeypair::generate();
-            let pm =
-                Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
+            let pm = Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
             first_pm_addr = pm.address();
             let mut a = blank_user_op();
             let mut b = blank_user_op();
@@ -2701,8 +2643,7 @@ mod tests {
         // checking the cache replay returns the EARLIER response
         // verbatim (which carries the earlier instance's signature).
         let kp2 = HybridKeypair::generate();
-        let pm2 =
-            Paymaster::new_with_config(kp2, "test", &nonce_file, cfg()).unwrap();
+        let pm2 = Paymaster::new_with_config(kp2, "test", &nonce_file, cfg()).unwrap();
         let mut a_retry = blank_user_op();
         let outcome_a = pm2.sponsor_idempotent(Some("k1"), &mut a_retry).unwrap();
         // Cache hit → Replay with the original nonce + sig.
@@ -2812,7 +2753,8 @@ mod tests {
         // is created, restart loses cache.
         let tmp = TempDir::new().unwrap();
         let pm = idempotent_paymaster(&tmp); // None persist path
-        pm.sponsor_idempotent(Some("k"), &mut blank_user_op()).unwrap();
+        pm.sponsor_idempotent(Some("k"), &mut blank_user_op())
+            .unwrap();
         // The temp dir contains paymaster_nonce only — no idempotency cache file.
         let entries: Vec<_> = std::fs::read_dir(tmp.path())
             .unwrap()
@@ -2908,7 +2850,14 @@ mod tests {
 
         // Audit off — fsync field omitted (None).
         let nonce_file3 = tmp.path().join("paymaster_nonce_3");
-        let pm = fresh_paymaster(&{ let t = TempDir::new().unwrap(); std::fs::write(t.path().join("paymaster_nonce"), "0").ok(); t }, "test");
+        let pm = fresh_paymaster(
+            &{
+                let t = TempDir::new().unwrap();
+                std::fs::write(t.path().join("paymaster_nonce"), "0").ok();
+                t
+            },
+            "test",
+        );
         let _ = (nonce_file3, pm); // shadowing — use the helper-built one below
         let kp = HybridKeypair::generate();
         let pm = Paymaster::new_with_config(
@@ -2919,7 +2868,7 @@ mod tests {
                 require_user_sig: false,
                 per_sender_rps: 0.0,
                 per_sender_burst: 0,
-                audit_log: None, // ← off
+                audit_log: None,                          // ← off
                 audit_log_fsync: AuditFsyncMode::PerLine, // ignored
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
@@ -2929,10 +2878,16 @@ mod tests {
         )
         .unwrap();
         let info = pm.info();
-        assert!(info.audit_log_fsync.is_none(), "fsync field omitted when audit_log is None");
+        assert!(
+            info.audit_log_fsync.is_none(),
+            "fsync field omitted when audit_log is None"
+        );
         // And the JSON omits it entirely (skip_serializing_if).
         let json = serde_json::to_string(&info).unwrap();
-        assert!(!json.contains("audit_log_fsync"), "field must be omitted in JSON when None");
+        assert!(
+            !json.contains("audit_log_fsync"),
+            "field must be omitted in JSON when None"
+        );
     }
 
     #[test]
@@ -3265,7 +3220,10 @@ mod tests {
             signature: None,
             public_key: None,
         });
-        assert_eq!(InnerVariant::from_transaction(&tx), Some(InnerVariant::CallScript));
+        assert_eq!(
+            InnerVariant::from_transaction(&tx),
+            Some(InnerVariant::CallScript)
+        );
     }
 
     #[test]
@@ -3350,7 +3308,7 @@ mod tests {
     #[test]
     fn t1_20_rate_limiter_burst_then_throttle() {
         let mut rl = RateLimiter::new(0.001, 3); // 3 burst, ~0 rps
-        // First 3 allowed.
+                                                 // First 3 allowed.
         assert!(rl.try_consume([1u8; 32]));
         assert!(rl.try_consume([1u8; 32]));
         assert!(rl.try_consume([1u8; 32]));
@@ -3364,11 +3322,7 @@ mod tests {
     #[test]
     fn t1_20_idempotency_cache_overwrite_keeps_size() {
         use evaporchain_types::UserOpTx;
-        let mut cache = IdempotencyCache::with_persist(
-            10,
-            Duration::from_secs(60),
-            None,
-        );
+        let mut cache = IdempotencyCache::with_persist(10, Duration::from_secs(60), None);
         let key = "abc".to_string();
         let make_resp = |n: u64| SponsorshipResponse {
             user_op: UserOpTx {
@@ -3403,11 +3357,7 @@ mod tests {
     #[test]
     fn t1_20_idempotency_cache_eviction_on_max_keys() {
         use evaporchain_types::UserOpTx;
-        let mut cache = IdempotencyCache::with_persist(
-            2,
-            Duration::from_secs(60),
-            None,
-        );
+        let mut cache = IdempotencyCache::with_persist(2, Duration::from_secs(60), None);
         let make_resp = |n: u64| SponsorshipResponse {
             user_op: UserOpTx {
                 sender: [0u8; 32],
@@ -3439,18 +3389,10 @@ mod tests {
     /// max_keys > 0.
     #[test]
     fn t1_20_idempotency_cache_enabled_when_max_keys_positive() {
-        let cache = IdempotencyCache::with_persist(
-            5,
-            Duration::from_secs(30),
-            None,
-        );
+        let cache = IdempotencyCache::with_persist(5, Duration::from_secs(30), None);
         assert!(cache.enabled());
 
-        let disabled = IdempotencyCache::with_persist(
-            0,
-            Duration::from_secs(30),
-            None,
-        );
+        let disabled = IdempotencyCache::with_persist(0, Duration::from_secs(30), None);
         assert!(!disabled.enabled());
     }
 
@@ -3552,7 +3494,7 @@ mod tests {
     #[test]
     fn pay_rate_limiter_1_disabled_limiter_ignores_cap() {
         let mut rl = RateLimiter::new(0.0, 0); // disabled
-        // Even with no buckets, a fresh sender must be allowed.
+                                               // Even with no buckets, a fresh sender must be allowed.
         let fresh = [0x11u8; 32];
         assert!(rl.try_consume(fresh));
         // And the cap path is never entered, so the map stays empty.

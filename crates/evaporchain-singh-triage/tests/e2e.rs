@@ -30,16 +30,16 @@
 //! INVENTION_STACK §A5.4: Singh-Triage (wallet-opens-on-inbox UX paradigm).
 
 use evaporchain_singh_triage::{
-    apply_action, bucket_counts, classify, epochs_until_threshold,
-    Action, ActionError, ActionOutcome, Inbox, TriageBucket, TriageItem, TriageItemError,
+    apply_action, bucket_counts, classify, epochs_until_threshold, Action, ActionError,
+    ActionOutcome, Inbox, TriageBucket, TriageItem, TriageItemError,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-const EPOCH: u64         = 1_000;
-const H_TODAY: u64       = 5;
-const H_TOMORROW: u64    = 15;
-const H_WEEK: u64        = 100;
+const EPOCH: u64 = 1_000;
+const H_TODAY: u64 = 5;
+const H_TOMORROW: u64 = 15;
+const H_WEEK: u64 = 100;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -58,10 +58,15 @@ fn classify_at(it: &TriageItem) -> TriageBucket {
 #[test]
 fn item_d_at_threshold_is_decayed() {
     let d = item_at(0xD0, 1, 1);
-    assert_eq!(classify_at(&d), TriageBucket::Decayed,
-        "energy=1 ≤ DEATH_THRESHOLD → Decayed");
-    assert!(epochs_until_threshold(&d, EPOCH).is_none(),
-        "at-threshold item returns None from epochs_until_threshold");
+    assert_eq!(
+        classify_at(&d),
+        TriageBucket::Decayed,
+        "energy=1 ≤ DEATH_THRESHOLD → Decayed"
+    );
+    assert!(
+        epochs_until_threshold(&d, EPOCH).is_none(),
+        "at-threshold item returns None from epochs_until_threshold"
+    );
 }
 
 #[test]
@@ -85,7 +90,7 @@ fn item_tm_decays_in_6_epochs_is_tomorrow() {
 #[test]
 fn item_w_decays_in_17_epochs_is_thisweek() {
     let w = item_at(0xA0, 131_072, 1); // 2^17 = 131_072
-    // 17 hops × half_life=1 = 17 epochs; 15 < 17 ≤ 100 → ThisWeek.
+                                       // 17 hops × half_life=1 = 17 epochs; 15 < 17 ≤ 100 → ThisWeek.
     let until = epochs_until_threshold(&w, EPOCH).unwrap();
     assert_eq!(until, 17, "energy=131_072 (2^17), half_life=1: 17 epochs");
     assert_eq!(classify_at(&w), TriageBucket::ThisWeek);
@@ -96,27 +101,30 @@ fn item_h_decays_in_300_epochs_is_healthy() {
     let h = item_at(0x90, 8, 100);
     // 8→4→2→1: 3 hops × half_life=100 = 300 epochs > 100 → Healthy.
     let until = epochs_until_threshold(&h, EPOCH).unwrap();
-    assert_eq!(until, 300, "energy=8, half_life=100: 300 epochs to threshold");
+    assert_eq!(
+        until, 300,
+        "energy=8, half_life=100: 300 epochs to threshold"
+    );
     assert_eq!(classify_at(&h), TriageBucket::Healthy);
 }
 
 #[test]
 fn bucket_counts_one_per_bucket_total_five() {
     let items = vec![
-        item_at(0xD0,       1,   1),  // Decayed
-        item_at(0xC0,       4,   1),  // Today
-        item_at(0xB0,      64,   1),  // Tomorrow
-        item_at(0xA0, 131_072,   1),  // ThisWeek
-        item_at(0x90,       8, 100),  // Healthy
+        item_at(0xD0, 1, 1),       // Decayed
+        item_at(0xC0, 4, 1),       // Today
+        item_at(0xB0, 64, 1),      // Tomorrow
+        item_at(0xA0, 131_072, 1), // ThisWeek
+        item_at(0x90, 8, 100),     // Healthy
     ];
     let inbox = bucket_counts(&items, EPOCH, H_TODAY, H_TOMORROW, H_WEEK);
 
-    assert_eq!(inbox.decayed,   1);
-    assert_eq!(inbox.today,     1);
-    assert_eq!(inbox.tomorrow,  1);
+    assert_eq!(inbox.decayed, 1);
+    assert_eq!(inbox.today, 1);
+    assert_eq!(inbox.tomorrow, 1);
     assert_eq!(inbox.this_week, 1);
-    assert_eq!(inbox.healthy,   1);
-    assert_eq!(inbox.total(),   5, "all five buckets filled, total=5");
+    assert_eq!(inbox.healthy, 1);
+    assert_eq!(inbox.total(), 5, "all five buckets filled, total=5");
 }
 
 // ── Action fixture ────────────────────────────────────────────────────────
@@ -130,10 +138,21 @@ fn action_refresh_moves_item_t_from_today_to_tomorrow() {
     // Refresh with 10_000: new_energy = 4 + 10_000 = 10_004.
     // epochs_until(10_004, half_life=1) ≈ 13 epochs → 5 < 13 ≤ 15 → Tomorrow.
     let outcome = apply_action(&mut t, Action::Refresh { top_up: 10_000 }, EPOCH).unwrap();
-    assert!(matches!(outcome, ActionOutcome::Refreshed { new_energy: 10_004, anchored_at: 1_000 }),
-        "Refresh outcome must report new_energy=10_004, anchored_at=1_000");
-    assert_eq!(classify_at(&t), TriageBucket::Tomorrow,
-        "refreshed Item T (10_004 energy) should be Tomorrow");
+    assert!(
+        matches!(
+            outcome,
+            ActionOutcome::Refreshed {
+                new_energy: 10_004,
+                anchored_at: 1_000
+            }
+        ),
+        "Refresh outcome must report new_energy=10_004, anchored_at=1_000"
+    );
+    assert_eq!(
+        classify_at(&t),
+        TriageBucket::Tomorrow,
+        "refreshed Item T (10_004 energy) should be Tomorrow"
+    );
 }
 
 #[test]
@@ -145,8 +164,14 @@ fn action_let_die_is_non_mutating() {
     let outcome = apply_action(&mut tm, Action::LetDie, EPOCH).unwrap();
     assert_eq!(outcome, ActionOutcome::LetDie);
     // Item is unchanged.
-    assert_eq!(tm.energy_at_anchor, energy_before, "LetDie must not mutate energy");
-    assert_eq!(tm.last_refreshed_epoch, last_before, "LetDie must not mutate last_refreshed");
+    assert_eq!(
+        tm.energy_at_anchor, energy_before,
+        "LetDie must not mutate energy"
+    );
+    assert_eq!(
+        tm.last_refreshed_epoch, last_before,
+        "LetDie must not mutate last_refreshed"
+    );
 }
 
 #[test]
@@ -157,8 +182,14 @@ fn action_archive_is_non_mutating() {
 
     let outcome = apply_action(&mut w, Action::Archive, EPOCH).unwrap();
     assert_eq!(outcome, ActionOutcome::Archived);
-    assert_eq!(w.energy_at_anchor, energy_before, "Archive must not mutate energy");
-    assert_eq!(w.last_refreshed_epoch, last_before, "Archive must not mutate last_refreshed");
+    assert_eq!(
+        w.energy_at_anchor, energy_before,
+        "Archive must not mutate energy"
+    );
+    assert_eq!(
+        w.last_refreshed_epoch, last_before,
+        "Archive must not mutate last_refreshed"
+    );
 }
 
 #[test]
@@ -166,8 +197,11 @@ fn action_refresh_reanchors_to_epoch_now() {
     let mut t = item_at(0xC0, 4, 1);
     // Apply at a later epoch.
     apply_action(&mut t, Action::Refresh { top_up: 100 }, EPOCH + 50).unwrap();
-    assert_eq!(t.last_refreshed_epoch, EPOCH + 50,
-        "Refresh must re-anchor item to epoch_now");
+    assert_eq!(
+        t.last_refreshed_epoch,
+        EPOCH + 50,
+        "Refresh must re-anchor item to epoch_now"
+    );
 }
 
 // ── Doctrine tests ────────────────────────────────────────────────────────
@@ -196,8 +230,10 @@ fn doctrine_bucket_monotone_in_time() {
     let mut prev_order = 0;
     for &epoch in &checkpoints {
         let b = classify(&item, epoch, H_TODAY, H_TOMORROW, H_WEEK);
-        assert!(order(b) >= prev_order,
-            "bucket must not move toward Healthy as time passes (epoch={epoch})");
+        assert!(
+            order(b) >= prev_order,
+            "bucket must not move toward Healthy as time passes (epoch={epoch})"
+        );
         prev_order = order(b);
     }
 }

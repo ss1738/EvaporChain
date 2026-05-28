@@ -254,9 +254,7 @@ impl Tokenomics {
     /// `reward_at_epoch_capped`.
     pub fn block_reward(&self, epoch: Epoch, total_minted: u64) -> u64 {
         match self.emission.as_ref() {
-            Some(params) => {
-                crate::emission::block_reward_at(params, epoch, total_minted as u128)
-            }
+            Some(params) => crate::emission::block_reward_at(params, epoch, total_minted as u128),
             None => self.reward_at_epoch_capped(epoch, total_minted),
         }
     }
@@ -894,7 +892,7 @@ mod tests {
     #[test]
     fn apy_capped_reward_zero_total_staked_returns_raw() {
         let tok = Tokenomics::default(); // target_staking_apy default > 0
-        // total_staked = 0 → no scaling, raw reward returned.
+                                         // total_staked = 0 → no scaling, raw reward returned.
         assert_eq!(tok.apy_capped_reward(1_000, 0), 1_000);
     }
 
@@ -1006,7 +1004,9 @@ mod tests {
             let dup = config.accounts[0].clone();
             config.accounts.push(dup);
             let errors = config.validate().unwrap_err();
-            assert!(errors.iter().any(|e| e.contains("duplicate account address")));
+            assert!(errors
+                .iter()
+                .any(|e| e.contains("duplicate account address")));
         }
     }
 

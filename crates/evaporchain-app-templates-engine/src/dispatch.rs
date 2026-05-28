@@ -29,9 +29,9 @@ use evaporchain_app_templates_materialise::MaterialiseInstruction;
 
 use crate::{
     init_childkey, init_gallery_forgets, init_mayfly, init_mnemochain, init_refresh_market,
-    init_sap, init_sbav, init_scl, init_sddc, init_sfsv, init_sgb, init_shlm,
-    init_singh_heartbeat, init_singh_lineage, init_singh_migrant, init_singh_posthuma,
-    init_singh_resonance, init_singh_sabi, init_singh_triage, init_ssm, init_witnessfit,
+    init_sap, init_sbav, init_scl, init_sddc, init_sfsv, init_sgb, init_shlm, init_singh_heartbeat,
+    init_singh_lineage, init_singh_migrant, init_singh_posthuma, init_singh_resonance,
+    init_singh_sabi, init_singh_triage, init_ssm, init_witnessfit,
 };
 
 /// Typed init configs — one variant per registered template. The

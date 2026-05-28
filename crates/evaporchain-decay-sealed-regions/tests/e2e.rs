@@ -46,7 +46,9 @@ use evaporchain_decay_sealed_regions::{
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 
-fn reg() -> SealRegistry { SealRegistry::new() }
+fn reg() -> SealRegistry {
+    SealRegistry::new()
+}
 
 fn seal(lo: u64, hi: u64, height: u64, energy: u64) -> Region {
     Region::new(lo, hi, height, [0xAA; 32], energy, 0).unwrap()
@@ -56,31 +58,31 @@ fn seal_root(lo: u64, hi: u64, height: u64, energy: u64, root: u8) -> Region {
     Region::new(lo, hi, height, [root; 32], energy, 0).unwrap()
 }
 
-const FLOOR:      u64 = 100;
-const FREEZE_EP:  u64 = 10;
-const HEIGHT:     u64 = 7;
+const FLOOR: u64 = 100;
+const FREEZE_EP: u64 = 10;
+const HEIGHT: u64 = 7;
 
 // Spans at height 7.
-const DEX_LO:  u64 = 0;
-const DEX_HI:  u64 = 3_000;   // Seal-P initial span
-const GOV_LO:  u64 = 1_000;   // Seal-Q / Seal-R start (overlaps DEX)
-const GOV_HI:  u64 = 4_000;
-const STK_LO:  u64 = 4_000;
-const STK_HI:  u64 = 6_000;
-const NFT_LO:  u64 = 6_000;
-const NFT_HI:  u64 = 8_000;
+const DEX_LO: u64 = 0;
+const DEX_HI: u64 = 3_000; // Seal-P initial span
+const GOV_LO: u64 = 1_000; // Seal-Q / Seal-R start (overlaps DEX)
+const GOV_HI: u64 = 4_000;
+const STK_LO: u64 = 4_000;
+const STK_HI: u64 = 6_000;
+const NFT_LO: u64 = 6_000;
+const NFT_HI: u64 = 8_000;
 
 // Energies.
 const E_P: u64 = 5_000;
-const E_Q: u64 = 3_000;  // < E_P → rejected
-const E_R: u64 = 8_000;  // > E_P → P evicted, R wins
+const E_Q: u64 = 3_000; // < E_P → rejected
+const E_R: u64 = 8_000; // > E_P → P evicted, R wins
 const E_S: u64 = 2_000;
 const E_T: u64 = 1_500;
 
 // Decay targets (post-decay values used in freeze test).
-const E_R_DECAYED: u64 = 50;   // below FLOOR → frozen
-const E_S_DECAYED: u64 = 150;  // above FLOOR → stays Tentative
-const E_T_DECAYED: u64 = 80;   // below FLOOR → frozen
+const E_R_DECAYED: u64 = 50; // below FLOOR → frozen
+const E_S_DECAYED: u64 = 150; // above FLOOR → stays Tentative
+const E_T_DECAYED: u64 = 80; // below FLOOR → frozen
 
 // ── Main fixture: DeFi block-production sealing race ─────────────────────────
 
@@ -99,7 +101,14 @@ fn defi_block_production_sealing_race_full_lifecycle() {
     let q = seal_root(GOV_LO, GOV_HI, HEIGHT, E_Q, 0xBB);
     let err = r.register(q).unwrap_err();
     assert!(
-        matches!(err, RegistryError::OverlappingSealHigherEnergy { incoming: E_Q, existing: E_P, .. }),
+        matches!(
+            err,
+            RegistryError::OverlappingSealHigherEnergy {
+                incoming: E_Q,
+                existing: E_P,
+                ..
+            }
+        ),
         "lower-energy Seal-Q must be rejected by thermal priority"
     );
     assert_eq!(r.len(), 1, "rejected seal must not enter registry");
@@ -108,7 +117,10 @@ fn defi_block_production_sealing_race_full_lifecycle() {
     let rr = seal_root(GOV_LO, GOV_HI, HEIGHT, E_R, 0xCC);
     let r_cmt = r.register(rr.clone()).unwrap();
     // P must be evicted.
-    assert!(r.get(&p_cmt).is_none(), "Seal-P must be evicted by higher-energy Seal-R");
+    assert!(
+        r.get(&p_cmt).is_none(),
+        "Seal-P must be evicted by higher-energy Seal-R"
+    );
     assert!(r.get(&r_cmt).is_some(), "Seal-R must be registered");
     assert_eq!(r.len(), 1);
 
@@ -117,7 +129,11 @@ fn defi_block_production_sealing_race_full_lifecycle() {
     let t = seal_root(NFT_LO, NFT_HI, HEIGHT, E_T, 0xEE);
     let s_cmt = r.register(s).unwrap();
     let t_cmt = r.register(t).unwrap();
-    assert_eq!(r.len(), 3, "R, S, T coexist at height {HEIGHT} (all disjoint)");
+    assert_eq!(
+        r.len(),
+        3,
+        "R, S, T coexist at height {HEIGHT} (all disjoint)"
+    );
 
     // ── Phase 2: energy decay ────────────────────────────────────────
     r.set_energy(&r_cmt, E_R_DECAYED).unwrap(); // 50  < 100 → will freeze
@@ -126,10 +142,16 @@ fn defi_block_production_sealing_race_full_lifecycle() {
 
     // ── Phase 3: freeze sweep ────────────────────────────────────────
     let frozen = r.freeze_below_floor(FLOOR, FREEZE_EP);
-    assert_eq!(frozen, 2, "Seal-R (energy=50) and Seal-T (energy=80) must freeze");
+    assert_eq!(
+        frozen, 2,
+        "Seal-R (energy=50) and Seal-T (energy=80) must freeze"
+    );
 
     // Seal-S survives as Tentative (150 > 100).
-    assert!(!r.get(&s_cmt).unwrap().is_frozen(), "Seal-S must remain Tentative");
+    assert!(
+        !r.get(&s_cmt).unwrap().is_frozen(),
+        "Seal-S must remain Tentative"
+    );
     // Seal-R and Seal-T are Frozen.
     assert!(r.get(&r_cmt).unwrap().is_frozen(), "Seal-R must be Frozen");
     assert!(r.get(&t_cmt).unwrap().is_frozen(), "Seal-T must be Frozen");
@@ -137,7 +159,9 @@ fn defi_block_production_sealing_race_full_lifecycle() {
     // Verify frozen_at_epoch field.
     assert!(matches!(
         r.get(&r_cmt).unwrap().state,
-        RegionState::Frozen { frozen_at_epoch: FREEZE_EP }
+        RegionState::Frozen {
+            frozen_at_epoch: FREEZE_EP
+        }
     ));
 
     // ── Phase 4: finality guarantee ──────────────────────────────────
@@ -150,13 +174,23 @@ fn defi_block_production_sealing_race_full_lifecycle() {
     );
 
     // set_energy on a frozen seal also rejected.
-    assert!(matches!(r.set_energy(&r_cmt, u64::MAX), Err(RegistryError::AlreadyFrozen)));
-    assert!(matches!(r.set_energy(&t_cmt, u64::MAX), Err(RegistryError::AlreadyFrozen)));
+    assert!(matches!(
+        r.set_energy(&r_cmt, u64::MAX),
+        Err(RegistryError::AlreadyFrozen)
+    ));
+    assert!(matches!(
+        r.set_energy(&t_cmt, u64::MAX),
+        Err(RegistryError::AlreadyFrozen)
+    ));
 
     // ── Phase 5: different height is independent ──────────────────────
     let h8 = seal_root(GOV_LO, GOV_HI, HEIGHT + 1, E_P, 0x88);
     r.register(h8).unwrap(); // same span as frozen R but height 8 — no conflict
-    assert_eq!(r.len(), 4, "height-8 seal added alongside height-7 frozen seals");
+    assert_eq!(
+        r.len(),
+        4,
+        "height-8 seal added alongside height-7 frozen seals"
+    );
 }
 
 // ── Thermal priority: higher energy ousts lower ───────────────────────────────
@@ -165,7 +199,7 @@ fn defi_block_production_sealing_race_full_lifecycle() {
 fn thermal_priority_higher_energy_ousts_lower_energy_tentative() {
     let mut r = reg();
 
-    let weak  = seal_root(0, 100, 1, 50,  0xAA);
+    let weak = seal_root(0, 100, 1, 50, 0xAA);
     let medium = seal_root(50, 150, 1, 200, 0xBB);
     let strong = seal_root(80, 120, 1, 500, 0xCC);
 
@@ -188,12 +222,21 @@ fn thermal_priority_higher_energy_ousts_lower_energy_tentative() {
 #[test]
 fn equal_energy_existing_seal_beats_incoming() {
     let mut r = reg();
-    let first  = seal_root(0, 100, 1, 500, 0xAA);
+    let first = seal_root(0, 100, 1, 500, 0xAA);
     let second = seal_root(0, 100, 1, 500, 0xBB);
     let f_cmt = r.register(first).unwrap();
     let err = r.register(second).unwrap_err();
-    assert!(matches!(err, RegistryError::OverlappingSealHigherEnergy { existing: 500, incoming: 500, .. }),
-        "equal energy must reject the incoming seal (existing wins)");
+    assert!(
+        matches!(
+            err,
+            RegistryError::OverlappingSealHigherEnergy {
+                existing: 500,
+                incoming: 500,
+                ..
+            }
+        ),
+        "equal energy must reject the incoming seal (existing wins)"
+    );
     assert!(r.get(&f_cmt).is_some(), "first seal must survive");
     assert_eq!(r.len(), 1);
 }
@@ -216,11 +259,17 @@ fn freeze_transition_is_one_way_and_irrevocable() {
     assert!(r.get(&cmt).unwrap().is_frozen());
 
     // Post-freeze: energy update rejected.
-    assert!(matches!(r.set_energy(&cmt, 1_000), Err(RegistryError::AlreadyFrozen)));
+    assert!(matches!(
+        r.set_energy(&cmt, 1_000),
+        Err(RegistryError::AlreadyFrozen)
+    ));
 
     // Post-freeze: second freeze sweep does NOT re-freeze (idempotent count).
     let second_sweep = r.freeze_below_floor(FLOOR, FREEZE_EP + 10);
-    assert_eq!(second_sweep, 0, "already-frozen seals must not be double-counted");
+    assert_eq!(
+        second_sweep, 0,
+        "already-frozen seals must not be double-counted"
+    );
 }
 
 // ── Frozen seal blocks all competitors including u64::MAX energy ──────────────
@@ -236,8 +285,11 @@ fn frozen_seal_rejects_max_energy_competitor() {
     // Maximum-possible energy incoming seal over the same span.
     let god = seal_root(0, 100, 1, u64::MAX, 0xFF);
     let err = r.register(god).unwrap_err();
-    assert_eq!(err, RegistryError::OverlappingFrozenSeal,
-        "frozen seal must reject even u64::MAX energy competitor — finality is real");
+    assert_eq!(
+        err,
+        RegistryError::OverlappingFrozenSeal,
+        "frozen seal must reject even u64::MAX energy competitor — finality is real"
+    );
 }
 
 // ── Different heights are fully independent ───────────────────────────────────
@@ -250,12 +302,19 @@ fn seals_at_different_heights_never_conflict_even_with_same_span() {
     for h in 0u64..=4 {
         r.register(seal(0, 100, h, 1_000)).unwrap();
     }
-    assert_eq!(r.len(), 5, "5 seals at 5 different heights must all coexist");
+    assert_eq!(
+        r.len(),
+        5,
+        "5 seals at 5 different heights must all coexist"
+    );
 
     // Freeze one height's seal.
     for (_, s) in r.at_height(2).enumerate() {
         // Note: we can't modify during iteration; just verify they're tentative.
-        assert!(!s.is_frozen(), "all seals should be tentative before freeze sweep");
+        assert!(
+            !s.is_frozen(),
+            "all seals should be tentative before freeze sweep"
+        );
     }
 
     // Note: cannot mutate during iteration, so just verify independence via
@@ -275,7 +334,10 @@ fn energy_decay_chain_high_to_below_floor_then_frozen() {
     // Simulate step-wise decay.
     for e in [8_000u64, 5_000, 1_000, 200, 50] {
         r.set_energy(&cmt, e).unwrap();
-        assert!(!r.get(&cmt).unwrap().is_frozen(), "still Tentative at energy={e}");
+        assert!(
+            !r.get(&cmt).unwrap().is_frozen(),
+            "still Tentative at energy={e}"
+        );
     }
 
     // Sweep at floor=100: 50 < 100 → freeze.
@@ -284,7 +346,10 @@ fn energy_decay_chain_high_to_below_floor_then_frozen() {
     assert!(r.get(&cmt).unwrap().is_frozen());
 
     // Cannot continue decay after freeze.
-    assert!(matches!(r.set_energy(&cmt, 10), Err(RegistryError::AlreadyFrozen)));
+    assert!(matches!(
+        r.set_energy(&cmt, 10),
+        Err(RegistryError::AlreadyFrozen)
+    ));
 }
 
 // ── Disjoint seals all coexist ────────────────────────────────────────────────
@@ -292,15 +357,28 @@ fn energy_decay_chain_high_to_below_floor_then_frozen() {
 #[test]
 fn disjoint_seals_at_same_height_all_coexist_independently() {
     let mut r = reg();
-    let spans = [(0u64, 100u64), (100, 200), (200, 300), (300, 400), (400, 500)];
+    let spans = [
+        (0u64, 100u64),
+        (100, 200),
+        (200, 300),
+        (300, 400),
+        (400, 500),
+    ];
     for (i, (lo, hi)) in spans.iter().enumerate() {
-        r.register(seal(*lo, *hi, HEIGHT, 1_000 + i as u64 * 100)).unwrap();
+        r.register(seal(*lo, *hi, HEIGHT, 1_000 + i as u64 * 100))
+            .unwrap();
     }
-    assert_eq!(r.len(), 5, "5 disjoint spans must all coexist at height {HEIGHT}");
+    assert_eq!(
+        r.len(),
+        5,
+        "5 disjoint spans must all coexist at height {HEIGHT}"
+    );
 
     // Adjacent spans (share boundary) are not overlapping (half-open).
-    assert!(!seal(0, 100, HEIGHT, 1).overlaps(&seal(100, 200, HEIGHT, 1)),
-        "adjacent [0,100) and [100,200) must NOT overlap (half-open semantics)");
+    assert!(
+        !seal(0, 100, HEIGHT, 1).overlaps(&seal(100, 200, HEIGHT, 1)),
+        "adjacent [0,100) and [100,200) must NOT overlap (half-open semantics)"
+    );
 }
 
 // ── Domain-separated commitment anti-replay ───────────────────────────────────
@@ -310,12 +388,36 @@ fn domain_tag_any_field_change_changes_commitment() {
     let base = region_commitment(10, 20, 5, &[0xAA; 32], 1_000, 0);
 
     // Each single-field mutation must change the commitment.
-    assert_ne!(base, region_commitment(11, 20, 5, &[0xAA; 32], 1_000, 0), "span_lo changed");
-    assert_ne!(base, region_commitment(10, 21, 5, &[0xAA; 32], 1_000, 0), "span_hi changed");
-    assert_ne!(base, region_commitment(10, 20, 6, &[0xAA; 32], 1_000, 0), "height changed");
-    assert_ne!(base, region_commitment(10, 20, 5, &[0xBB; 32], 1_000, 0), "state_root changed");
-    assert_ne!(base, region_commitment(10, 20, 5, &[0xAA; 32], 1_001, 0), "energy changed");
-    assert_ne!(base, region_commitment(10, 20, 5, &[0xAA; 32], 1_000, 1), "sealed_at_epoch changed");
+    assert_ne!(
+        base,
+        region_commitment(11, 20, 5, &[0xAA; 32], 1_000, 0),
+        "span_lo changed"
+    );
+    assert_ne!(
+        base,
+        region_commitment(10, 21, 5, &[0xAA; 32], 1_000, 0),
+        "span_hi changed"
+    );
+    assert_ne!(
+        base,
+        region_commitment(10, 20, 6, &[0xAA; 32], 1_000, 0),
+        "height changed"
+    );
+    assert_ne!(
+        base,
+        region_commitment(10, 20, 5, &[0xBB; 32], 1_000, 0),
+        "state_root changed"
+    );
+    assert_ne!(
+        base,
+        region_commitment(10, 20, 5, &[0xAA; 32], 1_001, 0),
+        "energy changed"
+    );
+    assert_ne!(
+        base,
+        region_commitment(10, 20, 5, &[0xAA; 32], 1_000, 1),
+        "sealed_at_epoch changed"
+    );
 
     // BLAKE3 with domain tag ≠ raw BLAKE3 without tag (checked in unit tests,
     // confirmed here for the fixture: two seals with same region fields but
@@ -331,8 +433,10 @@ fn domain_tag_any_field_change_changes_commitment() {
         h.update(&0u64.to_le_bytes()); // sealed_at_epoch
         *h.finalize().as_bytes()
     };
-    assert_ne!(with_tag, no_tag_direct,
-        "domain-tagged commitment must differ from naive un-tagged hash");
+    assert_ne!(
+        with_tag, no_tag_direct,
+        "domain-tagged commitment must differ from naive un-tagged hash"
+    );
 }
 
 // ── Freeze sweep counts correctly across mixed Tentative / Frozen ─────────────
@@ -342,15 +446,18 @@ fn freeze_sweep_counts_only_newly_frozen_leaves_above_floor_tentative() {
     let mut r = reg();
 
     // 3 seals: two below floor, one above.
-    let s1 = r.register(seal_root(0, 10, 1, 20, 0xAA)).unwrap();  // 20 < FLOOR=100 → freeze
+    let s1 = r.register(seal_root(0, 10, 1, 20, 0xAA)).unwrap(); // 20 < FLOOR=100 → freeze
     let s2 = r.register(seal_root(20, 30, 1, 60, 0xBB)).unwrap(); // 60 < FLOOR      → freeze
-    let s3 = r.register(seal_root(40, 50, 1, 200, 0xCC)).unwrap();// 200 > FLOOR     → tentative
+    let s3 = r.register(seal_root(40, 50, 1, 200, 0xCC)).unwrap(); // 200 > FLOOR     → tentative
 
     let count = r.freeze_below_floor(FLOOR, FREEZE_EP);
     assert_eq!(count, 2, "exactly 2 seals fall below FLOOR={FLOOR}");
     assert!(r.get(&s1).unwrap().is_frozen());
     assert!(r.get(&s2).unwrap().is_frozen());
-    assert!(!r.get(&s3).unwrap().is_frozen(), "above-floor seal must stay Tentative");
+    assert!(
+        !r.get(&s3).unwrap().is_frozen(),
+        "above-floor seal must stay Tentative"
+    );
 
     // Second sweep: 0 new freezes (s1 and s2 already frozen; s3 above floor).
     let count2 = r.freeze_below_floor(FLOOR, FREEZE_EP + 5);
@@ -371,10 +478,15 @@ fn at_height_query_filters_only_that_heights_seals() {
     assert_eq!(r.len(), 6);
 
     let h7_seals: Vec<_> = r.at_height(HEIGHT).collect();
-    assert_eq!(h7_seals.len(), 2,
-        "at_height({HEIGHT}) must return exactly 2 seals");
-    assert!(h7_seals.iter().all(|s| s.height == HEIGHT),
-        "all returned seals must be at height {HEIGHT}");
+    assert_eq!(
+        h7_seals.len(),
+        2,
+        "at_height({HEIGHT}) must return exactly 2 seals"
+    );
+    assert!(
+        h7_seals.iter().all(|s| s.height == HEIGHT),
+        "all returned seals must be at height {HEIGHT}"
+    );
 
     // Unknown height returns 0.
     assert_eq!(r.at_height(999).count(), 0);
@@ -397,26 +509,37 @@ fn sub_block_finality_is_real_finality_doctrine() {
     let hot = Region::new(0, 1_000, HEIGHT, [0xDE; 32], 5, 42).unwrap();
     let commitment_before_freeze = hot.commitment();
     let cmt = r.register(hot).unwrap();
-    assert_eq!(cmt, commitment_before_freeze,
-        "commitment must be deterministic (same result on repeated calls)");
+    assert_eq!(
+        cmt, commitment_before_freeze,
+        "commitment must be deterministic (same result on repeated calls)"
+    );
 
     // Freeze sweep: energy=5 < FLOOR=100 → frozen.
     let frozen = r.freeze_below_floor(FLOOR, 100);
     assert_eq!(frozen, 1);
 
     let sealed = r.get(&cmt).unwrap();
-    assert!(sealed.is_frozen(), "seal with energy below floor must be frozen");
+    assert!(
+        sealed.is_frozen(),
+        "seal with energy below floor must be frozen"
+    );
 
     // The `state` field (Tentative / Frozen) is NOT part of the commitment hash.
     // Freezing alone must not change the commitment; only energy mutations would.
-    assert_eq!(sealed.commitment(), commitment_before_freeze,
-        "freeze transition must not change the commitment — state is excluded from the hash");
+    assert_eq!(
+        sealed.commitment(),
+        commitment_before_freeze,
+        "freeze transition must not change the commitment — state is excluded from the hash"
+    );
 
     // No validator can now produce a competing seal over any overlapping span.
     for &energy in &[1u64, FLOOR, 10_000u64, u64::MAX] {
         let competitor = Region::new(500, 1_500, HEIGHT, [0xFF; 32], energy, 200).unwrap();
         assert!(
-            matches!(r.register(competitor), Err(RegistryError::OverlappingFrozenSeal)),
+            matches!(
+                r.register(competitor),
+                Err(RegistryError::OverlappingFrozenSeal)
+            ),
             "competitor with energy={energy} must be blocked by frozen seal"
         );
     }

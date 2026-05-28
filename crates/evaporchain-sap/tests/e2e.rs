@@ -225,7 +225,11 @@ fn adversarial_wallet_spam_beyond_cap_rejected() {
     );
     // Other wallets are unaffected.
     pool.mint_aq(aq_id(0x04), addr(0xBB), 1000, 45, 0).unwrap();
-    assert_eq!(pool.quanta.len(), 3, "only 3 AQs in pool (2 from attacker + 1 from B)");
+    assert_eq!(
+        pool.quanta.len(),
+        3,
+        "only 3 AQs in pool (2 from attacker + 1 from B)"
+    );
 }
 
 #[test]
@@ -238,7 +242,8 @@ fn adversarial_rate_cap_resets_after_window_passes() {
 
     // Capped within the window.
     assert!(matches!(
-        pool.mint_aq(aq_id(0x03), addr(0xAA), 1000, 45, 5).unwrap_err(),
+        pool.mint_aq(aq_id(0x03), addr(0xAA), 1000, 45, 5)
+            .unwrap_err(),
         PoolError::RateCapped { .. }
     ));
 

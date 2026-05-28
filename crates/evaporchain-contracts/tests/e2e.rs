@@ -16,12 +16,16 @@
 //! contracts; calling an evaporated contract returns ContractError::Evaporated.
 
 use evaporchain_contracts::{
-    CallResult, ContractEngine, ContractError, ContractTemplate, Rule,
-    RuleAction, RuleCondition, RuleTrigger,
+    CallResult, ContractEngine, ContractError, ContractTemplate, Rule, RuleAction, RuleCondition,
+    RuleTrigger,
 };
 
-fn addr(b: u8) -> [u8; 32] { [b; 32] }
-fn hex_addr(b: u8) -> String { format!("0x{}", hex::encode(addr(b))) }
+fn addr(b: u8) -> [u8; 32] {
+    [b; 32]
+}
+fn hex_addr(b: u8) -> String {
+    format!("0x{}", hex::encode(addr(b)))
+}
 
 fn deploy_token(engine: &mut ContractEngine, name: &str, creator: u8) -> u64 {
     let params = serde_json::json!({
@@ -32,7 +36,15 @@ fn deploy_token(engine: &mut ContractEngine, name: &str, creator: u8) -> u64 {
         "owner": hex_addr(creator),
     });
     engine
-        .deploy(ContractTemplate::DecayingToken, params, vec![], addr(creator), 10_000, 100, 0)
+        .deploy(
+            ContractTemplate::DecayingToken,
+            params,
+            vec![],
+            addr(creator),
+            10_000,
+            100,
+            0,
+        )
         .unwrap()
 }
 
@@ -54,15 +66,23 @@ fn mint_and_balance_of_round_trip() {
     let id = deploy_token(&mut engine, "TOKEN", creator);
 
     engine
-        .call(id, "mint",
-              &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
-              &addr(creator), 0)
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
+            &addr(creator),
+            0,
+        )
         .unwrap();
 
     let r = engine
-        .call(id, "balance_of",
-              &serde_json::json!({"addr": hex_addr(0xBB)}),
-              &addr(creator), 0)
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xBB)}),
+            &addr(creator),
+            0,
+        )
         .unwrap();
     assert_eq!(r.return_value["balance"], serde_json::json!(100u64));
 }
@@ -72,9 +92,13 @@ fn mint_requires_creator() {
     let mut engine = ContractEngine::new();
     let id = deploy_token(&mut engine, "TOKEN", 0xAA);
     let err = engine
-        .call(id, "mint",
-              &serde_json::json!({"to": hex_addr(0xBB), "amount": 50u64}),
-              &addr(0xBB), 0)   // 0xBB != creator 0xAA
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 50u64}),
+            &addr(0xBB),
+            0,
+        ) // 0xBB != creator 0xAA
         .unwrap_err();
     assert!(
         matches!(err, ContractError::PermissionDenied(_)),
@@ -89,21 +113,45 @@ fn transfer_reduces_sender_and_increases_receiver() {
     let id = deploy_token(&mut engine, "TOKEN", creator);
 
     // Mint 100 to RAFAEL (0xBB).
-    engine.call(id, "mint",
-                &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
-                &addr(creator), 0).unwrap();
+    engine
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
+            &addr(creator),
+            0,
+        )
+        .unwrap();
 
     // RAFAEL transfers 30 to IGOR (0xCC); caller must equal from.
-    engine.call(id, "transfer",
-                &serde_json::json!({"from": hex_addr(0xBB), "to": hex_addr(0xCC), "amount": 30u64}),
-                &addr(0xBB), 0).unwrap();
+    engine
+        .call(
+            id,
+            "transfer",
+            &serde_json::json!({"from": hex_addr(0xBB), "to": hex_addr(0xCC), "amount": 30u64}),
+            &addr(0xBB),
+            0,
+        )
+        .unwrap();
 
-    let r_b = engine.call(id, "balance_of",
-                          &serde_json::json!({"addr": hex_addr(0xBB)}),
-                          &addr(creator), 0).unwrap();
-    let r_c = engine.call(id, "balance_of",
-                          &serde_json::json!({"addr": hex_addr(0xCC)}),
-                          &addr(creator), 0).unwrap();
+    let r_b = engine
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xBB)}),
+            &addr(creator),
+            0,
+        )
+        .unwrap();
+    let r_c = engine
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xCC)}),
+            &addr(creator),
+            0,
+        )
+        .unwrap();
     assert_eq!(r_b.return_value["balance"], serde_json::json!(70u64));
     assert_eq!(r_c.return_value["balance"], serde_json::json!(30u64));
 }
@@ -113,14 +161,26 @@ fn transfer_requires_caller_equals_from() {
     let mut engine = ContractEngine::new();
     let creator = 0xAA_u8;
     let id = deploy_token(&mut engine, "TOKEN", creator);
-    engine.call(id, "mint",
-                &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
-                &addr(creator), 0).unwrap();
+    engine
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
+            &addr(creator),
+            0,
+        )
+        .unwrap();
 
     // KAITO (0xAA) tries to move RAFAEL's (0xBB) tokens → denied.
-    let err = engine.call(id, "transfer",
-                          &serde_json::json!({"from": hex_addr(0xBB), "to": hex_addr(0xCC), "amount": 10u64}),
-                          &addr(creator), 0).unwrap_err();
+    let err = engine
+        .call(
+            id,
+            "transfer",
+            &serde_json::json!({"from": hex_addr(0xBB), "to": hex_addr(0xCC), "amount": 10u64}),
+            &addr(creator),
+            0,
+        )
+        .unwrap_err();
     assert!(
         matches!(err, ContractError::PermissionDenied(_)),
         "caller != from must be PermissionDenied, got {err:?}"
@@ -132,14 +192,26 @@ fn transfer_insufficient_funds() {
     let mut engine = ContractEngine::new();
     let creator = 0xAA_u8;
     let id = deploy_token(&mut engine, "TOKEN", creator);
-    engine.call(id, "mint",
-                &serde_json::json!({"to": hex_addr(0xBB), "amount": 10u64}),
-                &addr(creator), 0).unwrap();
+    engine
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 10u64}),
+            &addr(creator),
+            0,
+        )
+        .unwrap();
 
     // RAFAEL tries to transfer 999 but only has 10.
-    let err = engine.call(id, "transfer",
-                          &serde_json::json!({"from": hex_addr(0xBB), "to": hex_addr(0xCC), "amount": 999u64}),
-                          &addr(0xBB), 0).unwrap_err();
+    let err = engine
+        .call(
+            id,
+            "transfer",
+            &serde_json::json!({"from": hex_addr(0xBB), "to": hex_addr(0xCC), "amount": 999u64}),
+            &addr(0xBB),
+            0,
+        )
+        .unwrap_err();
     assert!(
         matches!(err, ContractError::InsufficientFunds { .. }),
         "over-transfer must be InsufficientFunds, got {err:?}"
@@ -151,17 +223,35 @@ fn burn_removes_from_balance() {
     let mut engine = ContractEngine::new();
     let creator = 0xAA_u8;
     let id = deploy_token(&mut engine, "TOKEN", creator);
-    engine.call(id, "mint",
-                &serde_json::json!({"to": hex_addr(0xBB), "amount": 50u64}),
-                &addr(creator), 0).unwrap();
+    engine
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 50u64}),
+            &addr(creator),
+            0,
+        )
+        .unwrap();
 
-    engine.call(id, "burn",
-                &serde_json::json!({"from": hex_addr(0xBB), "amount": 20u64}),
-                &addr(0xBB), 0).unwrap();
+    engine
+        .call(
+            id,
+            "burn",
+            &serde_json::json!({"from": hex_addr(0xBB), "amount": 20u64}),
+            &addr(0xBB),
+            0,
+        )
+        .unwrap();
 
-    let r = engine.call(id, "balance_of",
-                        &serde_json::json!({"addr": hex_addr(0xBB)}),
-                        &addr(creator), 0).unwrap();
+    let r = engine
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xBB)}),
+            &addr(creator),
+            0,
+        )
+        .unwrap();
     assert_eq!(r.return_value["balance"], serde_json::json!(30u64));
 }
 
@@ -169,7 +259,13 @@ fn burn_removes_from_balance() {
 fn not_found_for_unknown_contract_id() {
     let mut engine = ContractEngine::new();
     let err = engine
-        .call(999, "balance_of", &serde_json::json!({"addr": hex_addr(0xBB)}), &addr(0xAA), 0)
+        .call(
+            999,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xBB)}),
+            &addr(0xAA),
+            0,
+        )
         .unwrap_err();
     assert!(
         matches!(err, ContractError::NotFound(999)),
@@ -182,7 +278,13 @@ fn unknown_method_rejected() {
     let mut engine = ContractEngine::new();
     let id = deploy_token(&mut engine, "TOKEN", 0xAA);
     let err = engine
-        .call(id, "fly_to_the_moon", &serde_json::json!({}), &addr(0xAA), 0)
+        .call(
+            id,
+            "fly_to_the_moon",
+            &serde_json::json!({}),
+            &addr(0xAA),
+            0,
+        )
         .unwrap_err();
     assert!(
         matches!(err, ContractError::UnknownMethod(_)),
@@ -206,13 +308,25 @@ fn rule_engine_rejects_mint() {
         "owner": hex_addr(0xAA),
     });
     let id = engine
-        .deploy(ContractTemplate::DecayingToken, params, rules, addr(0xAA), 10_000, 100, 0)
+        .deploy(
+            ContractTemplate::DecayingToken,
+            params,
+            rules,
+            addr(0xAA),
+            10_000,
+            100,
+            0,
+        )
         .unwrap();
 
     let err = engine
-        .call(id, "mint",
-              &serde_json::json!({"to": hex_addr(0xBB), "amount": 1u64}),
-              &addr(0xAA), 0)
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 1u64}),
+            &addr(0xAA),
+            0,
+        )
         .unwrap_err();
     assert!(
         matches!(err, ContractError::RejectedByRule(_)),
@@ -236,17 +350,30 @@ fn rule_engine_emits_event_on_mint() {
         "owner": hex_addr(0xAA),
     });
     let id = engine
-        .deploy(ContractTemplate::DecayingToken, params, rules, addr(0xAA), 10_000, 100, 0)
+        .deploy(
+            ContractTemplate::DecayingToken,
+            params,
+            rules,
+            addr(0xAA),
+            10_000,
+            100,
+            0,
+        )
         .unwrap();
 
     let result: CallResult = engine
-        .call(id, "mint",
-              &serde_json::json!({"to": hex_addr(0xBB), "amount": 10u64}),
-              &addr(0xAA), 0)
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 10u64}),
+            &addr(0xAA),
+            0,
+        )
         .unwrap();
     assert!(
         result.events.iter().any(|e| e.contains("mint_alert")),
-        "OnMint EmitEvent rule must surface in CallResult.events: {:?}", result.events
+        "OnMint EmitEvent rule must surface in CallResult.events: {:?}",
+        result.events
     );
 }
 
@@ -262,13 +389,27 @@ fn tick_evaporates_zero_energy_contract() {
         "owner": hex_addr(0xAA),
     });
     let id = engine
-        .deploy(ContractTemplate::DecayingToken, params, vec![], addr(0xAA), 64, 1, 0)
+        .deploy(
+            ContractTemplate::DecayingToken,
+            params,
+            vec![],
+            addr(0xAA),
+            64,
+            1,
+            0,
+        )
         .unwrap();
 
     // Callable at epoch 0 (elapsed=0, energy=64).
-    engine.call(id, "balance_of",
-                &serde_json::json!({"addr": hex_addr(0xBB)}),
-                &addr(0xAA), 0).unwrap();
+    engine
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xBB)}),
+            &addr(0xAA),
+            0,
+        )
+        .unwrap();
 
     let tick = engine.tick(7);
     assert!(
@@ -288,14 +429,26 @@ fn call_on_evaporated_contract_is_evaporated_error() {
         "owner": hex_addr(0xAA),
     });
     let id = engine
-        .deploy(ContractTemplate::DecayingToken, params, vec![], addr(0xAA), 64, 1, 0)
+        .deploy(
+            ContractTemplate::DecayingToken,
+            params,
+            vec![],
+            addr(0xAA),
+            64,
+            1,
+            0,
+        )
         .unwrap();
     engine.tick(7); // evaporate
 
     let err = engine
-        .call(id, "balance_of",
-              &serde_json::json!({"addr": hex_addr(0xBB)}),
-              &addr(0xAA), 7)
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xBB)}),
+            &addr(0xAA),
+            7,
+        )
         .unwrap_err();
     assert!(
         matches!(err, ContractError::Evaporated(_)),
@@ -310,16 +463,31 @@ fn two_contracts_have_isolated_state() {
     let id_b = deploy_token(&mut engine, "TOKENB", 0xAA);
 
     // Mint 100 to RAFAEL in token A.
-    engine.call(id_a, "mint",
-                &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
-                &addr(0xAA), 0).unwrap();
+    engine
+        .call(
+            id_a,
+            "mint",
+            &serde_json::json!({"to": hex_addr(0xBB), "amount": 100u64}),
+            &addr(0xAA),
+            0,
+        )
+        .unwrap();
 
     // Check RAFAEL's balance in token B is still 0.
-    let r = engine.call(id_b, "balance_of",
-                        &serde_json::json!({"addr": hex_addr(0xBB)}),
-                        &addr(0xAA), 0).unwrap();
-    assert_eq!(r.return_value["balance"], serde_json::json!(0u64),
-        "minting in A must not affect B's state");
+    let r = engine
+        .call(
+            id_b,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(0xBB)}),
+            &addr(0xAA),
+            0,
+        )
+        .unwrap();
+    assert_eq!(
+        r.return_value["balance"],
+        serde_json::json!(0u64),
+        "minting in A must not affect B's state"
+    );
 }
 
 #[test]
@@ -336,39 +504,81 @@ fn kaito_token_full_arc() {
     let id = deploy_token(&mut engine, "KAITO-COIN", kaito);
 
     // KAITO mints 1_000 tokens to RAFAEL.
-    engine.call(id, "mint",
-                &serde_json::json!({"to": hex_addr(rafael), "amount": 1_000u64}),
-                &addr(kaito), 0).unwrap();
+    engine
+        .call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex_addr(rafael), "amount": 1_000u64}),
+            &addr(kaito),
+            0,
+        )
+        .unwrap();
 
     // RAFAEL checks their balance.
-    let r = engine.call(id, "balance_of",
-                        &serde_json::json!({"addr": hex_addr(rafael)}),
-                        &addr(kaito), 0).unwrap();
+    let r = engine
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(rafael)}),
+            &addr(kaito),
+            0,
+        )
+        .unwrap();
     assert_eq!(r.return_value["balance"], serde_json::json!(1_000u64));
 
     // IGOR tries to steal RAFAEL's tokens — denied.
-    let steal_err = engine.call(id, "transfer",
-                                &serde_json::json!({"from": hex_addr(rafael), "to": hex_addr(igor), "amount": 500u64}),
-                                &addr(igor), 0).unwrap_err();
+    let steal_err = engine
+        .call(
+            id,
+            "transfer",
+            &serde_json::json!({"from": hex_addr(rafael), "to": hex_addr(igor), "amount": 500u64}),
+            &addr(igor),
+            0,
+        )
+        .unwrap_err();
     assert!(matches!(steal_err, ContractError::PermissionDenied(_)));
 
     // RAFAEL transfers 400 to IGOR legitimately.
-    engine.call(id, "transfer",
-                &serde_json::json!({"from": hex_addr(rafael), "to": hex_addr(igor), "amount": 400u64}),
-                &addr(rafael), 0).unwrap();
+    engine
+        .call(
+            id,
+            "transfer",
+            &serde_json::json!({"from": hex_addr(rafael), "to": hex_addr(igor), "amount": 400u64}),
+            &addr(rafael),
+            0,
+        )
+        .unwrap();
 
     // IGOR burns 200.
-    engine.call(id, "burn",
-                &serde_json::json!({"from": hex_addr(igor), "amount": 200u64}),
-                &addr(igor), 0).unwrap();
+    engine
+        .call(
+            id,
+            "burn",
+            &serde_json::json!({"from": hex_addr(igor), "amount": 200u64}),
+            &addr(igor),
+            0,
+        )
+        .unwrap();
 
     // Final balances: RAFAEL 600, IGOR 200.
-    let r_r = engine.call(id, "balance_of",
-                          &serde_json::json!({"addr": hex_addr(rafael)}),
-                          &addr(kaito), 0).unwrap();
-    let r_i = engine.call(id, "balance_of",
-                          &serde_json::json!({"addr": hex_addr(igor)}),
-                          &addr(kaito), 0).unwrap();
+    let r_r = engine
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(rafael)}),
+            &addr(kaito),
+            0,
+        )
+        .unwrap();
+    let r_i = engine
+        .call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": hex_addr(igor)}),
+            &addr(kaito),
+            0,
+        )
+        .unwrap();
     assert_eq!(r_r.return_value["balance"], serde_json::json!(600u64));
     assert_eq!(r_i.return_value["balance"], serde_json::json!(200u64));
 
@@ -381,9 +591,20 @@ fn kaito_token_full_arc() {
         "owner": hex_addr(kaito),
     });
     let short_id = engine
-        .deploy(ContractTemplate::DecayingToken, params, vec![], addr(kaito), 64, 1, 0)
+        .deploy(
+            ContractTemplate::DecayingToken,
+            params,
+            vec![],
+            addr(kaito),
+            64,
+            1,
+            0,
+        )
         .unwrap();
     let tick = engine.tick(7);
     assert!(tick.contracts_evaporated.contains(&short_id));
-    assert!(!tick.contracts_evaporated.contains(&id), "KAITO-COIN must survive");
+    assert!(
+        !tick.contracts_evaporated.contains(&id),
+        "KAITO-COIN must survive"
+    );
 }

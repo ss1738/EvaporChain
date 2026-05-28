@@ -38,10 +38,8 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("TimeLock failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("TimeLock failed to compile: {e:?}"))
+    let ast = parser::parse(SOURCE).unwrap_or_else(|e| panic!("TimeLock failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("TimeLock failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -157,7 +155,11 @@ fn double_set_terms_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "set_terms",
-        vec![Value::Address(beneficiary), Value::U64(2000), Value::U64(800)],
+        vec![
+            Value::Address(beneficiary),
+            Value::U64(2000),
+            Value::U64(800),
+        ],
         armed,
         &ctx(grantor, grantor, 200, 10_000),
     )

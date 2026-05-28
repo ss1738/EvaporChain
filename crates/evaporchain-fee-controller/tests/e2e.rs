@@ -25,11 +25,11 @@ use evaporchain_fee_controller::state::FeeState;
 
 fn params() -> FeeControllerParams {
     FeeControllerParams::new(
-        1_000_000,           // target_energy
-        30_000_000,          // target_gas
+        1_000_000,  // target_energy
+        30_000_000, // target_gas
         ChainLambda::new(Lambda::from_epochs(100)),
-        125_000,             // fee_response_ppm
-        1_000,               // base_fee_floor
+        125_000, // fee_response_ppm
+        1_000,   // base_fee_floor
     )
 }
 
@@ -43,8 +43,8 @@ fn lyapunov_decreases_from_high_start() {
 
     for step in 0..100 {
         // gas_used = target_gas → zero perturbation; pure exponential decay.
-        let (new_state, _drift) = FeeController::step(&p, &state, p.target_gas, 1)
-            .expect("step should not error");
+        let (new_state, _drift) =
+            FeeController::step(&p, &state, p.target_gas, 1).expect("step should not error");
         state = new_state;
         let v = lyapunov_value(state.energy, p.target_energy);
 
@@ -74,8 +74,8 @@ fn lyapunov_decreases_from_zero_start() {
     let mut prev_v = lyapunov_value(state.energy, p.target_energy);
 
     for step in 0..100 {
-        let (new_state, _drift) = FeeController::step(&p, &state, p.target_gas, 1)
-            .expect("step should not error");
+        let (new_state, _drift) =
+            FeeController::step(&p, &state, p.target_gas, 1).expect("step should not error");
         state = new_state;
         let v = lyapunov_value(state.energy, p.target_energy);
         assert!(
@@ -96,9 +96,12 @@ fn at_equilibrium_no_drift() {
     let p = params();
     let state = FeeState::at_equilibrium(p.target_energy);
     // gas_used = target_gas and energy = target_energy → V must not change.
-    let (_new_state, drift) = FeeController::step(&p, &state, p.target_gas, 1)
-        .expect("step at equilibrium");
-    assert_eq!(drift.v_before, drift.v_after, "V must not change at equilibrium");
+    let (_new_state, drift) =
+        FeeController::step(&p, &state, p.target_gas, 1).expect("step at equilibrium");
+    assert_eq!(
+        drift.v_before, drift.v_after,
+        "V must not change at equilibrium"
+    );
 }
 
 // ── base_fee floor enforced ───────────────────────────────────────────────

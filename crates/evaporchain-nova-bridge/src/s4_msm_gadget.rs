@@ -50,8 +50,7 @@ pub fn pedersen_msm_grumpkin(
     let mut acc = GrumpkinVar::zero();
     for (s, base) in scalars.iter().zip(bases.iter()) {
         let bits = s.to_bits_le()?;
-        let term = GrumpkinVar::constant(Projective::from(*base))
-            .scalar_mul_le(bits.iter())?;
+        let term = GrumpkinVar::constant(Projective::from(*base)).scalar_mul_le(bits.iter())?;
         acc += term;
     }
     let rbits = blind.to_bits_le()?;
@@ -77,8 +76,7 @@ mod tests {
     #[test]
     #[ignore = "S4a-wiring-0 diagnostic: prints real pp ck_secondary JSON shape"]
     fn dump_ck_secondary_shape() {
-        let pp = crate::recursive_snark_fixture::canonical_public_params()
-            .expect("canonical pp");
+        let pp = crate::recursive_snark_fixture::canonical_public_params().expect("canonical pp");
         let v = serde_json::to_value(&pp).expect("pp to_value");
 
         let obj = v.as_object().expect("pp json is object");
@@ -116,8 +114,10 @@ mod tests {
         } else {
             eprintln!(
                 "ck_secondary RAW (truncated 400) = {}",
-                &serde_json::to_string(ck_sec).unwrap_or_default()
-                    [..serde_json::to_string(ck_sec).unwrap_or_default().len().min(400)]
+                &serde_json::to_string(ck_sec).unwrap_or_default()[..serde_json::to_string(ck_sec)
+                    .unwrap_or_default()
+                    .len()
+                    .min(400)]
             );
         }
     }
@@ -148,8 +148,7 @@ mod tests {
         let sv1 = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(s1)).unwrap();
         let rv = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(r)).unwrap();
 
-        let out = pedersen_msm_grumpkin(&[sv0, sv1], &bases, &rv, h_aff)
-            .expect("gadget synthesis");
+        let out = pedersen_msm_grumpkin(&[sv0, sv1], &bases, &rv, h_aff).expect("gadget synthesis");
 
         assert!(
             cs.is_satisfied().expect("is_satisfied"),
@@ -177,8 +176,9 @@ mod tests {
         let h_aff = (g * Bn254Fq::from(7u64)).into_affine();
 
         let measure = |k: usize| -> usize {
-            let bases: Vec<_> =
-                (1..=k).map(|i| (g * Bn254Fq::from(i as u64)).into_affine()).collect();
+            let bases: Vec<_> = (1..=k)
+                .map(|i| (g * Bn254Fq::from(i as u64)).into_affine())
+                .collect();
             let cs = ConstraintSystem::<Bn254Fr>::new_ref();
             let scalars: Vec<EmulatedFpVar<Bn254Fq, Bn254Fr>> = (1..=k)
                 .map(|i| {
@@ -186,9 +186,10 @@ mod tests {
                         .unwrap()
                 })
                 .collect();
-            let blind =
-                EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fq::from(5u64)))
-                    .unwrap();
+            let blind = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || {
+                Ok(Bn254Fq::from(5u64))
+            })
+            .unwrap();
             pedersen_msm_grumpkin(&scalars, &bases, &blind, h_aff).expect("synth");
             assert!(cs.is_satisfied().unwrap(), "k={k} CS must be satisfied");
             cs.num_constraints()

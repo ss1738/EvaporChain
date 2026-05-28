@@ -173,9 +173,8 @@ impl DecayBoundAuction {
             chain_id.len()
         );
         let chain_bytes = chain_id.as_bytes();
-        let mut input = Vec::with_capacity(
-            COMMITMENT_DST.len() + 1 + chain_bytes.len() + 32 + 32 + 8 + 32,
-        );
+        let mut input =
+            Vec::with_capacity(COMMITMENT_DST.len() + 1 + chain_bytes.len() + 32 + 32 + 8 + 32);
         input.extend_from_slice(COMMITMENT_DST);
         input.push(chain_bytes.len() as u8);
         input.extend_from_slice(chain_bytes);
@@ -245,7 +244,10 @@ impl DecayBoundAuction {
         }
         let chain_id = self.chain_id.clone();
         let auction_id = self.auction_id;
-        let bid = self.bids.get_mut(&bidder).ok_or(AuctionError::NoCommitment)?;
+        let bid = self
+            .bids
+            .get_mut(&bidder)
+            .ok_or(AuctionError::NoCommitment)?;
         let expected = Self::compute_commitment(&chain_id, &auction_id, &bidder, price, &nonce);
         if expected != bid.commitment {
             return Err(AuctionError::RevealMismatch);
@@ -280,7 +282,10 @@ impl DecayBoundAuction {
         evaporchain_types::energy_at_epoch(
             self.initial_energy,
             self.half_life_epochs,
-            epoch.saturating_sub(self.commit_deadline_epoch.saturating_sub(self.half_life_epochs)),
+            epoch.saturating_sub(
+                self.commit_deadline_epoch
+                    .saturating_sub(self.half_life_epochs),
+            ),
         )
     }
 
@@ -432,8 +437,11 @@ mod tests {
     #[test]
     fn submit_commitment_rejects_duplicate_bidder() {
         let mut a = make_auction();
-        a.submit_commitment(addr(1), BidCommitment([1u8; 32])).unwrap();
-        let err = a.submit_commitment(addr(1), BidCommitment([2u8; 32])).unwrap_err();
+        a.submit_commitment(addr(1), BidCommitment([1u8; 32]))
+            .unwrap();
+        let err = a
+            .submit_commitment(addr(1), BidCommitment([2u8; 32]))
+            .unwrap_err();
         assert_eq!(err, AuctionError::DuplicateBidder);
     }
 

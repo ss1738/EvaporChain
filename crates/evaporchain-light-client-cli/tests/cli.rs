@@ -33,9 +33,16 @@ fn top_level_help_prints_subcommand_list() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let combined = format!("{stdout}{stderr}");
-    assert!(out.status.success(), "--help must exit 0; got {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "--help must exit 0; got {:?}",
+        out.status
+    );
     // All three subcommands must appear in help output.
-    assert!(combined.contains("sync-latest"), "help must list sync-latest");
+    assert!(
+        combined.contains("sync-latest"),
+        "help must list sync-latest"
+    );
     assert!(combined.contains("get-state"), "help must list get-state");
     assert!(combined.contains("watch"), "help must list watch");
 }
@@ -75,7 +82,10 @@ fn unknown_subcommand_rejected() {
 
 #[test]
 fn sync_latest_help_lists_node_and_genesis_height() {
-    let out = bin().args(["sync-latest", "--help"]).output().expect("spawn");
+    let out = bin()
+        .args(["sync-latest", "--help"])
+        .output()
+        .expect("spawn");
     assert!(out.status.success());
     let combined = format!(
         "{}{}",
@@ -131,7 +141,10 @@ fn get_state_with_both_key_and_account_rejected() {
         ])
         .output()
         .expect("spawn");
-    assert!(!out.status.success(), "both --key and --account must conflict");
+    assert!(
+        !out.status.success(),
+        "both --key and --account must conflict"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("cannot be used") || stderr.contains("conflicts"),

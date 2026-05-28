@@ -62,7 +62,9 @@ pub fn compute_root(epoch: u64, validators: &[Validator]) -> Result<([u8; 32], u
     for v in validators {
         h.update(v.pubkey);
         h.update(v.stake.to_be_bytes());
-        total = total.checked_add(v.stake).ok_or(ValsetError::StakeOverflow)?;
+        total = total
+            .checked_add(v.stake)
+            .ok_or(ValsetError::StakeOverflow)?;
     }
 
     let out = h.finalize();

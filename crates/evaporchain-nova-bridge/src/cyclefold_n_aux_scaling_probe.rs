@@ -36,11 +36,10 @@
 use ark_bn254::Fq as Bn254Fq;
 use ark_ff::Field;
 use ark_relations::{
-    lc,
     gr1cs::{
-        ConstraintSynthesizer, ConstraintSystemRef, LinearCombination,
-        SynthesisError, Variable,
+        ConstraintSynthesizer, ConstraintSystemRef, LinearCombination, SynthesisError, Variable,
     },
+    lc,
 };
 
 use crate::cyclefold_n_aux_probe::measure_cf_secondary_n_aux;
@@ -64,15 +63,16 @@ pub struct TrivialChainCircuit {
 
 impl TrivialChainCircuit {
     pub fn new(chain_len: usize, w0: Bn254Fq, scalar: Bn254Fq) -> Self {
-        Self { chain_len, w0, scalar }
+        Self {
+            chain_len,
+            w0,
+            scalar,
+        }
     }
 }
 
 impl ConstraintSynthesizer<Bn254Fq> for TrivialChainCircuit {
-    fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<Bn254Fq>,
-    ) -> Result<(), SynthesisError> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Bn254Fq>) -> Result<(), SynthesisError> {
         let n = self.chain_len;
         if n == 0 {
             return Ok(());
@@ -116,11 +116,7 @@ pub fn measure_synthetic_n_aux(
     chain_len: usize,
     ck_label: &'static [u8],
 ) -> Result<crate::cyclefold_n_aux_probe::NauxMeasurement, BridgeError> {
-    let circuit = TrivialChainCircuit::new(
-        chain_len,
-        Bn254Fq::from(7u64),
-        Bn254Fq::from(3u64),
-    );
+    let circuit = TrivialChainCircuit::new(chain_len, Bn254Fq::from(7u64), Bn254Fq::from(3u64));
     measure_cf_secondary_n_aux(circuit, ck_label)
 }
 
@@ -142,8 +138,7 @@ mod tests {
         let chain_lens = [8usize, 32, 128, 512, 2048];
         let mut results = Vec::new();
         for &n in &chain_lens {
-            let m = measure_synthetic_n_aux(n, b"ev-naux-scale")
-                .expect("synthetic ppsnark probe");
+            let m = measure_synthetic_n_aux(n, b"ev-naux-scale").expect("synthetic ppsnark probe");
             println!(
                 "N_AUX_SCALE chain_len={} n_aux={} log_n_aux={} \
                  shape_num_cons={} shape_num_vars={}",
@@ -164,7 +159,9 @@ mod tests {
         // Report all results in JSON-ish form for downstream parsing.
         print!("N_AUX_SCALING_TABLE [");
         for (i, (n, m)) in results.iter().enumerate() {
-            if i > 0 { print!(","); }
+            if i > 0 {
+                print!(",");
+            }
             print!(
                 "{{\"chain_len\":{},\"n_aux\":{},\"log_n_aux\":{},\"cons\":{},\"vars\":{}}}",
                 n, m.n_aux, m.log_n_aux, m.shape_num_cons, m.shape_num_vars

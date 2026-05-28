@@ -95,7 +95,10 @@ mod press_claim_tests {
         // tick_decay at window+1 marks consumed; use then returns Evaporated.
         let r = Resource::decaying("day-pass", 0u64, 10);
         let ticked = tick_decay(r, 11);
-        assert!(ticked.consumed, "resource must be marked evaporated at window+1");
+        assert!(
+            ticked.consumed,
+            "resource must be marked evaporated at window+1"
+        );
         let err = use_resource(ticked, 11).unwrap_err();
         assert_eq!(err, OpError::AlreadyConsumed);
     }
@@ -110,11 +113,11 @@ mod press_claim_tests {
 
     #[test]
     fn mode_identity_preserved() {
-        let linear  = Resource::linear(1u8, 0);
-        let affine  = Resource::affine(2u8, 0);
+        let linear = Resource::linear(1u8, 0);
+        let affine = Resource::affine(2u8, 0);
         let decaying = Resource::decaying(3u8, 0, 50);
-        assert_eq!(linear.mode,  Mode::Linear);
-        assert_eq!(affine.mode,  Mode::Affine);
+        assert_eq!(linear.mode, Mode::Linear);
+        assert_eq!(affine.mode, Mode::Affine);
         assert_eq!(decaying.mode, Mode::Decaying);
     }
 }

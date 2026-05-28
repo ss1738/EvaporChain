@@ -65,10 +65,14 @@ fn memento_commitment_serde_round_trips() {
 fn all_5_trigger_variants_serde_round_trip() {
     let variants = vec![
         MementoTrigger::BlockHeightReached(100),
-        MementoTrigger::OwnerInactiveSince { min_idle_epochs: 50 },
+        MementoTrigger::OwnerInactiveSince {
+            min_idle_epochs: 50,
+        },
         MementoTrigger::OwnerEnergyBelow { threshold: 500 },
         MementoTrigger::OwnerSignedReveal,
-        MementoTrigger::AttesterApproval { attester: [0xC0; 32] },
+        MementoTrigger::AttesterApproval {
+            attester: [0xC0; 32],
+        },
     ];
     for t in variants {
         let json = serde_json::to_string(&t).expect("serialize");
@@ -131,7 +135,10 @@ fn empty_payload_seals_and_reveals() {
         payload: opening.payload.clone(),
         nonce: opening.nonce,
     };
-    let obs = ChainObservation { current_epoch: 1, ..Default::default() };
+    let obs = ChainObservation {
+        current_epoch: 1,
+        ..Default::default()
+    };
     let revealed = try_reveal(&contract, &reveal, &obs).expect("empty payload must reveal");
     assert_eq!(revealed, opening.payload);
     assert!(revealed.is_empty());
@@ -151,7 +158,10 @@ fn block_height_reached_at_exact_target_fires() {
         payload: opening.payload.clone(),
         nonce: opening.nonce,
     };
-    let obs = ChainObservation { current_epoch: 100, ..Default::default() };
+    let obs = ChainObservation {
+        current_epoch: 100,
+        ..Default::default()
+    };
     assert!(try_reveal(&contract, &reveal, &obs).is_ok());
 }
 
@@ -215,7 +225,10 @@ fn block_height_reached_at_zero_fires_at_any_epoch() {
         nonce: opening.nonce,
     };
     for epoch in [0u64, 1, 1_000, u64::MAX] {
-        let obs = ChainObservation { current_epoch: epoch, ..Default::default() };
+        let obs = ChainObservation {
+            current_epoch: epoch,
+            ..Default::default()
+        };
         assert!(
             try_reveal(&contract, &reveal, &obs).is_ok(),
             "must fire at epoch {epoch}"
@@ -247,7 +260,10 @@ fn unsupported_version_is_rejected_before_commitment_check() {
         payload: opening.payload.clone(),
         nonce: opening.nonce,
     };
-    let obs = ChainObservation { current_epoch: 1, ..Default::default() };
+    let obs = ChainObservation {
+        current_epoch: 1,
+        ..Default::default()
+    };
     // V1 path must still succeed today.
     assert!(try_reveal(&contract, &reveal, &obs).is_ok());
     // Pin that V1 is the only variant: matching exhaustively must compile.
@@ -317,7 +333,9 @@ fn attester_approval_with_zero_address_is_valid_lookup() {
     let (contract, opening) = seal(
         b"x".to_vec(),
         [1u8; 32],
-        MementoTrigger::AttesterApproval { attester: zero_attester },
+        MementoTrigger::AttesterApproval {
+            attester: zero_attester,
+        },
         OWNER,
         0,
     );

@@ -41,26 +41,44 @@ use evaporchain_conviction_vote::{
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 
-const THRESHOLD_P1: u128 =  5_000_000;
+const THRESHOLD_P1: u128 = 5_000_000;
 const THRESHOLD_P2: u128 = 12_000_000;
 const THRESHOLD_P3: u128 = 30_000_000;
 
 const STAKE_ALICE: u128 = 1_000_000;
-const STAKE_BOB:   u128 = 1_000_000;
+const STAKE_BOB: u128 = 1_000_000;
 const STAKE_CAROL: u128 = 3_000_000;
-const STAKE_DAVE:  u128 = 2_500_000;
+const STAKE_DAVE: u128 = 2_500_000;
 
-fn pid(b: u8) -> ProposalId { ProposalId([b; 32]) }
-fn vid(b: u8) -> VoterId { VoterId([b; 32]) }
+fn pid(b: u8) -> ProposalId {
+    ProposalId([b; 32])
+}
+fn vid(b: u8) -> VoterId {
+    VoterId([b; 32])
+}
 
-fn p1() -> ProposalId { pid(1) }
-fn p2() -> ProposalId { pid(2) }
-fn p3() -> ProposalId { pid(3) }
+fn p1() -> ProposalId {
+    pid(1)
+}
+fn p2() -> ProposalId {
+    pid(2)
+}
+fn p3() -> ProposalId {
+    pid(3)
+}
 
-fn alice() -> VoterId { vid(10) }
-fn bob()   -> VoterId { vid(20) }
-fn carol() -> VoterId { vid(30) }
-fn dave()  -> VoterId { vid(40) }
+fn alice() -> VoterId {
+    vid(10)
+}
+fn bob() -> VoterId {
+    vid(20)
+}
+fn carol() -> VoterId {
+    vid(30)
+}
+fn dave() -> VoterId {
+    vid(40)
+}
 
 fn new_proposal(id: ProposalId, threshold: u128) -> Proposal {
     Proposal::new(id, ALPHA_MICROS_DEFAULT, threshold, 0).unwrap()
@@ -80,16 +98,25 @@ fn conviction_arithmetic_matches_integer_recurrence_at_known_ticks() {
     reg.allocate(pid(99), bob(), STAKE_BOB).unwrap();
 
     reg.tick(pid(99), 1).unwrap();
-    assert_eq!(reg.get(&pid(99)).unwrap().conviction_micros, 2_000_000,
-        "tick 1 conviction must be exactly 2_000_000");
+    assert_eq!(
+        reg.get(&pid(99)).unwrap().conviction_micros,
+        2_000_000,
+        "tick 1 conviction must be exactly 2_000_000"
+    );
 
     reg.tick(pid(99), 2).unwrap();
-    assert_eq!(reg.get(&pid(99)).unwrap().conviction_micros, 3_800_000,
-        "tick 2 conviction must be exactly 3_800_000");
+    assert_eq!(
+        reg.get(&pid(99)).unwrap().conviction_micros,
+        3_800_000,
+        "tick 2 conviction must be exactly 3_800_000"
+    );
 
     reg.tick(pid(99), 3).unwrap();
-    assert_eq!(reg.get(&pid(99)).unwrap().conviction_micros, 5_420_000,
-        "tick 3 conviction must be exactly 5_420_000");
+    assert_eq!(
+        reg.get(&pid(99)).unwrap().conviction_micros,
+        5_420_000,
+        "tick 3 conviction must be exactly 5_420_000"
+    );
 }
 
 // ── Full 3-proposal DAO governance session ────────────────────────────────────
@@ -119,9 +146,15 @@ fn full_dao_three_proposal_governance_session() {
         reg.tick(p2(), t).unwrap();
         reg.tick(p3(), t).unwrap();
 
-        if p1_pass_tick.is_none() && reg.get(&p1()).unwrap().is_passed() { p1_pass_tick = Some(t); }
-        if p2_pass_tick.is_none() && reg.get(&p2()).unwrap().is_passed() { p2_pass_tick = Some(t); }
-        if p3_pass_tick.is_none() && reg.get(&p3()).unwrap().is_passed() { p3_pass_tick = Some(t); }
+        if p1_pass_tick.is_none() && reg.get(&p1()).unwrap().is_passed() {
+            p1_pass_tick = Some(t);
+        }
+        if p2_pass_tick.is_none() && reg.get(&p2()).unwrap().is_passed() {
+            p2_pass_tick = Some(t);
+        }
+        if p3_pass_tick.is_none() && reg.get(&p3()).unwrap().is_passed() {
+            p3_pass_tick = Some(t);
+        }
     }
 
     let p1_t = p1_pass_tick.expect("P1 must pass within 20 ticks");
@@ -129,12 +162,16 @@ fn full_dao_three_proposal_governance_session() {
     let p3_t = p3_pass_tick.expect("P3 must pass within 20 ticks");
 
     // Higher threshold takes longer under the same coalition.
-    assert!(p1_t < p2_t,
-        "P1 (5M threshold) must pass before P2 (12M threshold)");
+    assert!(
+        p1_t < p2_t,
+        "P1 (5M threshold) must pass before P2 (12M threshold)"
+    );
 
     // P3 has a larger coalition (5M/tick) so passes ≤ P2 (2M/tick).
-    assert!(p3_t <= p2_t,
-        "P3 coalition (5M/tick) passes no later than P2 coalition (2M/tick)");
+    assert!(
+        p3_t <= p2_t,
+        "P3 coalition (5M/tick) passes no later than P2 coalition (2M/tick)"
+    );
 }
 
 // ── Flash-mob adversarial ─────────────────────────────────────────────────────
@@ -151,10 +188,14 @@ fn flash_mob_fails_on_high_threshold_proposal() {
         reg.tick(p3(), t).unwrap();
     }
     let peak = reg.get(&p3()).unwrap().conviction_micros;
-    assert!(peak < THRESHOLD_P3,
-        "Carol's 10-tick flash-mob peak {peak} must not reach threshold {THRESHOLD_P3}");
-    assert!(!reg.get(&p3()).unwrap().is_passed(),
-        "P3 must not be passed after Carol's flash mob");
+    assert!(
+        peak < THRESHOLD_P3,
+        "Carol's 10-tick flash-mob peak {peak} must not reach threshold {THRESHOLD_P3}"
+    );
+    assert!(
+        !reg.get(&p3()).unwrap().is_passed(),
+        "P3 must not be passed after Carol's flash mob"
+    );
 
     // Carol withdraws completely.
     reg.allocate(p3(), carol(), 0).unwrap();
@@ -163,10 +204,14 @@ fn flash_mob_fails_on_high_threshold_proposal() {
     for t in 11u64..=210 {
         reg.tick(p3(), t).unwrap();
     }
-    assert!(!reg.get(&p3()).unwrap().is_passed(),
-        "P3 must remain unpassed after flash-mob withdrawal and 200-tick decay");
-    assert!(reg.get(&p3()).unwrap().conviction_micros < 1_000,
-        "conviction must decay to near-zero after flash mob withdraws");
+    assert!(
+        !reg.get(&p3()).unwrap().is_passed(),
+        "P3 must remain unpassed after flash-mob withdrawal and 200-tick decay"
+    );
+    assert!(
+        reg.get(&p3()).unwrap().conviction_micros < 1_000,
+        "conviction must decay to near-zero after flash mob withdraws"
+    );
 }
 
 // ── Two-timescale doctrine ────────────────────────────────────────────────────
@@ -181,23 +226,28 @@ fn two_timescale_doctrine_engaged_passes_depositor_fails() {
     // Both start with STAKE_ALICE = 1_000_000.  Asymptote = 10M > THRESHOLD_P1 = 5M.
     // Depositor: c(1) = 1M, then 0. Max ever = 1M << 5M threshold. → FAILS.
     // Engaged: conviction grows to 10M asymptote, crosses 5M. → PASSES.
-    let mut engaged  = Proposal::new(pid(10), ALPHA_MICROS_DEFAULT, THRESHOLD_P1, 0).unwrap();
+    let mut engaged = Proposal::new(pid(10), ALPHA_MICROS_DEFAULT, THRESHOLD_P1, 0).unwrap();
     let mut depositor = Proposal::new(pid(11), ALPHA_MICROS_DEFAULT, THRESHOLD_P1, 0).unwrap();
 
     engaged.tick(1, STAKE_ALICE).unwrap();
-    depositor.tick(1, STAKE_ALICE).unwrap();  // one-time deposit
+    depositor.tick(1, STAKE_ALICE).unwrap(); // one-time deposit
 
     for t in 2u64..=200 {
-        engaged.tick(t, STAKE_ALICE).unwrap();  // re-anchors every tick
-        depositor.tick(t, 0).unwrap();           // gone: stake decays to 0
+        engaged.tick(t, STAKE_ALICE).unwrap(); // re-anchors every tick
+        depositor.tick(t, 0).unwrap(); // gone: stake decays to 0
     }
 
-    assert!(engaged.is_passed(),
-        "engaged voter with sustained stake must pass threshold");
+    assert!(
+        engaged.is_passed(),
+        "engaged voter with sustained stake must pass threshold"
+    );
     assert!(!depositor.is_passed(),
         "deposit-and-leave voter must never pass threshold — conviction decays faster than it built");
-    assert!(depositor.conviction_micros < 100,
-        "depositor conviction must decay to near-zero after 200 ticks (got {})", depositor.conviction_micros);
+    assert!(
+        depositor.conviction_micros < 100,
+        "depositor conviction must decay to near-zero after 200 ticks (got {})",
+        depositor.conviction_micros
+    );
 }
 
 // ── Pass-state stickiness ─────────────────────────────────────────────────────
@@ -231,10 +281,14 @@ fn passed_state_sticky_after_full_stake_withdrawal() {
         reg.tick(p1(), t).unwrap();
     }
 
-    assert!(reg.get(&p1()).unwrap().is_passed(),
-        "passed proposal must remain passed after stake withdrawal (no flapping)");
-    assert!(reg.get(&p1()).unwrap().conviction_micros < conviction_at_pass,
-        "conviction must have decayed after 200 ticks of zero stake");
+    assert!(
+        reg.get(&p1()).unwrap().is_passed(),
+        "passed proposal must remain passed after stake withdrawal (no flapping)"
+    );
+    assert!(
+        reg.get(&p1()).unwrap().conviction_micros < conviction_at_pass,
+        "conviction must have decayed after 200 ticks of zero stake"
+    );
 }
 
 // ── Asymptote ceiling ─────────────────────────────────────────────────────────
@@ -248,11 +302,19 @@ fn alice_alone_below_asymptote_threshold_never_passes() {
     for t in 1u64..=1_000 {
         p.tick(t, STAKE_ALICE).unwrap();
     }
-    assert!(!p.is_passed(),
-        "Alice alone cannot exceed her asymptote (10M); threshold 15M is unreachable");
+    assert!(
+        !p.is_passed(),
+        "Alice alone cannot exceed her asymptote (10M); threshold 15M is unreachable"
+    );
     // After 1000 ticks, conviction approaches but stays below asymptote.
-    assert!(p.conviction_micros < 11_000_000, "conviction must stay below asymptote");
-    assert!(p.conviction_micros >  9_900_000, "after 1000 ticks, conviction must be near asymptote");
+    assert!(
+        p.conviction_micros < 11_000_000,
+        "conviction must stay below asymptote"
+    );
+    assert!(
+        p.conviction_micros > 9_900_000,
+        "after 1000 ticks, conviction must be near asymptote"
+    );
 }
 
 // ── Multi-voter coalition via registry ────────────────────────────────────────
@@ -269,19 +331,33 @@ fn multi_voter_coalition_stake_sums_and_drives_conviction_via_registry() {
     reg.allocate(pid(7), bob(), STAKE_BOB).unwrap();
     reg.allocate(pid(7), carol(), STAKE_CAROL).unwrap();
 
-    assert_eq!(reg.total_stake_on(pid(7)), 5_000_000,
-        "total stake must equal Alice+Bob+Carol = 5_000_000");
+    assert_eq!(
+        reg.total_stake_on(pid(7)),
+        5_000_000,
+        "total stake must equal Alice+Bob+Carol = 5_000_000"
+    );
 
     reg.tick(pid(7), 1).unwrap();
-    assert_eq!(reg.get(&pid(7)).unwrap().conviction_micros, 5_000_000,
-        "tick 1 conviction = 5_000_000 (five voters' combined stake)");
-    assert!(!reg.get(&pid(7)).unwrap().is_passed(), "threshold not yet crossed at tick 1");
+    assert_eq!(
+        reg.get(&pid(7)).unwrap().conviction_micros,
+        5_000_000,
+        "tick 1 conviction = 5_000_000 (five voters' combined stake)"
+    );
+    assert!(
+        !reg.get(&pid(7)).unwrap().is_passed(),
+        "threshold not yet crossed at tick 1"
+    );
 
     reg.tick(pid(7), 2).unwrap();
-    assert_eq!(reg.get(&pid(7)).unwrap().conviction_micros, 9_500_000,
-        "tick 2 conviction = 9_500_000");
-    assert!(reg.get(&pid(7)).unwrap().is_passed(),
-        "coalition of 5M/tick must cross 8M threshold by tick 2");
+    assert_eq!(
+        reg.get(&pid(7)).unwrap().conviction_micros,
+        9_500_000,
+        "tick 2 conviction = 9_500_000"
+    );
+    assert!(
+        reg.get(&pid(7)).unwrap().is_passed(),
+        "coalition of 5M/tick must cross 8M threshold by tick 2"
+    );
 }
 
 // ── Late-joiner tips stalled proposal ─────────────────────────────────────────
@@ -299,8 +375,10 @@ fn late_joiner_tips_stalled_proposal_over_threshold() {
         reg.tick(p3(), t).unwrap();
     }
     let conv_before_dave = reg.get(&p3()).unwrap().conviction_micros;
-    assert!(conv_before_dave < THRESHOLD_P3,
-        "Alice alone (asymptote 10M) cannot reach threshold 30M: got {conv_before_dave}");
+    assert!(
+        conv_before_dave < THRESHOLD_P3,
+        "Alice alone (asymptote 10M) cannot reach threshold 30M: got {conv_before_dave}"
+    );
     assert!(!reg.get(&p3()).unwrap().is_passed());
 
     // Dave joins.
@@ -309,8 +387,10 @@ fn late_joiner_tips_stalled_proposal_over_threshold() {
     for t in 101u64..=250 {
         reg.tick(p3(), t).unwrap();
     }
-    assert!(reg.get(&p3()).unwrap().is_passed(),
-        "Alice (1M) + Dave (2.5M) = 3.5M/tick, asymptote 35M, must eventually pass 30M threshold");
+    assert!(
+        reg.get(&p3()).unwrap().is_passed(),
+        "Alice (1M) + Dave (2.5M) = 3.5M/tick, asymptote 35M, must eventually pass 30M threshold"
+    );
 }
 
 // ── Proposals fully independent ───────────────────────────────────────────────
@@ -330,10 +410,19 @@ fn separate_proposals_are_fully_independent_in_registry() {
         reg.tick(p2(), t).unwrap();
     }
 
-    assert!(reg.get(&p1()).unwrap().is_passed(), "P1 with Alice+Bob must pass");
-    assert!(!reg.get(&p2()).unwrap().is_passed(), "P2 with zero stake must not pass");
-    assert_eq!(reg.get(&p2()).unwrap().conviction_micros, 0,
-        "P2 conviction must be 0 — no votes allocated");
+    assert!(
+        reg.get(&p1()).unwrap().is_passed(),
+        "P1 with Alice+Bob must pass"
+    );
+    assert!(
+        !reg.get(&p2()).unwrap().is_passed(),
+        "P2 with zero stake must not pass"
+    );
+    assert_eq!(
+        reg.get(&p2()).unwrap().conviction_micros,
+        0,
+        "P2 conviction must be 0 — no votes allocated"
+    );
 }
 
 // ── Adversarial: registration / allocation errors ─────────────────────────────
@@ -343,16 +432,20 @@ fn adversarial_duplicate_proposal_registration_rejected() {
     let mut reg = ConvictionRegistry::new();
     reg.register(new_proposal(p1(), THRESHOLD_P1)).unwrap();
     let err = reg.register(new_proposal(p1(), 999)).unwrap_err();
-    assert!(matches!(err, RegistryError::AlreadyRegistered(_)),
-        "second registration of same ProposalId must be rejected");
+    assert!(
+        matches!(err, RegistryError::AlreadyRegistered(_)),
+        "second registration of same ProposalId must be rejected"
+    );
 }
 
 #[test]
 fn adversarial_unknown_proposal_tick_rejected() {
     let mut reg = ConvictionRegistry::new();
     let err = reg.tick(pid(99), 1).unwrap_err();
-    assert!(matches!(err, RegistryError::UnknownProposal(_)),
-        "tick on unregistered proposal must return UnknownProposal");
+    assert!(
+        matches!(err, RegistryError::UnknownProposal(_)),
+        "tick on unregistered proposal must return UnknownProposal"
+    );
 }
 
 #[test]
@@ -365,7 +458,13 @@ fn adversarial_non_monotone_tick_propagates_via_registry() {
     // Attempt to re-tick at a lower tick number.
     let err = reg.tick(p1(), 5).unwrap_err();
     assert!(
-        matches!(err, RegistryError::Proposal(ProposalError::NonMonotoneTick { incoming: 5, last: 10 })),
+        matches!(
+            err,
+            RegistryError::Proposal(ProposalError::NonMonotoneTick {
+                incoming: 5,
+                last: 10
+            })
+        ),
         "non-monotone tick must propagate as RegistryError::Proposal(NonMonotoneTick)"
     );
 }
@@ -395,6 +494,8 @@ fn voter_can_reduce_stake_mid_session_and_conviction_slows() {
     // After 10 ticks at high stake, conviction grew quickly. After the
     // reduction, the new asymptote (2M) is below the old (10M), so
     // conviction starts declining toward the new lower asymptote.
-    assert!(conv_low_stake < conv_high_stake,
-        "conviction must decline after stake reduction below current conviction level");
+    assert!(
+        conv_low_stake < conv_high_stake,
+        "conviction must decline after stake reduction below current conviction level"
+    );
 }

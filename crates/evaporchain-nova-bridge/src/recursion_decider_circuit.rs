@@ -207,10 +207,7 @@ impl RecursionDeciderCircuit {
     /// At zero scalars + zero blind + identity claimed_ck_hat, the CS
     /// is self-consistent (0 + 0 = 0), so the shape can also be used
     /// as a smoke test of the trivial witness.
-    pub fn setup_shape(
-        bases: Vec<Affine<GrumpkinConfig>>,
-        h: Affine<GrumpkinConfig>,
-    ) -> Self {
+    pub fn setup_shape(bases: Vec<Affine<GrumpkinConfig>>, h: Affine<GrumpkinConfig>) -> Self {
         use ark_std::Zero;
         let n = bases.len();
         Self {
@@ -263,10 +260,7 @@ impl RecursionDeciderCircuit {
 }
 
 impl ConstraintSynthesizer<Bn254Fr> for RecursionDeciderCircuit {
-    fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<Bn254Fr>,
-    ) -> Result<(), SynthesisError> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Bn254Fr>) -> Result<(), SynthesisError> {
         // ── Section A: secondary IPA `ck_hat` MSM binding [LIVE] ──
         //
         // Witness the non-native scalars; recompute the Pedersen MSM
@@ -287,11 +281,9 @@ impl ConstraintSynthesizer<Bn254Fr> for RecursionDeciderCircuit {
         let blind_var =
             EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(self.blind))?;
 
-        let computed =
-            pedersen_msm_grumpkin(&scalar_vars, &self.bases, &blind_var, self.h)?;
+        let computed = pedersen_msm_grumpkin(&scalar_vars, &self.bases, &blind_var, self.h)?;
 
-        let claimed_var =
-            GrumpkinVar::new_witness(cs.clone(), || Ok(self.claimed_ck_hat))?;
+        let claimed_var = GrumpkinVar::new_witness(cs.clone(), || Ok(self.claimed_ck_hat))?;
 
         computed.enforce_equal(&claimed_var)?;
 
@@ -307,33 +299,17 @@ impl ConstraintSynthesizer<Bn254Fr> for RecursionDeciderCircuit {
         // next iteration. `sections_bcd_wired` stays `false`.
         use ark_r1cs_std::fields::fp::FpVar;
         if let Some(b) = &self.section_b {
-            let _hash_sec = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.hash_secondary_claimed),
-            )?;
-            let _hash_pri = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.hash_primary_reinterp),
-            )?;
-            let _pp_digest = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.pp_digest),
-            )?;
-            let _num_steps = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.num_steps),
-            )?;
-            let _ri_sec = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.ri_secondary),
-            )?;
-            let _ru_cx = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.r_U_primary_comm_x),
-            )?;
-            let _ru_cy = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.r_U_primary_comm_y),
-            )?;
-            let _ru_x0 = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.r_U_primary_x0),
-            )?;
-            let _ru_x1 = FpVar::<Bn254Fr>::new_input(
-                cs.clone(), || Ok(b.r_U_primary_x1),
-            )?;
+            let _hash_sec =
+                FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.hash_secondary_claimed))?;
+            let _hash_pri =
+                FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.hash_primary_reinterp))?;
+            let _pp_digest = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.pp_digest))?;
+            let _num_steps = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.num_steps))?;
+            let _ri_sec = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.ri_secondary))?;
+            let _ru_cx = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.r_U_primary_comm_x))?;
+            let _ru_cy = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.r_U_primary_comm_y))?;
+            let _ru_x0 = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.r_U_primary_x0))?;
+            let _ru_x1 = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(b.r_U_primary_x1))?;
             for z in &b.z0 {
                 let _ = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(*z))?;
             }
@@ -367,28 +343,15 @@ mod tests {
         let g2 = g + g;
         let g3 = g2 + g;
         let h_pt = g * Bn254Fq::from(11u64);
-        let bases = vec![
-            g.into_affine(),
-            g2.into_affine(),
-            g3.into_affine(),
-        ];
+        let bases = vec![g.into_affine(), g2.into_affine(), g3.into_affine()];
         let scalars = vec![
             Bn254Fq::from(2u64),
             Bn254Fq::from(3u64),
             Bn254Fq::from(4u64),
         ];
         let blind = Bn254Fq::from(5u64);
-        let claimed = g * scalars[0]
-            + g2 * scalars[1]
-            + g3 * scalars[2]
-            + h_pt * blind;
-        RecursionDeciderCircuit::section_a_only(
-            scalars,
-            bases,
-            blind,
-            h_pt.into_affine(),
-            claimed,
-        )
+        let claimed = g * scalars[0] + g2 * scalars[1] + g3 * scalars[2] + h_pt * blind;
+        RecursionDeciderCircuit::section_a_only(scalars, bases, blind, h_pt.into_affine(), claimed)
     }
 
     /// POSITIVE: a correct `claimed_ck_hat` ⇒ CS satisfied. Proves
@@ -556,8 +519,7 @@ mod tests {
 
         // Scan n; report each measurement.
         let ns: [usize; 5] = [4, 16, 64, 256, 1024];
-        let cs_counts: Vec<(usize, usize)> =
-            ns.iter().map(|&n| (n, measure(n))).collect();
+        let cs_counts: Vec<(usize, usize)> = ns.iter().map(|&n| (n, measure(n))).collect();
         for (n, c) in &cs_counts {
             eprintln!(
                 "DECIDER_CONS n={n} cons={c} per_base={}",
@@ -568,7 +530,7 @@ mod tests {
         // Linear fit on the upper-end pair to avoid small-n overhead
         // distortion. per_base = (c_1024 - c_64) / (1024 - 64).
         let c_small = cs_counts[2].1; // n=64
-        let c_big = cs_counts[4].1;   // n=1024
+        let c_big = cs_counts[4].1; // n=1024
         let per_base = (c_big - c_small) / (1024 - 64);
         let intercept = c_big - per_base * 1024;
 
@@ -624,8 +586,7 @@ mod tests {
 
         let pp = canonical_public_params().expect("canonical pp");
         let pp_json = serde_json::to_value(&pp).expect("pp to_value");
-        let (ck_full, h) =
-            extract_secondary_ck(&pp_json).expect("extract real ck_secondary");
+        let (ck_full, h) = extract_secondary_ck(&pp_json).expect("extract real ck_secondary");
         assert!(
             ck_full.len() >= 256,
             "real ck_secondary must have ≥256 bases, got {}",
@@ -636,8 +597,7 @@ mod tests {
         let rounds = 8usize;
         let n = 1usize << rounds;
         let ck: Vec<Affine<GrumpkinConfig>> = ck_full[..n].to_vec();
-        let r: Vec<Bn254Fq> =
-            (0..rounds).map(|i| Bn254Fq::from(i as u64 + 2)).collect();
+        let r: Vec<Bn254Fq> = (0..rounds).map(|i| Bn254Fq::from(i as u64 + 2)).collect();
         let s = ipa_s_vector(&r);
         assert_eq!(s.len(), n, "tensor s must have length n");
         let blind = Bn254Fq::from(9u64);
@@ -651,13 +611,8 @@ mod tests {
             })
             + Projective::from(h) * blind;
 
-        let circuit = RecursionDeciderCircuit::section_a_only(
-            s.clone(),
-            ck.clone(),
-            blind,
-            h,
-            claimed,
-        );
+        let circuit =
+            RecursionDeciderCircuit::section_a_only(s.clone(), ck.clone(), blind, h, claimed);
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         circuit.generate_constraints(cs.clone()).expect("synthesis");
         assert!(

@@ -9,20 +9,14 @@
 //! method-name heuristic to keep the coordinator standalone.
 
 use evaporchain_sddc::auction::{Auction, AuctionId};
-use evaporchain_sfsv::{
-    predicate::Predicate,
-    vault::Vault,
-};
+use evaporchain_sfsv::{predicate::Predicate, vault::Vault};
 use tracing::{debug, warn};
 
 use crate::node::{NodeClient, ScriptSummary};
 
 /// Build a synthetic `Vault` + `Auction` from the on-chain state JSON.
 /// Returns `None` if the listing fields are absent (vault not listed).
-pub fn parse_listing(
-    contract_id: u64,
-    state: &serde_json::Value,
-) -> Option<(Vault, Auction)> {
+pub fn parse_listing(contract_id: u64, state: &serde_json::Value) -> Option<(Vault, Auction)> {
     // Pull the nested `.state` object (EvaporScript state map).
     let s = state.get("state")?;
 
@@ -34,10 +28,16 @@ pub fn parse_listing(
 
     let ceiling = s.get("list_ceiling").and_then(|v| v.as_u64()).unwrap_or(0);
     let floor = s.get("list_floor").and_then(|v| v.as_u64()).unwrap_or(0);
-    let opened_at = s.get("list_opened_at").and_then(|v| v.as_u64()).unwrap_or(0);
+    let opened_at = s
+        .get("list_opened_at")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let duration = s.get("list_duration").and_then(|v| v.as_u64()).unwrap_or(0);
     let deposit = s.get("deposit").and_then(|v| v.as_u64()).unwrap_or(1);
-    let release_epoch = s.get("release_epoch").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
+    let release_epoch = s
+        .get("release_epoch")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(u64::MAX);
 
     if ceiling <= floor || duration == 0 {
         warn!(contract_id, "on-chain listing has invalid bounds; skipping");
@@ -59,9 +59,7 @@ pub fn parse_listing(
         creator,
         future_self_arr,
         deposit.max(1),
-        Predicate::EpochReached {
-            release_epoch,
-        },
+        Predicate::EpochReached { release_epoch },
         0,
     )
     .ok()?;
@@ -82,11 +80,7 @@ pub fn parse_listing(
 
     debug!(
         contract_id,
-        ceiling,
-        floor,
-        opened_at,
-        duration,
-        "discovered active listing"
+        ceiling, floor, opened_at, duration, "discovered active listing"
     );
     Some((vault, auction))
 }
@@ -124,8 +118,7 @@ pub async fn discover_listings(client: &NodeClient) -> Vec<(u64, Vault, Auction)
 }
 
 fn is_sfsv_vault(s: &ScriptSummary) -> bool {
-    let methods: std::collections::HashSet<&str> =
-        s.methods.iter().map(String::as_str).collect();
+    let methods: std::collections::HashSet<&str> = s.methods.iter().map(String::as_str).collect();
     methods.contains("list_for_sale") && methods.contains("record_sale")
 }
 

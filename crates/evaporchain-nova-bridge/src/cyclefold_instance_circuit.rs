@@ -47,10 +47,7 @@
 
 use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr, G1Affine, G1Projective};
 use ark_r1cs_std::{
-    alloc::AllocVar,
-    eq::EqGadget,
-    fields::emulated_fp::EmulatedFpVar,
-    fields::fp::FpVar,
+    alloc::AllocVar, eq::EqGadget, fields::emulated_fp::EmulatedFpVar, fields::fp::FpVar,
 };
 use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
@@ -80,26 +77,16 @@ impl CycleFoldInstanceCircuit {
 }
 
 impl ConstraintSynthesizer<Bn254Fq> for CycleFoldInstanceCircuit {
-    fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<Bn254Fq>,
-    ) -> Result<(), SynthesisError> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Bn254Fq>) -> Result<(), SynthesisError> {
         // ── Public inputs (instance `x`) ──────────────────────────
         // P.x, P.y as native Bn254Fq publics.
-        let _p_x_input =
-            FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.base.x))?;
-        let _p_y_input =
-            FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.base.y))?;
+        let _p_x_input = FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.base.x))?;
+        let _p_y_input = FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.base.y))?;
         // s as emulated-Fr public (limbs become instance vars).
-        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_input(
-            cs.clone(),
-            || Ok(self.scalar),
-        )?;
+        let s_var = EmulatedFpVar::<Bn254Fr, Bn254Fq>::new_input(cs.clone(), || Ok(self.scalar))?;
         // Q.x, Q.y as native Bn254Fq publics.
-        let q_x_input =
-            FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.claimed.x))?;
-        let q_y_input =
-            FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.claimed.y))?;
+        let q_x_input = FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.claimed.x))?;
+        let q_y_input = FpVar::<Bn254Fq>::new_input(cs.clone(), || Ok(self.claimed.y))?;
 
         // ── Relation: claimed = s · base ──────────────────────────
         let computed = cyclefold_aux_scalar_mul(self.base, &s_var)?;
@@ -110,9 +97,8 @@ impl ConstraintSynthesizer<Bn254Fq> for CycleFoldInstanceCircuit {
         // Bn254G1Var constant matches `claimed` by construction; we
         // separately enforce the public inputs equal the constant's
         // coords so the public `x` IS the binding witness.)
-        let claimed_var = Bn254G1Var::new_witness(cs.clone(), || {
-            Ok(G1Projective::from(self.claimed))
-        })?;
+        let claimed_var =
+            Bn254G1Var::new_witness(cs.clone(), || Ok(G1Projective::from(self.claimed)))?;
         computed.enforce_equal(&claimed_var)?;
 
         // Bind the public Q.x/Q.y inputs to the witnessed point's
@@ -163,9 +149,8 @@ mod tests {
     #[test]
     fn cf_instance_wrong_claimed_breaks_cs() {
         let mut c = consistent_witness();
-        c.claimed = (G1Projective::from(c.claimed)
-            + G1Projective::from(G1Affine::generator()))
-        .into_affine();
+        c.claimed = (G1Projective::from(c.claimed) + G1Projective::from(G1Affine::generator()))
+            .into_affine();
         let cs = ConstraintSystem::<Bn254Fq>::new_ref();
         c.generate_constraints(cs.clone()).expect("synthesis");
         assert!(

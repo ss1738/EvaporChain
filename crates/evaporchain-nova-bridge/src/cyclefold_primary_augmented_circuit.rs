@@ -257,27 +257,21 @@ impl PrimaryAugmentedCircuitShell {
 }
 
 impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
-    fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<Bn254Fr>,
-    ) -> Result<(), SynthesisError> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Bn254Fr>) -> Result<(), SynthesisError> {
         // ── Public inputs (instance `x`) ──────────────────────────
         // Pinned schema; 4b-β extends with cf-running-instance fields
         // + folds them into the Neptune sponge.
-        let pp_hash_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.pp_hash))?;
+        let pp_hash_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.pp_hash))?;
         let i_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.i))?;
         let z_0_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_0))?;
         let z_i_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i))?;
         // z_{i+1} supplied by the prover (separate field from z_i).
         // The step constraint below enforces consistency.
-        let z_i1_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i1))?;
+        let z_i1_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i1))?;
 
         // Cross-curve tuple binding — exposed as a SINGLE Bn254Fr
         // digest, NOT raw curve coords (Bn254Fq, foreign field).
-        let cf_x_digest_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.cf_x_digest))?;
+        let cf_x_digest_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.cf_x_digest))?;
 
         // ── Section C [LIVE since 4b-β-3] ─────────────────────────
         // Allocate (P, s, Q) as witnesses; in-circuit `cf_x_digest`
@@ -289,32 +283,32 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // false until those are also wired.)
         // β-5-δ: bind TWO cross-curve scalar-mul tuples in one
         // cf_x_digest (cf1: r·comm_W_I, cf2: r·comm_T).
-        let mkfq = |v| {
-            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-                cs.clone(),
-                || Ok(v),
-            )
-        };
+        let mkfq = |v| EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(v));
         let t1_p_x = mkfq(self.t1_p.x)?;
         let t1_p_y = mkfq(self.t1_p.y)?;
-        let t1_s_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.t1_s))?;
+        let t1_s_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.t1_s))?;
         let t1_q_x = mkfq(self.t1_q.x)?;
         let t1_q_y = mkfq(self.t1_q.y)?;
         let t2_p_x = mkfq(self.t2_p.x)?;
         let t2_p_y = mkfq(self.t2_p.y)?;
-        let t2_s_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.t2_s))?;
+        let t2_s_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.t2_s))?;
         let t2_q_x = mkfq(self.t2_q.x)?;
         let t2_q_y = mkfq(self.t2_q.y)?;
 
-        let computed_digest =
-            crate::cyclefold_cf_x_digest::enforce_cf_x_digest_pair(
-                cs.clone(),
-                &t1_p_x, &t1_p_y, &t1_s_var, &t1_q_x, &t1_q_y,
-                &t2_p_x, &t2_p_y, &t2_s_var, &t2_q_x, &t2_q_y,
-                &self.params,
-            )?;
+        let computed_digest = crate::cyclefold_cf_x_digest::enforce_cf_x_digest_pair(
+            cs.clone(),
+            &t1_p_x,
+            &t1_p_y,
+            &t1_s_var,
+            &t1_q_x,
+            &t1_q_y,
+            &t2_p_x,
+            &t2_p_y,
+            &t2_s_var,
+            &t2_q_x,
+            &t2_q_y,
+            &self.params,
+        )?;
         computed_digest.enforce_equal(&cf_x_digest_var)?;
 
         // ── Section R [LIVE (stub-form) since 4b-β-4] ────────────
@@ -325,19 +319,16 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // next step's Section F (4b-β-5) will absorb as
         // previous-step-hash and verify NIFS fold consistency
         // against. Same Neptune infrastructure as Section C.
-        let current_step_hash_var = FpVar::<Bn254Fr>::new_input(
-            cs.clone(),
-            || Ok(self.current_step_hash),
-        )?;
+        let current_step_hash_var =
+            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.current_step_hash))?;
         // CF running instance `u` (Bn254Fq, non-native): allocate
         // as EmulatedFpVar, limb-decompose 127-bit lo+hi (same
         // canonical encoding the cf_x_digest oracle uses, so the
         // bit-level invariant chain is consistent across sections).
         let cf_u_running_var =
-            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-                cs.clone(),
-                || Ok(self.cf_u_running),
-            )?;
+            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(cs.clone(), || {
+                Ok(self.cf_u_running)
+            })?;
         let cf_u_bits = cf_u_running_var.to_bits_le()?;
         let cf_u_split = 127usize.min(cf_u_bits.len());
         let cf_u_lo = Boolean::le_bits_to_fp(&cf_u_bits[..cf_u_split])?;
@@ -346,14 +337,10 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // CF running instance commitments comm_w, comm_e — Grumpkin
         // points with NATIVE Bn254Fr coords (Grumpkin.base = Bn254Fr
         // = circuit field), absorbed directly without limb decomp.
-        let cf_comm_w_x_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_w_x))?;
-        let cf_comm_w_y_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_w_y))?;
-        let cf_comm_e_x_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_e_x))?;
-        let cf_comm_e_y_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_e_y))?;
+        let cf_comm_w_x_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_w_x))?;
+        let cf_comm_w_y_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_w_y))?;
+        let cf_comm_e_x_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_e_x))?;
+        let cf_comm_e_y_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_e_y))?;
 
         let mut r_absorb: Vec<FpVar<Bn254Fr>> = vec![
             pp_hash_var.clone(),
@@ -373,10 +360,8 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // element non-native, absorbed as 127-bit lo+hi limbs —
         // same canonical pattern cf_u_running uses, just iterated.
         for x_fq in &self.cf_x_vec {
-            let x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-                cs.clone(),
-                || Ok(*x_fq),
-            )?;
+            let x_var =
+                EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(*x_fq))?;
             let x_bits = x_var.to_bits_le()?;
             let x_split = 127usize.min(x_bits.len());
             let x_lo = Boolean::le_bits_to_fp(&x_bits[..x_split])?;
@@ -384,12 +369,11 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             r_absorb.push(x_lo);
             r_absorb.push(x_hi);
         }
-        let computed_step_hash =
-            crate::section2_gadget::enforce_neptune_sponge_primary(
-                cs.clone(),
-                &self.params,
-                &r_absorb,
-            )?;
+        let computed_step_hash = crate::section2_gadget::enforce_neptune_sponge_primary(
+            cs.clone(),
+            &self.params,
+            &r_absorb,
+        )?;
         // Apply 250-bit truncation to match the native helper's
         // squeeze (NUM_HASH_BITS=250), same pattern as Section C.
         let raw_bits = computed_step_hash.to_bits_le()?;
@@ -408,12 +392,9 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // (bound to the previous step's transcript via Section R's
         // current_step_hash); for the shell it's a witness pending
         // the explicit RO-derivation wiring (4b-β-5-β / -γ).
-        let primary_u_r_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_u_r))?;
-        let primary_r_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_r))?;
-        let primary_u_new_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.primary_u_new))?;
+        let primary_u_r_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_u_r))?;
+        let primary_r_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_r))?;
+        let primary_u_new_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.primary_u_new))?;
         let computed_u_new = &primary_u_r_var + &primary_r_var;
         computed_u_new.enforce_equal(&primary_u_new_var)?;
 
@@ -425,14 +406,8 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_x_i[1]))?,
         ];
         for k in 0..2usize {
-            let x_r_k = FpVar::<Bn254Fr>::new_witness(
-                cs.clone(),
-                || Ok(self.primary_x_r[k]),
-            )?;
-            let x_new_k = FpVar::<Bn254Fr>::new_input(
-                cs.clone(),
-                || Ok(self.primary_x_new[k]),
-            )?;
+            let x_r_k = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_x_r[k]))?;
+            let x_new_k = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.primary_x_new[k]))?;
             let computed_x_new_k = &x_r_k + &primary_r_var * &primary_x_i_vars[k];
             computed_x_new_k.enforce_equal(&x_new_k)?;
         }
@@ -445,21 +420,19 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // for the fold. comm_T absorb (which completes the standard
         // NIFS RO derivation per `nifs.rs::prove`) is the β-5-γ
         // sub-step (it needs limb decomp of a BN254 G1 point).
-        let previous_step_hash_var = FpVar::<Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.previous_step_hash),
-        )?;
+        let previous_step_hash_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.previous_step_hash))?;
         // β-5-γ: absorb comm_T (BN254 G1; Bn254Fq coords non-
         // native here) via 127-bit lo+hi limbs of each coord.
         // Same canonical pattern Section C uses for P.x/P.y.
-        let comm_t_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.primary_comm_t.x),
-        )?;
-        let comm_t_y_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.primary_comm_t.y),
-        )?;
+        let comm_t_x_var =
+            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(cs.clone(), || {
+                Ok(self.primary_comm_t.x)
+            })?;
+        let comm_t_y_var =
+            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(cs.clone(), || {
+                Ok(self.primary_comm_t.y)
+            })?;
         let comm_t_x_bits = comm_t_x_var.to_bits_le()?;
         let comm_t_y_bits = comm_t_y_var.to_bits_le()?;
         let split_x = 127usize.min(comm_t_x_bits.len());
@@ -469,14 +442,14 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let comm_t_y_lo = Boolean::le_bits_to_fp(&comm_t_y_bits[..split_y])?;
         let comm_t_y_hi = Boolean::le_bits_to_fp(&comm_t_y_bits[split_y..])?;
         // (a)-1: absorb comm_W_I too (BN254 G1, same limb pattern).
-        let comm_w_i_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.primary_comm_w_i.x),
-        )?;
-        let comm_w_i_y_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.primary_comm_w_i.y),
-        )?;
+        let comm_w_i_x_var =
+            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(cs.clone(), || {
+                Ok(self.primary_comm_w_i.x)
+            })?;
+        let comm_w_i_y_var =
+            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(cs.clone(), || {
+                Ok(self.primary_comm_w_i.y)
+            })?;
         let cwi_x_bits = comm_w_i_x_var.to_bits_le()?;
         let cwi_y_bits = comm_w_i_y_var.to_bits_le()?;
         let s_cwi_x = 127usize.min(cwi_x_bits.len());
@@ -499,12 +472,11 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             comm_t_y_lo,
             comm_t_y_hi,
         ];
-        let r_squeezed =
-            crate::section2_gadget::enforce_neptune_sponge_primary(
-                cs.clone(),
-                &self.params,
-                &r_absorb_inputs,
-            )?;
+        let r_squeezed = crate::section2_gadget::enforce_neptune_sponge_primary(
+            cs.clone(),
+            &self.params,
+            &r_absorb_inputs,
+        )?;
         let r_bits = r_squeezed.to_bits_le()?;
         let r_trunc_bits = &r_bits[..250usize.min(r_bits.len())];
         let r_truncated = Boolean::le_bits_to_fp(r_trunc_bits)?;
@@ -638,9 +610,18 @@ mod tests {
         let cf_u_lo = pack_le_to_fr(&bits[..split]);
         let cf_u_hi = pack_le_to_fr(&bits[split..]);
         let mut absorbed: Vec<Bn254Fr> = vec![
-            pp_hash, i, z_0, z_i, z_i1, cf_x_digest,
-            cf_u_lo, cf_u_hi,
-            cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
+            pp_hash,
+            i,
+            z_0,
+            z_i,
+            z_i1,
+            cf_x_digest,
+            cf_u_lo,
+            cf_u_hi,
+            cf_comm_w_x,
+            cf_comm_w_y,
+            cf_comm_e_x,
+            cf_comm_e_y,
         ];
         // Append x_vec limbs in matching order (same 127-bit split
         // as the in-circuit gadget). Empty vec ⇒ no extra absorbs.
@@ -666,10 +647,9 @@ mod tests {
         let (t2_p, t2_s, t2_q) = mk_tuple(&mut rng);
         // Section C: compute the REAL pair cf_x_digest via the
         // 4b-β-5-δ oracle so the binding is satisfiable.
-        let cf_x_digest =
-            crate::cyclefold_cf_x_digest::compute_cf_x_digest_pair_native(
-                t1_p, t1_s, t1_q, t2_p, t2_s, t2_q,
-            );
+        let cf_x_digest = crate::cyclefold_cf_x_digest::compute_cf_x_digest_pair_native(
+            t1_p, t1_s, t1_q, t2_p, t2_s, t2_q,
+        );
         let pp_hash = Bn254Fr::from(42u64);
         let i = Bn254Fr::from(0u64);
         let z_0 = Bn254Fr::from(0u64);
@@ -686,15 +666,12 @@ mod tests {
         let cf_comm_e_y = Bn254Fr::rand(&mut rng);
         // cf_x_vec: 21 elements (= num_io of CycleFoldInstanceCircuit
         // per the 3b-2 measurement), random non-trivial Bn254Fq.
-        let cf_x_vec: Vec<ark_bn254::Fq> =
-            (0..21).map(|_| ark_bn254::Fq::rand(&mut rng)).collect();
+        let cf_x_vec: Vec<ark_bn254::Fq> = (0..21).map(|_| ark_bn254::Fq::rand(&mut rng)).collect();
         // Section F native fold inputs: pick random U_R/X_R/X_I/r,
         // compute the satisfiable u_new and X_new.
         let primary_u_r = Bn254Fr::rand(&mut rng);
-        let primary_x_r: [Bn254Fr; 2] =
-            [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
-        let primary_x_i: [Bn254Fr; 2] =
-            [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
+        let primary_x_r: [Bn254Fr; 2] = [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
+        let primary_x_i: [Bn254Fr; 2] = [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
         // β-5-β/γ: derive the REAL r from RO so the binding is
         // satisfiable. previous_step_hash + primary_comm_t are
         // witnesses; consistent_step picks random non-trivial
@@ -725,13 +702,23 @@ mod tests {
         // Section R: compute the REAL current_step_hash so its
         // binding is satisfiable too.
         let current_step_hash = compute_current_step_hash_native(
-            pp_hash, i, z_0, z_i, z_i1, cf_x_digest, cf_u_running,
-            cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
+            pp_hash,
+            i,
+            z_0,
+            z_i,
+            z_i1,
+            cf_x_digest,
+            cf_u_running,
+            cf_comm_w_x,
+            cf_comm_w_y,
+            cf_comm_e_x,
+            cf_comm_e_y,
             &cf_x_vec,
         );
-        let params = crate::neptune_permutation_gadget::params_from_dump_path(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
-        )
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/neptune-bn256-standard.json"
+        ))
         .expect("load neptune params from crate-relative dump");
         PrimaryAugmentedCircuitShell::new(
             pp_hash,
@@ -900,8 +887,7 @@ mod tests {
     fn shell_section_f_wrong_comm_w_i_breaks_cs() {
         let mut c = consistent_step();
         let g = ark_bn254::G1Projective::from(G1Affine::generator());
-        c.primary_comm_w_i =
-            (ark_bn254::G1Projective::from(c.primary_comm_w_i) + g).into_affine();
+        c.primary_comm_w_i = (ark_bn254::G1Projective::from(c.primary_comm_w_i) + g).into_affine();
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         c.generate_constraints(cs.clone()).expect("synthesis");
         assert!(
@@ -920,8 +906,7 @@ mod tests {
         let mut c = consistent_step();
         // Tamper comm_t by adding G — guaranteed-different point.
         let g = ark_bn254::G1Projective::from(G1Affine::generator());
-        c.primary_comm_t =
-            (ark_bn254::G1Projective::from(c.primary_comm_t) + g).into_affine();
+        c.primary_comm_t = (ark_bn254::G1Projective::from(c.primary_comm_t) + g).into_affine();
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         c.generate_constraints(cs.clone()).expect("synthesis");
         assert!(

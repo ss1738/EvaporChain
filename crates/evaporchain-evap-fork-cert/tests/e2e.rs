@@ -41,26 +41,43 @@ use evaporchain_evap_fork_cert::{
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-const HALF_LIFE:   u64 = 100;
-const EVAL_EPOCH:  u64 = 600;
+const HALF_LIFE: u64 = 100;
+const EVAL_EPOCH: u64 = 600;
 const SEED_ENERGY: u64 = 500;
-const THRESHOLD_EVAP:    u128 = 300; // 240 < 300 → evaporated
+const THRESHOLD_EVAP: u128 = 300; // 240 < 300 → evaporated
 const THRESHOLD_NONEVAP: u128 = 200; // 240 ≥ 200 → NOT evaporated
 
 fn chain_lambda() -> ChainLambda {
     ChainLambda::new(Lambda::from_epochs(HALF_LIFE))
 }
 
-fn fork_root() -> [u8; 32] { [0xABu8; 32] }
+fn fork_root() -> [u8; 32] {
+    [0xABu8; 32]
+}
 
 /// The five-block competing fork: all blocks observed before epoch 400.
 fn competing_fork_blocks() -> Vec<ForkBlock> {
     vec![
-        ForkBlock { seed_energy: SEED_ENERGY, observed_epoch:   0 },
-        ForkBlock { seed_energy: SEED_ENERGY, observed_epoch: 100 },
-        ForkBlock { seed_energy: SEED_ENERGY, observed_epoch: 200 },
-        ForkBlock { seed_energy: SEED_ENERGY, observed_epoch: 300 },
-        ForkBlock { seed_energy: SEED_ENERGY, observed_epoch: 400 },
+        ForkBlock {
+            seed_energy: SEED_ENERGY,
+            observed_epoch: 0,
+        },
+        ForkBlock {
+            seed_energy: SEED_ENERGY,
+            observed_epoch: 100,
+        },
+        ForkBlock {
+            seed_energy: SEED_ENERGY,
+            observed_epoch: 200,
+        },
+        ForkBlock {
+            seed_energy: SEED_ENERGY,
+            observed_epoch: 300,
+        },
+        ForkBlock {
+            seed_energy: SEED_ENERGY,
+            observed_epoch: 400,
+        },
     ]
 }
 
@@ -77,13 +94,19 @@ fn competing_fork_evaporated_at_epoch_600() {
         THRESHOLD_EVAP,
     );
 
-    assert_eq!(cert.total_seed_energy, 2_500, "total seed must sum all 5 blocks");
-    assert_eq!(cert.decayed_energy, 240,
-        "decayed energy at epoch 600 must equal 7+15+31+62+125=240");
+    assert_eq!(
+        cert.total_seed_energy, 2_500,
+        "total seed must sum all 5 blocks"
+    );
+    assert_eq!(
+        cert.decayed_energy, 240,
+        "decayed energy at epoch 600 must equal 7+15+31+62+125=240"
+    );
     assert!(
         cert.decayed_energy < cert.threshold,
         "decayed ({}) must be below threshold ({}) to evaporate",
-        cert.decayed_energy, cert.threshold
+        cert.decayed_energy,
+        cert.threshold
     );
 
     verify_evaporated_cert(&cert).unwrap();
@@ -95,17 +118,20 @@ fn per_block_decay_values_match_formula() {
     // Block at observed_epoch=X, evaluated at 600, elapsed=600-X.
     let λ = chain_lambda();
     let expected_per_block: &[(u64, u128)] = &[
-        (  0,   7), // elapsed=600: 500>>6 = 7 (no frac remainder at 100-epoch boundaries)
-        (100,  15), // elapsed=500: 500>>5 = 15
-        (200,  31), // elapsed=400: 500>>4 = 31
-        (300,  62), // elapsed=300: 500>>3 = 62
+        (0, 7),     // elapsed=600: 500>>6 = 7 (no frac remainder at 100-epoch boundaries)
+        (100, 15),  // elapsed=500: 500>>5 = 15
+        (200, 31),  // elapsed=400: 500>>4 = 31
+        (300, 62),  // elapsed=300: 500>>3 = 62
         (400, 125), // elapsed=200: 500>>2 = 125
     ];
 
     for &(observed, expected_decayed) in expected_per_block {
         let cert = prove_fork_evaporated(
             fork_root(),
-            &[ForkBlock { seed_energy: SEED_ENERGY, observed_epoch: observed }],
+            &[ForkBlock {
+                seed_energy: SEED_ENERGY,
+                observed_epoch: observed,
+            }],
             λ,
             EVAL_EPOCH,
             1,
@@ -132,7 +158,13 @@ fn same_fork_not_evaporated_with_lower_threshold() {
     assert_eq!(cert.decayed_energy, 240);
     let err = verify_evaporated_cert(&cert).unwrap_err();
     assert!(
-        matches!(err, CertError::NotEvaporated { decayed: 240, threshold: 200 }),
+        matches!(
+            err,
+            CertError::NotEvaporated {
+                decayed: 240,
+                threshold: 200
+            }
+        ),
         "must be NotEvaporated when decayed >= threshold, got {err:?}"
     );
 }
@@ -145,24 +177,61 @@ fn doctrine_older_blocks_decay_more_than_recent() {
     // Both had identical seed energy (500). Time in chain = decay.
     let λ = chain_lambda();
 
-    let cert_old    = prove_fork_evaporated(fork_root(), &[ForkBlock { seed_energy: 500, observed_epoch:   0 }], λ, EVAL_EPOCH, 1);
-    let cert_recent = prove_fork_evaporated(fork_root(), &[ForkBlock { seed_energy: 500, observed_epoch: 400 }], λ, EVAL_EPOCH, 1);
+    let cert_old = prove_fork_evaporated(
+        fork_root(),
+        &[ForkBlock {
+            seed_energy: 500,
+            observed_epoch: 0,
+        }],
+        λ,
+        EVAL_EPOCH,
+        1,
+    );
+    let cert_recent = prove_fork_evaporated(
+        fork_root(),
+        &[ForkBlock {
+            seed_energy: 500,
+            observed_epoch: 400,
+        }],
+        λ,
+        EVAL_EPOCH,
+        1,
+    );
 
     assert!(
         cert_old.decayed_energy < cert_recent.decayed_energy,
         "older block (decayed={}) must have less energy remaining than \
          recent block (decayed={})",
-        cert_old.decayed_energy, cert_recent.decayed_energy
+        cert_old.decayed_energy,
+        cert_recent.decayed_energy
     );
-    assert_eq!(cert_old.decayed_energy,    7,   "Block A (epoch 0) at epoch 600 must = 7");
-    assert_eq!(cert_recent.decayed_energy, 125, "Block E (epoch 400) at epoch 600 must = 125");
+    assert_eq!(
+        cert_old.decayed_energy, 7,
+        "Block A (epoch 0) at epoch 600 must = 7"
+    );
+    assert_eq!(
+        cert_recent.decayed_energy, 125,
+        "Block E (epoch 400) at epoch 600 must = 125"
+    );
 }
 
 #[test]
 fn certificate_is_deterministic() {
     // Same prover inputs → byte-identical certificate every time.
-    let a = prove_fork_evaporated(fork_root(), &competing_fork_blocks(), chain_lambda(), EVAL_EPOCH, THRESHOLD_EVAP);
-    let b = prove_fork_evaporated(fork_root(), &competing_fork_blocks(), chain_lambda(), EVAL_EPOCH, THRESHOLD_EVAP);
+    let a = prove_fork_evaporated(
+        fork_root(),
+        &competing_fork_blocks(),
+        chain_lambda(),
+        EVAL_EPOCH,
+        THRESHOLD_EVAP,
+    );
+    let b = prove_fork_evaporated(
+        fork_root(),
+        &competing_fork_blocks(),
+        chain_lambda(),
+        EVAL_EPOCH,
+        THRESHOLD_EVAP,
+    );
     assert_eq!(a, b, "prove must be deterministic");
 }
 
@@ -183,7 +252,11 @@ fn adversarial_tampered_decayed_energy_rejected() {
     // An attacker reduces the decayed_energy field to claim the fork
     // evaporated at a lower energy. The witness mismatch catches this.
     let mut cert = prove_fork_evaporated(
-        fork_root(), &competing_fork_blocks(), chain_lambda(), EVAL_EPOCH, THRESHOLD_EVAP,
+        fork_root(),
+        &competing_fork_blocks(),
+        chain_lambda(),
+        EVAL_EPOCH,
+        THRESHOLD_EVAP,
     );
     cert.decayed_energy = 1; // tampered to look more evaporated
 
@@ -199,7 +272,11 @@ fn adversarial_tampered_threshold_rejected() {
     // An attacker raises the threshold to make the certificate valid for
     // a fork that would NOT have evaporated at the original threshold.
     let mut cert = prove_fork_evaporated(
-        fork_root(), &competing_fork_blocks(), chain_lambda(), EVAL_EPOCH, THRESHOLD_NONEVAP,
+        fork_root(),
+        &competing_fork_blocks(),
+        chain_lambda(),
+        EVAL_EPOCH,
+        THRESHOLD_NONEVAP,
     );
     // Fork NOT evaporated at 200 — attacker changes threshold to 300.
     cert.threshold = THRESHOLD_EVAP;
@@ -215,7 +292,11 @@ fn adversarial_tampered_threshold_rejected() {
 fn adversarial_tampered_fork_root_rejected() {
     // An attacker claims the certificate belongs to a different fork.
     let mut cert = prove_fork_evaporated(
-        fork_root(), &competing_fork_blocks(), chain_lambda(), EVAL_EPOCH, THRESHOLD_EVAP,
+        fork_root(),
+        &competing_fork_blocks(),
+        chain_lambda(),
+        EVAL_EPOCH,
+        THRESHOLD_EVAP,
     );
     cert.fork_root = [0xFF; 32]; // different fork root
 
@@ -231,14 +312,24 @@ fn adversarial_boundary_threshold_exact_is_not_evaporated() {
     // The gate is strict `<`: decayed == threshold means NOT evaporated.
     // Test that the boundary is not crossed.
     let cert = prove_fork_evaporated(
-        fork_root(), &competing_fork_blocks(), chain_lambda(), EVAL_EPOCH, 240,
+        fork_root(),
+        &competing_fork_blocks(),
+        chain_lambda(),
+        EVAL_EPOCH,
+        240,
     );
     assert_eq!(cert.decayed_energy, 240, "decayed must equal 240");
-    assert_eq!(cert.threshold, 240,     "threshold must equal 240");
+    assert_eq!(cert.threshold, 240, "threshold must equal 240");
 
     let err = verify_evaporated_cert(&cert).unwrap_err();
     assert!(
-        matches!(err, CertError::NotEvaporated { decayed: 240, threshold: 240 }),
+        matches!(
+            err,
+            CertError::NotEvaporated {
+                decayed: 240,
+                threshold: 240
+            }
+        ),
         "decayed == threshold must be NotEvaporated (strict <), got {err:?}"
     );
 }
@@ -250,14 +341,25 @@ fn adversarial_future_block_not_counted_in_decayed() {
     // This prevents a forger from injecting future blocks to inflate energy.
     let λ = chain_lambda();
     let blocks = vec![
-        ForkBlock { seed_energy: 500, observed_epoch: 0 },   // counted
-        ForkBlock { seed_energy: 999, observed_epoch: 999 }, // future — skipped in decayed
+        ForkBlock {
+            seed_energy: 500,
+            observed_epoch: 0,
+        }, // counted
+        ForkBlock {
+            seed_energy: 999,
+            observed_epoch: 999,
+        }, // future — skipped in decayed
     ];
     let cert = prove_fork_evaporated(fork_root(), &blocks, λ, 100, 1);
 
     // total_seed includes both blocks.
-    assert_eq!(cert.total_seed_energy, 1499, "future block seed must be in total");
+    assert_eq!(
+        cert.total_seed_energy, 1499,
+        "future block seed must be in total"
+    );
     // decayed only includes the block at epoch 0 (elapsed=100, one halving → 500>>1=250).
-    assert_eq!(cert.decayed_energy, 250,
-        "future-block energy must NOT be in decayed sum");
+    assert_eq!(
+        cert.decayed_energy, 250,
+        "future-block energy must NOT be in decayed sum"
+    );
 }

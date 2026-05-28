@@ -105,8 +105,7 @@ impl<F: PrimeField> StepCircuit<F> for TrivialIncrementCircuit {
 /// Audit B-1/B-2 S2a: canonical, deterministic `PublicParams` for the
 /// fixed production step circuit — the trusted-setup *shape* source.
 /// Identical to the `pp` `generate_fixture` builds; needs NO proof.
-pub fn canonical_public_params(
-) -> Result<PublicParams<E1, E2, TrivialIncrementCircuit>, String> {
+pub fn canonical_public_params() -> Result<PublicParams<E1, E2, TrivialIncrementCircuit>, String> {
     let circuit = TrivialIncrementCircuit;
     PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
         &circuit,
@@ -316,10 +315,8 @@ mod tests {
         let circuit = TrivialIncrementCircuit;
         let pp = canonical_public_params().expect("canonical pp");
         let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
-        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
-            &pp, &circuit, &z0,
-        )
-        .expect("RecursiveSNARK::new");
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(&pp, &circuit, &z0)
+            .expect("RecursiveSNARK::new");
         for i in 0..2 {
             rs.prove_step(&pp, &circuit)
                 .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
@@ -367,10 +364,8 @@ mod tests {
         )
         .expect("ppsnark PublicParams::setup");
         let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
-        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
-            &pp, &circuit, &z0,
-        )
-        .expect("RecursiveSNARK::new");
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(&pp, &circuit, &z0)
+            .expect("RecursiveSNARK::new");
         for i in 0..2 {
             rs.prove_step(&pp, &circuit)
                 .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
@@ -378,8 +373,7 @@ mod tests {
         let n = rs.num_steps();
 
         let (pk, vk) = CmpPP::setup(&pp).expect("CompressedSNARK::<ppsnark>::setup");
-        let compressed = CmpPP::prove(&pp, &pk, &rs)
-            .expect("CompressedSNARK::<ppsnark>::prove");
+        let compressed = CmpPP::prove(&pp, &pk, &rs).expect("CompressedSNARK::<ppsnark>::prove");
         let out = compressed
             .verify(&vk, n, &z0)
             .expect("CompressedSNARK::<ppsnark>::verify must accept the real proof");
@@ -412,17 +406,14 @@ mod tests {
         )
         .expect("ppsnark PublicParams::setup");
         let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
-        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
-            &pp, &circuit, &z0,
-        )
-        .expect("RecursiveSNARK::new");
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(&pp, &circuit, &z0)
+            .expect("RecursiveSNARK::new");
         for i in 0..2 {
             rs.prove_step(&pp, &circuit)
                 .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
         }
         let (pk, _vk) = CmpPP::setup(&pp).expect("CompressedSNARK::<ppsnark>::setup");
-        let compressed =
-            CmpPP::prove(&pp, &pk, &rs).expect("CompressedSNARK::<ppsnark>::prove");
+        let compressed = CmpPP::prove(&pp, &pk, &rs).expect("CompressedSNARK::<ppsnark>::prove");
 
         let v = serde_json::to_value(&compressed).expect("compressed to_value");
 
@@ -448,10 +439,9 @@ mod tests {
                                 serde_json::Value::Array(a) => {
                                     format!("ARRAY len={}", a.len())
                                 }
-                                serde_json::Value::Object(oo) => format!(
-                                    "OBJ keys={:?}",
-                                    oo.keys().collect::<Vec<_>>()
-                                ),
+                                serde_json::Value::Object(oo) => {
+                                    format!("OBJ keys={:?}", oo.keys().collect::<Vec<_>>())
+                                }
                                 serde_json::Value::String(s) => {
                                     format!("STR len={}", s.len())
                                 }

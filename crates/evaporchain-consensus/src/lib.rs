@@ -1867,7 +1867,9 @@ mod tests {
         // Follower applies the block (now at epoch=1)
         let mut follower_db = InMemoryStateDB::new();
         let mut follower = MockConsensus::new_for_test(5);
-        follower.apply_block(&mut follower_db, &produced.block).unwrap();
+        follower
+            .apply_block(&mut follower_db, &produced.block)
+            .unwrap();
         assert_eq!(follower.epoch(), 1);
         // Try to apply a block with epoch=0 (regression) — must fail
         let mut stale = produced.block.clone();
@@ -1885,7 +1887,9 @@ mod tests {
         // Follower applies block 1
         let mut follower_db = InMemoryStateDB::new();
         let mut follower = MockConsensus::new_for_test(5);
-        follower.apply_block(&mut follower_db, &produced.block).unwrap();
+        follower
+            .apply_block(&mut follower_db, &produced.block)
+            .unwrap();
         // Build a block 2 with wrong parent hash
         let mut block2 = produced.block.clone();
         block2.number = produced.block.number + 1;
@@ -1905,7 +1909,8 @@ mod tests {
         future_block.timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() + 7200;
+            .as_secs()
+            + 7200;
         // Reuse as block 1 at a fresh follower (no previous blocks → block_number=0)
         let mut follower = MockConsensus::new_for_test(5);
         let mut follower_db = InMemoryStateDB::new();

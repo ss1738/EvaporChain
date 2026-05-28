@@ -337,8 +337,8 @@ mod tests {
     #[test]
     fn nova_fold_three_blocks_and_verify() {
         let genesis = make_dual_commitment(0, 0);
-        let mut folder = NovaFolder::new(&genesis, ChainLambda::default_genesis())
-            .expect("folder setup failed");
+        let mut folder =
+            NovaFolder::new(&genesis, ChainLambda::default_genesis()).expect("folder setup failed");
 
         let mut last_state = genesis.clone();
         let mut last_instance = NovaFoldedInstance::identity();
@@ -374,8 +374,8 @@ mod tests {
     #[test]
     fn nova_verify_rejects_below_energy_floor() {
         let genesis = make_dual_commitment(0, 0);
-        let mut folder = NovaFolder::new(&genesis, ChainLambda::default_genesis())
-            .expect("folder setup failed");
+        let mut folder =
+            NovaFolder::new(&genesis, ChainLambda::default_genesis()).expect("folder setup failed");
         let block = make_block(1, 1);
         let new_state = make_dual_commitment(1, 1);
         let thermo = ThermodynamicWitness {

@@ -17,11 +17,15 @@ use evaporchain_cmu_gate::{cmu_bound, cmu_check, entropy_millibits, EntropyError
 
 /// A near-deterministic histogram: one bucket holds almost all mass.
 /// Represents a Sybil-like validator producing nearly identical blocks.
-fn sybil_histogram() -> [u64; 8] { [9990, 1, 1, 1, 1, 1, 1, 1] }
+fn sybil_histogram() -> [u64; 8] {
+    [9990, 1, 1, 1, 1, 1, 1, 1]
+}
 
 /// A naturally-varying histogram: mass spread across many outcomes.
 /// Represents an honest validator with genuine block diversity.
-fn honest_histogram() -> [u64; 8] { [125, 125, 125, 125, 125, 125, 125, 125] }
+fn honest_histogram() -> [u64; 8] {
+    [125, 125, 125, 125, 125, 125, 125, 125]
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -29,16 +33,34 @@ fn honest_histogram() -> [u64; 8] { [125, 125, 125, 125, 125, 125, 125, 125] }
 fn cmu_at_bound_admitted() {
     // Cμ = E + hμ exactly: at-bound is NOT a violation.
     let v = cmu_check(300, 100, 200);
-    assert!(matches!(v, Verdict::Ok { observed_cmu: 300, bound: 300 }),
-        "at-bound must be admitted: {:?}", v);
+    assert!(
+        matches!(
+            v,
+            Verdict::Ok {
+                observed_cmu: 300,
+                bound: 300
+            }
+        ),
+        "at-bound must be admitted: {:?}",
+        v
+    );
 }
 
 #[test]
 fn cmu_above_bound_violation() {
     // One millibit above the bound → formal fault.
     let v = cmu_check(301, 100, 200);
-    assert!(matches!(v, Verdict::Violation { observed_cmu: 301, bound: 300 }),
-        "1mb above bound must be violation: {:?}", v);
+    assert!(
+        matches!(
+            v,
+            Verdict::Violation {
+                observed_cmu: 301,
+                bound: 300
+            }
+        ),
+        "1mb above bound must be violation: {:?}",
+        v
+    );
 }
 
 #[test]
@@ -46,7 +68,10 @@ fn violation_carries_observed_and_bound() {
     // Structured error: operators see exactly how far Cμ exceeds the bound.
     let v = cmu_check(500, 100, 100);
     match v {
-        Verdict::Violation { observed_cmu, bound } => {
+        Verdict::Violation {
+            observed_cmu,
+            bound,
+        } => {
             assert_eq!(observed_cmu, 500);
             assert_eq!(bound, 200);
         }
@@ -93,15 +118,20 @@ fn sybil_histogram_has_low_entropy() {
     // Near-deterministic histogram → entropy close to 0.
     let h = entropy_millibits(&sybil_histogram()).unwrap();
     let honest_h = entropy_millibits(&honest_histogram()).unwrap();
-    assert!(h < honest_h,
-        "Sybil histogram entropy ({h}) must be lower than honest ({honest_h})");
+    assert!(
+        h < honest_h,
+        "Sybil histogram entropy ({h}) must be lower than honest ({honest_h})"
+    );
 }
 
 #[test]
 fn honest_histogram_has_maximum_entropy() {
     // Uniform 8-bucket histogram → H = log_2(8) = 3 bits = 3000 millibits.
     let h = entropy_millibits(&honest_histogram()).unwrap();
-    assert_eq!(h, 3_000, "uniform 8-bucket histogram must yield 3000 millibits");
+    assert_eq!(
+        h, 3_000,
+        "uniform 8-bucket histogram must yield 3000 millibits"
+    );
 }
 
 #[test]
@@ -140,11 +170,17 @@ fn sybil_detection_full_arc() {
 
     // Cartel A: Cμ >> E + hμ → violation.
     let cartel_verdict = cmu_check(cmu_observed, 0, sybil_h);
-    assert!(matches!(cartel_verdict, Verdict::Violation { .. }),
-        "cartel must be flagged: {:?}", cartel_verdict);
+    assert!(
+        matches!(cartel_verdict, Verdict::Violation { .. }),
+        "cartel must be flagged: {:?}",
+        cartel_verdict
+    );
 
     // Honest D: Cμ < E + hμ → ok.
     let honest_verdict = cmu_check(cmu_observed, 1_500, honest_h);
-    assert!(matches!(honest_verdict, Verdict::Ok { .. }),
-        "honest must be cleared: {:?}", honest_verdict);
+    assert!(
+        matches!(honest_verdict, Verdict::Ok { .. }),
+        "honest must be cleared: {:?}",
+        honest_verdict
+    );
 }

@@ -132,7 +132,10 @@ fn main() -> ExitCode {
         write!(&mut hex, "{byte:02x}").expect("write");
     }
     println!("{hex}");
-    eprintln!("dummy-proof-emit: emitted {EIP197_PROOF_BYTES} bytes ({} hex chars)", hex.len());
+    eprintln!(
+        "dummy-proof-emit: emitted {EIP197_PROOF_BYTES} bytes ({} hex chars)",
+        hex.len()
+    );
 
     ExitCode::SUCCESS
 }

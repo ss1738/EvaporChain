@@ -200,8 +200,7 @@ impl BanList {
             version: 1,
             bans: self.bans.values().cloned().collect(),
         };
-        let json = serde_json::to_vec_pretty(&file)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
         let tmp_path = path.with_extension("json.tmp");
         {
             use std::io::Write;
@@ -342,8 +341,7 @@ mod tests {
     /// never self-DoS's because of a bad bans.json.
     #[test]
     fn t1_20_banlist_load_malformed_returns_empty() {
-        let path = std::env::temp_dir()
-            .join(format!("evapor-banlist-malformed-{}.json", now_ms()));
+        let path = std::env::temp_dir().join(format!("evapor-banlist-malformed-{}.json", now_ms()));
         std::fs::write(&path, b"not valid json").unwrap();
         let bl = BanList::load(&path);
         assert!(bl.is_empty(), "malformed file must be silently empty");
@@ -354,8 +352,7 @@ mod tests {
     /// (line 186 + load body). Also exercises parent-dir creation.
     #[test]
     fn t1_20_banlist_save_load_roundtrip() {
-        let dir = std::env::temp_dir()
-            .join(format!("evapor-banlist-rt-{}", now_ms()));
+        let dir = std::env::temp_dir().join(format!("evapor-banlist-rt-{}", now_ms()));
         let path = dir.join("nested").join("bans.json");
         let mut bl = BanList::new();
         let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
@@ -426,8 +423,7 @@ mod tests {
     /// must not silently drop valid entries.
     #[test]
     fn t1_20_banlist_load_accepts_unknown_version() {
-        let path = std::env::temp_dir()
-            .join(format!("evapor-banlist-v999-{}.json", now_ms()));
+        let path = std::env::temp_dir().join(format!("evapor-banlist-v999-{}.json", now_ms()));
         let until = now_ms() + 60_000;
         let body = format!(
             r#"{{"version":999,"bans":[{{"ip":"203.0.113.7","until_ms":{until},"reason":"future"}}]}}"#

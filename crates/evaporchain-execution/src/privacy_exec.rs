@@ -507,10 +507,7 @@ impl PrivacyExecutor {
         // chain that included shields would fail
         // `restore_from_db`'s state-root verification on startup.
         // Closes the second gap documented in PR #8.
-        db.append_note_commitment(
-            shield_result.tree_index as u64,
-            shield_result.commitment.0,
-        );
+        db.append_note_commitment(shield_result.tree_index as u64, shield_result.commitment.0);
 
         debug!(
             from = hex::encode(tx.from),
@@ -1012,12 +1009,10 @@ impl PrivacyExecutor {
     pub fn estimate_private_transfer_gas(tx: &PrivateTransferTx) -> u64 {
         GAS_PRIVATE_TRANSFER_BASE
             .saturating_add(
-                GAS_PRIVATE_TRANSFER_PER_INPUT
-                    .saturating_mul(tx.input_nullifiers.len() as u64),
+                GAS_PRIVATE_TRANSFER_PER_INPUT.saturating_mul(tx.input_nullifiers.len() as u64),
             )
             .saturating_add(
-                GAS_PRIVATE_TRANSFER_PER_OUTPUT
-                    .saturating_mul(tx.output_commitments.len() as u64),
+                GAS_PRIVATE_TRANSFER_PER_OUTPUT.saturating_mul(tx.output_commitments.len() as u64),
             )
     }
 }
@@ -1124,15 +1119,14 @@ mod tests {
     ) -> UnshieldTx {
         let merkle_proof = executor.get_merkle_proof(note.tree_index).unwrap();
         let nullifier = Nullifier::derive(&note.spending_secret, &Commitment(note.note_commitment));
-        let binding =
-            compute_balance_binding(
-                BalanceBindingKind::Unshield,
-                note.amount,
-                0,
-                unshield_amount,
-                &[note.blinding],
-                &[],
-            );
+        let binding = compute_balance_binding(
+            BalanceBindingKind::Unshield,
+            note.amount,
+            0,
+            unshield_amount,
+            &[note.blinding],
+            &[],
+        );
         UnshieldTx {
             to,
             amount: unshield_amount,
@@ -1638,7 +1632,10 @@ mod tests {
         executor.set_pnt_phase_interval_epochs(100);
         executor.set_epoch(0);
 
-        assert!(executor.tick_pnt_phase(0), "first tick fires unconditionally");
+        assert!(
+            executor.tick_pnt_phase(0),
+            "first tick fires unconditionally"
+        );
         // Shield once so the next tick has a fresh root to compare against.
         let _n0 = do_shield(
             &mut executor,
@@ -2498,7 +2495,8 @@ mod tests {
     fn priv_n2_restore_from_db_no_nullifiers_is_fine() {
         let mut exec = PrivacyExecutor::with_depth(4);
         let db = InMemoryStateDB::new();
-        exec.restore_from_db(&db).expect("fresh restore should succeed");
+        exec.restore_from_db(&db)
+            .expect("fresh restore should succeed");
         assert_eq!(exec.engine.nullifier_set.len(), 0);
         assert_eq!(exec.pnt.live_count(), 0);
     }

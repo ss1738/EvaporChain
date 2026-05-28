@@ -228,6 +228,10 @@ mod tests {
             "settle must route through record_sale's on-chain guard \
              (released ⇒ NotLocked ⇒ VaultTransfer), got {err:?}"
         );
-        assert_eq!(v.current_holder(), None, "claim not transferred off a released vault");
+        assert_eq!(
+            v.current_holder(),
+            None,
+            "claim not transferred off a released vault"
+        );
     }
 }

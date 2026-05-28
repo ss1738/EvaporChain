@@ -24,19 +24,14 @@ mod tests {
     };
     use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
     use evaporchain_crypto::hash::blake3_hash;
-    use evaporchain_crypto::signatures::{
-        BlsKeypair, MlDsaKeypair, Signer, Verifier,
-    };
+    use evaporchain_crypto::signatures::{BlsKeypair, MlDsaKeypair, Signer, Verifier};
     use evaporchain_crypto::vrf::VrfKeypair;
     use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
     use evaporchain_da::commitments::RowColumnCommitments;
     use evaporchain_da::erasure2d::ErasureEncoder2D;
     use evaporchain_execution::{parallel::ParallelExecutor, ExecutionEngine};
     use evaporchain_state::{InMemoryStateDB, StateDB};
-    use evaporchain_types::{
-        Account, BlobTx, Block, Transaction, TransferTx,
-        ValidatorStakeTx,
-    };
+    use evaporchain_types::{Account, BlobTx, Block, Transaction, TransferTx, ValidatorStakeTx};
     use std::sync::OnceLock;
 
     // ─────────────── Cached ML-DSA Keypair ───────────────────────────

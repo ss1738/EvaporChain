@@ -4,9 +4,7 @@
 //! Nova-IVC sublinear, Verkle state-query) into a single object
 //! consumers hold across calls.
 
-use evaporchain_consensus_types::{
-    LightBlockHeader, LightClientVerifier, VerificationResult,
-};
+use evaporchain_consensus_types::{LightBlockHeader, LightClientVerifier, VerificationResult};
 
 use crate::error::LightClientError;
 
@@ -234,7 +232,12 @@ pub(crate) mod test_fixtures {
 
     /// Canonical BLS vote message format — matches tendermint.rs format exactly.
     /// Format: u8(len(chain_id)) || chain_id || "precommit" || height_le8 || round_le4 || block_hash
-    pub fn bls_vote_message(chain_id: &str, height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
+    pub fn bls_vote_message(
+        chain_id: &str,
+        height: u64,
+        round: u32,
+        block_hash: &[u8; 32],
+    ) -> Vec<u8> {
         let chain_id_bytes = chain_id.as_bytes();
         let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 9 + 8 + 4 + 32);
         msg.push(chain_id_bytes.len() as u8);
@@ -312,19 +315,14 @@ pub(crate) mod test_fixtures {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::test_fixtures::*;
+    use super::*;
 
     #[test]
     fn new_starts_at_genesis_height() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs, &kps, &[0, 1, 2]);
-        let lc = LightClient::new(
-            genesis,
-            100,
-            "",
-            None,
-        );
+        let lc = LightClient::new(genesis, 100, "", None);
         assert_eq!(lc.current_height(), 1);
         assert_eq!(lc.current_state_root(), [1u8; 32]);
         assert_eq!(lc.trusted_tip().block_hash, [0xaa; 32]);
@@ -334,15 +332,11 @@ mod tests {
     fn ingest_signed_sequential_block_succeeds() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(
-            genesis,
-            100,
-            "",
-            None,
-        );
+        let mut lc = LightClient::new(genesis, 100, "", None);
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
-        lc.ingest_block(next, 110).expect("signed sequential block must verify");
+        lc.ingest_block(next, 110)
+            .expect("signed sequential block must verify");
         assert_eq!(lc.current_height(), 2);
         assert_eq!(lc.current_state_root(), [2u8; 32]);
     }
@@ -351,12 +345,7 @@ mod tests {
     fn ingest_non_monotone_block_rejected() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(5, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(
-            genesis,
-            100,
-            "",
-            None,
-        );
+        let mut lc = LightClient::new(genesis, 100, "", None);
         // Same-height block — must be rejected before any BFT check.
         let same = make_signed_header(5, [0u8; 32], [0xcc; 32], vs.clone(), &kps, &[0, 1, 2]);
         assert!(matches!(
@@ -384,16 +373,10 @@ mod tests {
         // STILL verify, as long as the BLS sig is valid.
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(
-            genesis,
-            100,
-            "",
-            None,
-        );
+        let mut lc = LightClient::new(genesis, 100, "", None);
         // Adjacent block (height 2) with an unrelated parent_hash —
         // must STILL accept since BFT BLS sig is valid.
-        let arbitrary_parent =
-            make_signed_header(2, [0x11; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
+        let arbitrary_parent = make_signed_header(2, [0x11; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
         lc.ingest_block(arbitrary_parent, 110)
             .expect("BFT-valid block must verify regardless of parent_hash");
         assert_eq!(lc.current_height(), 2);
@@ -403,12 +386,7 @@ mod tests {
     fn ingest_block_with_insufficient_signers_rejected() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(
-            genesis,
-            100,
-            "",
-            None,
-        );
+        let mut lc = LightClient::new(genesis, 100, "", None);
         // Only 1 of 4 signers — below quorum (need ≥3).
         let weak = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0]);
         let err = lc
@@ -421,12 +399,7 @@ mod tests {
     fn ingest_block_with_corrupted_signature_rejected() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(
-            genesis,
-            100,
-            "",
-            None,
-        );
+        let mut lc = LightClient::new(genesis, 100, "", None);
         // Build a valid header, then corrupt the aggregate sig.
         let mut bad = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
         if !bad.commit_certificate.aggregate_signature.is_empty() {
@@ -443,13 +416,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         // 1-second trust period for fast expiry test.
-        let mut lc = LightClient::with_trust_period(
-            genesis,
-            100,
-            1,
-            "",
-            None,
-        );
+        let mut lc = LightClient::with_trust_period(genesis, 100, 1, "", None);
         // Wait past the trust period.
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
         let err = lc
@@ -462,12 +429,7 @@ mod tests {
     fn trust_period_default_is_two_weeks() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs, &kps, &[0, 1, 2]);
-        let lc = LightClient::new(
-            genesis,
-            100,
-            "",
-            None,
-        );
+        let lc = LightClient::new(genesis, 100, "", None);
         assert_eq!(lc.trust_period_secs(), 14 * 24 * 3600);
     }
 
@@ -475,13 +437,7 @@ mod tests {
     fn with_custom_trust_period_overrides_default() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs, &kps, &[0, 1, 2]);
-        let lc = LightClient::with_trust_period(
-            genesis,
-            100,
-            3600,
-            "",
-            None,
-        );
+        let lc = LightClient::with_trust_period(genesis, 100, 3600, "", None);
         assert_eq!(lc.trust_period_secs(), 3600);
     }
 

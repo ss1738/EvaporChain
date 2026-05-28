@@ -16,8 +16,14 @@ fn pair(e1: u64, t1: u64, e2: u64, t2: u64, tag_byte: u8) -> ConcurrentPair {
     tag[31] = tag_byte;
     tag[0] = tag_byte;
     ConcurrentPair {
-        first: PairStats { energy: e1, tx_count: t1 },
-        second: PairStats { energy: e2, tx_count: t2 },
+        first: PairStats {
+            energy: e1,
+            tx_count: t1,
+        },
+        second: PairStats {
+            energy: e2,
+            tx_count: t2,
+        },
         tag,
     }
 }
@@ -104,8 +110,8 @@ fn issuance_certificate_records_bucket_counts_summing_to_n_pairs() {
 #[test]
 fn verify_empty_pairs_rejected() {
     let cert = issue();
-    let err = verify_certificate(CHAIN, &[], [9u8; 32], GateThresholds::doctrine(), &cert)
-        .unwrap_err();
+    let err =
+        verify_certificate(CHAIN, &[], [9u8; 32], GateThresholds::doctrine(), &cert).unwrap_err();
     assert_eq!(err, VerifyError::EmptyWindow);
 }
 
@@ -127,14 +133,8 @@ fn verify_prev_hash_mismatch() {
 fn verify_pair_count_mismatch() {
     let cert = issue();
     let short = balanced_window()[..8].to_vec();
-    let err = verify_certificate(
-        CHAIN,
-        &short,
-        [9u8; 32],
-        GateThresholds::doctrine(),
-        &cert,
-    )
-    .unwrap_err();
+    let err = verify_certificate(CHAIN, &short, [9u8; 32], GateThresholds::doctrine(), &cert)
+        .unwrap_err();
     match err {
         VerifyError::PairCountMismatch { cert: c, given: g } => {
             assert_eq!(c, 16);
@@ -242,7 +242,10 @@ fn verify_cross_chain_replay_seed_mismatch() {
     // First field mismatch on the verify-side path: cartel seed (and
     // therefore s_cartel) diverges under a different chain_id.
     assert!(
-        matches!(err, VerifyError::SCartelMismatch { .. } | VerifyError::SeedMismatch),
+        matches!(
+            err,
+            VerifyError::SCartelMismatch { .. } | VerifyError::SeedMismatch
+        ),
         "cross-chain replay must reject; got {err:?}"
     );
 }
@@ -264,7 +267,10 @@ fn verify_cross_window_replay_seed_mismatch() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, VerifyError::SCartelMismatch { .. } | VerifyError::SeedMismatch),
+        matches!(
+            err,
+            VerifyError::SCartelMismatch { .. } | VerifyError::SeedMismatch
+        ),
         "cross-window replay must reject; got {err:?}"
     );
 }
@@ -275,7 +281,10 @@ fn verify_cross_window_replay_seed_mismatch() {
 
 #[test]
 fn verify_error_display_includes_signal_text() {
-    assert!(VerifyError::EmptyWindow.to_string().to_lowercase().contains("empty"));
+    assert!(VerifyError::EmptyWindow
+        .to_string()
+        .to_lowercase()
+        .contains("empty"));
     assert!(VerifyError::PrevHashMismatch
         .to_string()
         .to_lowercase()
@@ -291,7 +300,10 @@ fn beacon_error_display_includes_signal_text() {
     let s = BeaconError::InvalidWindowRange { start: 7, end: 3 }.to_string();
     assert!(s.contains("7"));
     assert!(s.contains("3"));
-    assert!(BeaconError::EmptyWindow.to_string().to_lowercase().contains("empty"));
+    assert!(BeaconError::EmptyWindow
+        .to_string()
+        .to_lowercase()
+        .contains("empty"));
 }
 
 // =================================================================

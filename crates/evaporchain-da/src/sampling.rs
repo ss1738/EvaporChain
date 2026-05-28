@@ -828,7 +828,10 @@ mod tests {
     #[test]
     fn t1_20_generate_queries_zero_shards_returns_empty() {
         let queries = DASampler::generate_queries(42, 0, 10, b"any-seed");
-        assert!(queries.is_empty(), "zero shards must short-circuit to empty");
+        assert!(
+            queries.is_empty(),
+            "zero shards must short-circuit to empty"
+        );
     }
 
     /// T1.20 — `SamplingError` variants carry the diagnostic values

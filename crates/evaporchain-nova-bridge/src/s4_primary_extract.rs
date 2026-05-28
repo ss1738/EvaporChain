@@ -91,10 +91,14 @@ pub fn extract_primary_ck(
         .ok_or(ExtractError::MissingPath)?;
     let mut ck = Vec::with_capacity(arr.len());
     for e in arr {
-        ck.push(decode_bn256_point(e.as_str().ok_or(ExtractError::MissingPath)?)?);
+        ck.push(decode_bn256_point(
+            e.as_str().ok_or(ExtractError::MissingPath)?,
+        )?);
     }
     let h = decode_bn256_point(
-        ck_p.get("h").and_then(|h| h.as_str()).ok_or(ExtractError::MissingPath)?,
+        ck_p.get("h")
+            .and_then(|h| h.as_str())
+            .ok_or(ExtractError::MissingPath)?,
     )?;
     Ok((ck, h))
 }
@@ -102,7 +106,9 @@ pub fn extract_primary_ck(
 /// `rs_json["r_W_primary"]` → (`W`, `r_W`) as exact `ark_bn254::Fr`
 /// (primary scalar field = circuit-native).
 pub fn extract_primary_witness(rs_json: &Value) -> Result<(Vec<ArkFr>, ArkFr), ExtractError> {
-    let rw = rs_json.get("r_W_primary").ok_or(ExtractError::MissingPath)?;
+    let rw = rs_json
+        .get("r_W_primary")
+        .ok_or(ExtractError::MissingPath)?;
     let warr = rw
         .get("W")
         .and_then(|w| w.as_array())
@@ -170,9 +176,7 @@ mod tests {
         assert!(ck.len() >= w.len(), "nova invariant ck≥W");
 
         // On-curve = strong correctness signal for the decoders.
-        let on = |x: ArkFq, y: ArkFq| {
-            ark_bn254::G1Affine::new_unchecked(x, y).is_on_curve()
-        };
+        let on = |x: ArkFq, y: ArkFq| ark_bn254::G1Affine::new_unchecked(x, y).is_on_curve();
         for i in 0..ck.len().min(8) {
             assert!(on(ck[i].0, ck[i].1), "ck_primary[{i}] must be on bn256-G1");
         }
@@ -217,8 +221,8 @@ mod tests {
         assert!(!w.is_empty() && ck.len() >= w.len(), "nova invariant");
         let n = w.len().min(N);
         ck.truncate(n); // free the other ~16382 unused bases
-        // Out-of-circuit ark MSM over the SAME real prefix
-        // (accumulate from the first term — no Zero trait needed).
+                        // Out-of-circuit ark MSM over the SAME real prefix
+                        // (accumulate from the first term — no Zero trait needed).
         let term = |i: usize| {
             let p = ark_bn254::G1Affine::new_unchecked(ck[i].0, ck[i].1);
             assert!(p.is_on_curve(), "ck[{i}] must be on bn256-G1");
@@ -235,7 +239,10 @@ mod tests {
         // acc = Σ scalarᵢ·baseᵢ via the edge-safe complete gadget.
         let mut acc: Option<crate::s4_primary_msm_gadget::G1ProjVar> = None;
         for i in 0..n {
-            let base = G1AffineVar { x: mkfq(ck[i].0), y: mkfq(ck[i].1) };
+            let base = G1AffineVar {
+                x: mkfq(ck[i].0),
+                y: mkfq(ck[i].1),
+            };
             let kv = FpVar::<ArkFr>::new_witness(cs.clone(), || Ok(w[i])).unwrap();
             let mut bits = kv.to_bits_le().unwrap();
             bits.reverse(); // MSB-first, full 254-bit

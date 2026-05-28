@@ -119,8 +119,10 @@ fn prove_forgotten_distinct_record_ids_produce_distinct_witnesses() {
     let a = prove_forgotten([1u8; 32], 1_000, lambda_100(), 0, 1_000, 10);
     let b = prove_forgotten([2u8; 32], 1_000, lambda_100(), 0, 1_000, 10);
     assert_ne!(a.witness, b.witness);
-    assert_eq!(a.decayed_commitment, b.decayed_commitment,
-        "same inputs except record_id → same decay, but different witness");
+    assert_eq!(
+        a.decayed_commitment, b.decayed_commitment,
+        "same inputs except record_id → same decay, but different witness"
+    );
 }
 
 #[test]
@@ -128,7 +130,10 @@ fn prove_forgotten_query_before_activated_clamps() {
     // query_epoch < activated_epoch must NOT panic — saturating_sub
     // clamps elapsed to 0, leaving decayed == original.
     let p = prove_forgotten([7u8; 32], 1_000, lambda_100(), 100, 50, 10);
-    assert_eq!(p.decayed_commitment, 1_000, "no decay when elapsed clamps to 0");
+    assert_eq!(
+        p.decayed_commitment, 1_000,
+        "no decay when elapsed clamps to 0"
+    );
     // The proof still verifies its own witness binding.
     let err = verify_forget_proof(&p).expect_err("NotForgotten when decayed > threshold");
     assert!(matches!(err, ForgetProofError::NotForgotten { .. }));
@@ -181,8 +186,11 @@ fn proof_serde_round_trips_and_still_verifies() {
 
 #[test]
 fn forget_proof_error_displays_both_variants() {
-    let nf = ForgetProofError::NotForgotten { decayed: 100, threshold: 50 }
-        .to_string();
+    let nf = ForgetProofError::NotForgotten {
+        decayed: 100,
+        threshold: 50,
+    }
+    .to_string();
     let wm = ForgetProofError::WitnessMismatch {
         derived: [0u8; 32],
         claimed: [1u8; 32],
@@ -196,10 +204,22 @@ fn forget_proof_error_displays_both_variants() {
 fn forget_proof_error_eq_discriminates_variants_and_payloads() {
     // Note: ForgetProofError derives PartialEq + Eq + Debug but NOT
     // Clone — pin the equality behavior we DO have.
-    let nf12 = ForgetProofError::NotForgotten { decayed: 1, threshold: 2 };
-    let nf12_again = ForgetProofError::NotForgotten { decayed: 1, threshold: 2 };
-    let nf13 = ForgetProofError::NotForgotten { decayed: 1, threshold: 3 };
-    let wm = ForgetProofError::WitnessMismatch { derived: [0u8; 32], claimed: [0u8; 32] };
+    let nf12 = ForgetProofError::NotForgotten {
+        decayed: 1,
+        threshold: 2,
+    };
+    let nf12_again = ForgetProofError::NotForgotten {
+        decayed: 1,
+        threshold: 2,
+    };
+    let nf13 = ForgetProofError::NotForgotten {
+        decayed: 1,
+        threshold: 3,
+    };
+    let wm = ForgetProofError::WitnessMismatch {
+        derived: [0u8; 32],
+        claimed: [0u8; 32],
+    };
 
     assert_eq!(nf12, nf12_again, "same payload must be Eq");
     assert_ne!(nf12, nf13, "different threshold must be Ne");

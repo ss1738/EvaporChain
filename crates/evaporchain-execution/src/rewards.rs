@@ -99,9 +99,7 @@ impl RewardAccumulator {
             pool.accrue(DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(), bonus, epoch);
             info!(
                 producer = hex::encode(producer),
-                bonus,
-                epoch,
-                "Priority bonus redirected to refresh_pool: producer is tombstoned"
+                bonus, epoch, "Priority bonus redirected to refresh_pool: producer is tombstoned"
             );
             // Caller's "credited to producer" semantics: 0 since the
             // producer received nothing.
@@ -298,7 +296,11 @@ impl RewardAccumulator {
                     acct.last_touched_epoch = epoch;
                     producer_credit += proposer_share;
                 } else if let Some(pool) = redirect_pool.as_deref_mut() {
-                    pool.accrue(DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(), proposer_share, epoch);
+                    pool.accrue(
+                        DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
+                        proposer_share,
+                        epoch,
+                    );
                 }
             }
 
@@ -307,8 +309,14 @@ impl RewardAccumulator {
                 let per_attester = attester_total / attesters.len() as u64;
                 let mut dust = attester_total.saturating_sub(per_attester * attesters.len() as u64);
                 for (i, att) in attesters.iter().enumerate() {
-                    let share = if i == 0 { per_attester + dust } else { per_attester };
-                    if i == 0 { dust = 0; }
+                    let share = if i == 0 {
+                        per_attester + dust
+                    } else {
+                        per_attester
+                    };
+                    if i == 0 {
+                        dust = 0;
+                    }
                     if share > 0 {
                         let acct = db.get_or_create_account(att);
                         acct.balance = acct.balance.saturating_add(share);
@@ -331,7 +339,11 @@ impl RewardAccumulator {
                     acct.last_touched_epoch = epoch;
                     producer_credit += dist.to_producer;
                 } else if let Some(pool) = redirect_pool.as_deref_mut() {
-                    pool.accrue(DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(), dist.to_producer, epoch);
+                    pool.accrue(
+                        DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
+                        dist.to_producer,
+                        epoch,
+                    );
                 }
             }
             if dist.to_stakers > 0 {
@@ -345,21 +357,15 @@ impl RewardAccumulator {
                         acct.last_touched_epoch = epoch;
                         producer_credit += commission;
                     } else if let Some(pool) = redirect_pool {
-                        pool.accrue(
-                            DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
-                            commission,
-                            epoch,
-                        );
+                        pool.accrue(DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(), commission, epoch);
                     }
-                    self.total_to_producers =
-                        self.total_to_producers.saturating_add(commission);
+                    self.total_to_producers = self.total_to_producers.saturating_add(commission);
                 }
                 // Net delegator share goes to the pending staker rewards pool.
                 if net_staker > 0 {
                     self.pending_staker_rewards =
                         self.pending_staker_rewards.saturating_add(net_staker);
-                    self.total_to_stakers =
-                        self.total_to_stakers.saturating_add(net_staker);
+                    self.total_to_stakers = self.total_to_stakers.saturating_add(net_staker);
                 }
             }
         }
@@ -603,18 +609,9 @@ mod tests {
 
         // Verify Tokenomics::block_reward dispatcher equals
         // reward_at_epoch_capped when emission=None.
-        assert_eq!(
-            tk.block_reward(0, 0),
-            tk.reward_at_epoch_capped(0, 0)
-        );
-        assert_eq!(
-            tk.block_reward(500, 0),
-            tk.reward_at_epoch_capped(500, 0)
-        );
-        assert_eq!(
-            tk.block_reward(1000, 0),
-            tk.reward_at_epoch_capped(1000, 0)
-        );
+        assert_eq!(tk.block_reward(0, 0), tk.reward_at_epoch_capped(0, 0));
+        assert_eq!(tk.block_reward(500, 0), tk.reward_at_epoch_capped(500, 0));
+        assert_eq!(tk.block_reward(1000, 0), tk.reward_at_epoch_capped(1000, 0));
     }
 
     #[test]
@@ -919,7 +916,10 @@ mod tests {
         // Total producer credit = 60 + 250 + 25 = 335.
         assert_eq!(credit, 335, "producer credit with 10% commission");
         // Net staker pool: 250 - 25 = 225.
-        assert_eq!(acc.pending_staker_rewards, 225, "delegators get 90% of staker pool");
+        assert_eq!(
+            acc.pending_staker_rewards, 225,
+            "delegators get 90% of staker pool"
+        );
         // Burned is independent of commission.
         assert_eq!(acc.total_burned, 500);
     }
@@ -993,8 +993,15 @@ mod tests {
         );
         assert_eq!(credit, 0, "dead producer receives nothing");
         // block_reward(100) + to_producer(250) + commission(25) = 375 redirected.
-        assert_eq!(pool.total_accrued(), 375, "all producer-bound amounts redirected");
-        assert_eq!(acc.pending_staker_rewards, 225, "net delegator share preserved");
+        assert_eq!(
+            pool.total_accrued(),
+            375,
+            "all producer-bound amounts redirected"
+        );
+        assert_eq!(
+            acc.pending_staker_rewards, 225,
+            "net delegator share preserved"
+        );
     }
 
     // ─── T1.20 rewards.rs coverage push ──────────────────────────────
@@ -1016,7 +1023,10 @@ mod tests {
         let stakers = vec![(addr(10), 1u64), (addr(20), 1u64), (addr(30), 1u64)];
         let distributed = acc.distribute_staker_rewards(&mut db, &stakers, 0);
         // 100 split 1:1:1 → 33 each = 99, remainder = 1, dust → 100.
-        assert_eq!(distributed, 100, "dust-loop must reclaim the rounding remainder");
+        assert_eq!(
+            distributed, 100,
+            "dust-loop must reclaim the rounding remainder"
+        );
         // pending_staker_rewards is reset.
         assert_eq!(acc.pending_staker_rewards, 0);
         // Sum of balances equals the pool.
@@ -1039,9 +1049,9 @@ mod tests {
             &mut db,
             &producer,
             100,
-            1_000_000,   // priority_sum
-            1_000,       // scale_per_unit → bonus = 1000
-            false,       // producer_alive
+            1_000_000, // priority_sum
+            1_000,     // scale_per_unit → bonus = 1000
+            false,     // producer_alive
             Some(&mut pool),
         );
         // Dead producer: caller-visible credit = 0.
@@ -1060,15 +1070,8 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         let mut acc = RewardAccumulator::new(test_tokenomics());
         let producer = addr(99);
-        let credit = acc.apply_priority_bonus(
-            &mut db,
-            &producer,
-            100,
-            1_000_000,
-            1_000,
-            false,
-            None,
-        );
+        let credit =
+            acc.apply_priority_bonus(&mut db, &producer, 100, 1_000_000, 1_000, false, None);
         assert_eq!(credit, 0);
         assert!(db.get_account(&producer).is_none());
         assert_eq!(acc.total_minted, 1000);
@@ -1086,9 +1089,9 @@ mod tests {
         let credit = acc.process_block_rewards(
             &mut db,
             &producer,
-            0,        // epoch
-            0,        // total_fees
-            false,    // producer_alive
+            0,     // epoch
+            0,     // total_fees
+            false, // producer_alive
             Some(&mut pool),
         );
         // Dead producer: caller-visible credit = 0.

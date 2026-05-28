@@ -309,12 +309,19 @@ mod tests {
         let matrix = encoder.encode_2d(&data).unwrap();
         let rc = RowColumnCommitments::from_matrix(&matrix);
         let dim = rc.extended_dim;
-        assert!(rc.generate_cell_proof(&matrix, dim, 0).is_none(),
-            "row == dim must reject");
-        assert!(rc.generate_cell_proof(&matrix, 0, dim).is_none(),
-            "col == dim must reject");
-        assert!(rc.generate_cell_proof(&matrix, dim + 100, dim + 100).is_none(),
-            "far out-of-bounds must reject");
+        assert!(
+            rc.generate_cell_proof(&matrix, dim, 0).is_none(),
+            "row == dim must reject"
+        );
+        assert!(
+            rc.generate_cell_proof(&matrix, 0, dim).is_none(),
+            "col == dim must reject"
+        );
+        assert!(
+            rc.generate_cell_proof(&matrix, dim + 100, dim + 100)
+                .is_none(),
+            "far out-of-bounds must reject"
+        );
     }
 
     /// T1.20 — adversarial: tampered `cell_data` must fail verification
@@ -334,8 +341,10 @@ mod tests {
         if !proof.cell_data.is_empty() {
             proof.cell_data[0] ^= 0xFF;
         }
-        assert!(!rc.verify_cell_proof(&proof),
-            "tampered cell_data must fail verification");
+        assert!(
+            !rc.verify_cell_proof(&proof),
+            "tampered cell_data must fail verification"
+        );
     }
 
     /// T1.20 — adversarial: tampered `row_siblings` must fail the row
@@ -354,8 +363,10 @@ mod tests {
         if !proof.row_siblings.is_empty() {
             proof.row_siblings[0][0] ^= 0xFF;
         }
-        assert!(!rc.verify_cell_proof(&proof),
-            "tampered row_siblings must fail verification");
+        assert!(
+            !rc.verify_cell_proof(&proof),
+            "tampered row_siblings must fail verification"
+        );
     }
 
     /// T1.20 — adversarial: mismatched `data_root` field must fail at
@@ -371,8 +382,10 @@ mod tests {
         let mut proof = rc.generate_cell_proof(&matrix, 0, 0).unwrap();
         assert!(rc.verify_cell_proof(&proof), "honest proof must verify");
         proof.data_root[0] ^= 0xFF;
-        assert!(!rc.verify_cell_proof(&proof),
-            "mismatched data_root must fail verification");
+        assert!(
+            !rc.verify_cell_proof(&proof),
+            "mismatched data_root must fail verification"
+        );
     }
 
     /// T1.20 — `merkle_root` edge cases (lines 202-207): empty input

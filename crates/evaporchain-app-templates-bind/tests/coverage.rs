@@ -37,7 +37,13 @@ fn sddc_rejects_ceiling_equal_floor() {
 #[test]
 fn sddc_rejects_ceiling_below_floor() {
     let err = bind(sddc(50, 100, 10, 500)).unwrap_err();
-    assert!(matches!(err, BindError::Invariant { primitive: "SDDC", .. }));
+    assert!(matches!(
+        err,
+        BindError::Invariant {
+            primitive: "SDDC",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -162,7 +168,10 @@ fn shlm_rejects_zero_min_freshness() {
 
 #[test]
 fn bind_error_displays_primitive_and_what() {
-    let e = BindError::Invariant { primitive: "SDDC", what: "ceiling must be > floor" };
+    let e = BindError::Invariant {
+        primitive: "SDDC",
+        what: "ceiling must be > floor",
+    };
     let s = e.to_string();
     assert!(s.contains("SDDC"));
     assert!(s.contains("ceiling"));
@@ -170,10 +179,22 @@ fn bind_error_displays_primitive_and_what() {
 
 #[test]
 fn bind_error_eq_discriminates() {
-    let a = BindError::Invariant { primitive: "SDDC", what: "x" };
-    let b = BindError::Invariant { primitive: "SDDC", what: "x" };
-    let c = BindError::Invariant { primitive: "SFSV", what: "x" };
-    let d = BindError::Invariant { primitive: "SDDC", what: "y" };
+    let a = BindError::Invariant {
+        primitive: "SDDC",
+        what: "x",
+    };
+    let b = BindError::Invariant {
+        primitive: "SDDC",
+        what: "x",
+    };
+    let c = BindError::Invariant {
+        primitive: "SFSV",
+        what: "x",
+    };
+    let d = BindError::Invariant {
+        primitive: "SDDC",
+        what: "y",
+    };
     assert_eq!(a, b);
     assert_ne!(a, c);
     assert_ne!(a, d);

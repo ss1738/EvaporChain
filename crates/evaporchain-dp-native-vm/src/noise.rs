@@ -311,9 +311,7 @@ mod tests {
         let mut neg_count = 0;
         let mut zero_count = 0;
         for s in 0u8..200 {
-            let noised = m
-                .apply(true_v, 100, 100_000, NoiseSeed([s; 32]))
-                .unwrap();
+            let noised = m.apply(true_v, 100, 100_000, NoiseSeed([s; 32])).unwrap();
             match noised.cmp(&true_v) {
                 std::cmp::Ordering::Greater => pos_count += 1,
                 std::cmp::Ordering::Less => neg_count += 1,

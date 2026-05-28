@@ -80,15 +80,18 @@ mod tests {
 
     #[test]
     fn rejects_unknown_predicate() {
-        let j = br#"{"future_self":"0xab","predicate_type":2,"release_param":1,"deposit_amount":1}"#;
+        let j =
+            br#"{"future_self":"0xab","predicate_type":2,"release_param":1,"deposit_amount":1}"#;
         assert_eq!(parse(j).unwrap_err(), ParseError::UnknownPredicate(2));
     }
 
     #[test]
     fn rejects_zero_deposit_and_zero_release_param() {
-        let j0 = br#"{"future_self":"0xab","predicate_type":0,"release_param":10,"deposit_amount":0}"#;
+        let j0 =
+            br#"{"future_self":"0xab","predicate_type":0,"release_param":10,"deposit_amount":0}"#;
         assert_eq!(parse(j0).unwrap_err(), ParseError::ZeroDeposit);
-        let j1 = br#"{"future_self":"0xab","predicate_type":0,"release_param":0,"deposit_amount":10}"#;
+        let j1 =
+            br#"{"future_self":"0xab","predicate_type":0,"release_param":0,"deposit_amount":10}"#;
         assert_eq!(parse(j1).unwrap_err(), ParseError::ZeroReleaseParam);
     }
 

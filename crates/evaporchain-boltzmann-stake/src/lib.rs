@@ -112,7 +112,10 @@ mod press_claim_tests {
         let decayed = decay_validator_stake(s0, cl(), HALF_LIFE);
         let lost = initial - decayed.active;
         let restored = refresh_on_block(decayed, lost, HALF_LIFE);
-        assert_eq!(restored.active, initial, "exact refresh must restore initial stake");
+        assert_eq!(
+            restored.active, initial,
+            "exact refresh must restore initial stake"
+        );
     }
 
     // ── 3. MEV-lease pattern killed ───────────────────────────────────
@@ -126,19 +129,25 @@ mod press_claim_tests {
 
         // After one half-life, apply the leaseholder's block-production refresh.
         // Leaseholder refreshes *their own* account — holder receives nothing.
-        let leaseholder_decayed  = decay_validator_stake(leaseholder, cl(), HALF_LIFE);
+        let leaseholder_decayed = decay_validator_stake(leaseholder, cl(), HALF_LIFE);
         let lost = 1_000_000u64.saturating_sub(leaseholder_decayed.active);
         let leaseholder_after = refresh_on_block(leaseholder_decayed, lost, HALF_LIFE);
 
         // Holder is never refreshed — their stake still decays.
         let holder_after = decay_validator_stake(holder, cl(), HALF_LIFE);
 
-        assert_eq!(leaseholder_after.active, 1_000_000,
-            "active leaseholder must maintain full stake");
-        assert_eq!(holder_after.active, 500_000,
-            "passive holder decays even if leaseholder is fully active");
-        assert!(leaseholder_after.active > holder_after.active,
-            "leaseholder must strictly outrank the passive original holder");
+        assert_eq!(
+            leaseholder_after.active, 1_000_000,
+            "active leaseholder must maintain full stake"
+        );
+        assert_eq!(
+            holder_after.active, 500_000,
+            "passive holder decays even if leaseholder is fully active"
+        );
+        assert!(
+            leaseholder_after.active > holder_after.active,
+            "leaseholder must strictly outrank the passive original holder"
+        );
     }
 
     // ── Boltzmann boost: activity amplifies weight ────────────────────
@@ -150,12 +159,16 @@ mod press_claim_tests {
         let stake = 1_000_000u64;
         let beta_mb = 1_000u64;
         let w_passive = proposer_weight(stake, 0, beta_mb);
-        let w_active  = proposer_weight(stake, 16, beta_mb);
-        assert!(w_active >= w_passive,
-            "a block-producing validator must have at least as high a proposer weight");
+        let w_active = proposer_weight(stake, 16, beta_mb);
+        assert!(
+            w_active >= w_passive,
+            "a block-producing validator must have at least as high a proposer weight"
+        );
         // With a zero-activity baseline the boost must eventually grow.
         let w_very_active = proposer_weight(stake, 1_000, beta_mb);
-        assert!(w_very_active >= w_active,
-            "very-active validator must not rank below the active one");
+        assert!(
+            w_very_active >= w_active,
+            "very-active validator must not rank below the active one"
+        );
     }
 }

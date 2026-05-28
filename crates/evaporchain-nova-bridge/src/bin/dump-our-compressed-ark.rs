@@ -75,8 +75,7 @@ fn run(in_path: Option<PathBuf>, out_path: PathBuf) -> Result<(), String> {
         "dump-our-compressed-ark: loading inverse MDS from {} …",
         in_path.display()
     );
-    let m_inv = extract_mds_inverse_matrix(&in_path)
-        .map_err(|e| format!("extract m_inv: {e}"))?;
+    let m_inv = extract_mds_inverse_matrix(&in_path).map_err(|e| format!("extract m_inv: {e}"))?;
 
     println!("dump-our-compressed-ark: generating plain ARK via grain LFSR …");
     let plain_ark = generate_round_constants_bn254_arity_24_standard();

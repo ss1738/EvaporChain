@@ -10,12 +10,20 @@
 //! social reputation penalty."
 
 use evaporchain_half_life_nft::{
-    default_ladder, tier::{Tier, TierLadder}, HalfLifeNft, NftError, TokenId,
+    default_ladder,
+    tier::{Tier, TierLadder},
+    HalfLifeNft, NftError, TokenId,
 };
 
-fn alice()  -> [u8; 32] { [0xAA; 32] }
-fn bob()    -> [u8; 32] { [0xBB; 32] }
-fn tid(n: u8) -> TokenId { TokenId([n; 32]) }
+fn alice() -> [u8; 32] {
+    [0xAA; 32]
+}
+fn bob() -> [u8; 32] {
+    [0xBB; 32]
+}
+fn tid(n: u8) -> TokenId {
+    TokenId([n; 32])
+}
 
 fn fresh(initial: u64) -> HalfLifeNft {
     HalfLifeNft::mint(tid(1), alice(), initial, 0, default_ladder()).unwrap()
@@ -46,11 +54,19 @@ fn five_tier_full_promotion_lifecycle() {
 
     // Tier 4 (max): held >= 50_000
     n.tick_to(50_000).unwrap();
-    assert_eq!(n.current_tier_index(), 4, "50_000 epochs held → tier 4 (max)");
+    assert_eq!(
+        n.current_tier_index(),
+        4,
+        "50_000 epochs held → tier 4 (max)"
+    );
 
     // Further time keeps tier at 4
     n.tick_to(60_000).unwrap();
-    assert_eq!(n.current_tier_index(), 4, "60_000 epochs held → still tier 4");
+    assert_eq!(
+        n.current_tier_index(),
+        4,
+        "60_000 epochs held → still tier 4"
+    );
 }
 
 #[test]
@@ -85,7 +101,8 @@ fn mercenary_cost_quantified() {
     assert!(
         lena.energy > turo.energy * 100,
         "LENA({}) must be 100× healthier than TURO({}) — mercenary cost is real",
-        lena.energy, turo.energy
+        lena.energy,
+        turo.energy
     );
 }
 
@@ -95,14 +112,24 @@ fn transfer_resets_tier_and_clock_energy_preserved() {
     // same (decayed) energy — the retention benefit is personal, not property-level.
     let mut n = fresh(1_000_000_000);
     n.tick_to(5_000).unwrap();
-    assert_eq!(n.current_tier_index(), 2, "should be at tier 2 after 5_000 held epochs");
+    assert_eq!(
+        n.current_tier_index(),
+        2,
+        "should be at tier 2 after 5_000 held epochs"
+    );
     let energy_before_transfer = n.energy;
 
     n.transfer(bob()).unwrap();
     assert_eq!(n.holder, bob());
-    assert_eq!(n.held_epochs_by_current_holder, 0, "retention clock must reset to 0");
+    assert_eq!(
+        n.held_epochs_by_current_holder, 0,
+        "retention clock must reset to 0"
+    );
     assert_eq!(n.current_tier_index(), 0, "new holder starts at tier 0");
-    assert_eq!(n.energy, energy_before_transfer, "transfer must not change energy");
+    assert_eq!(
+        n.energy, energy_before_transfer,
+        "transfer must not change energy"
+    );
 }
 
 #[test]
@@ -116,8 +143,15 @@ fn multiple_transfers_always_resets_to_tier_zero() {
         now += 100;
         n.tick_to(now).unwrap();
         n.transfer(next).unwrap();
-        assert_eq!(n.current_tier_index(), 0, "after transfer at ep={now}, must be tier 0");
-        assert_eq!(n.held_epochs_by_current_holder, 0, "held clock must be 0 after transfer");
+        assert_eq!(
+            n.current_tier_index(),
+            0,
+            "after transfer at ep={now}, must be tier 0"
+        );
+        assert_eq!(
+            n.held_epochs_by_current_holder, 0,
+            "held clock must be 0 after transfer"
+        );
     }
 }
 
@@ -139,7 +173,10 @@ fn partial_epoch_energy_interpolation_exact() {
     // Formula: after = 1M * (2*100 - 50) / (2*100) = 1M * 150/200 = 750_000.
     let mut n = fresh(1_000_000);
     n.tick_to(50).unwrap();
-    assert_eq!(n.energy, 750_000, "half-life interpolation must be exact at 50/100 epochs");
+    assert_eq!(
+        n.energy, 750_000,
+        "half-life interpolation must be exact at 50/100 epochs"
+    );
 }
 
 #[test]
@@ -171,14 +208,25 @@ fn custom_two_tier_ladder_promotion_and_decay() {
     // Custom ladder: tier 0 (hl=10, threshold=0), tier 1 (hl=100, threshold=50).
     // After 50 epochs: should be at tier 1 with slower subsequent decay.
     let ladder = TierLadder::new(vec![
-        Tier { min_held_epochs: 0,  half_life_epochs: 10 },
-        Tier { min_held_epochs: 50, half_life_epochs: 100 },
-    ]).unwrap();
+        Tier {
+            min_held_epochs: 0,
+            half_life_epochs: 10,
+        },
+        Tier {
+            min_held_epochs: 50,
+            half_life_epochs: 100,
+        },
+    ])
+    .unwrap();
     let mut n = HalfLifeNft::mint(tid(1), alice(), 1_000_000, 0, ladder).unwrap();
 
     // After 50 epochs at tier-0 (hl=10): 5 halvings → 1M / 32 = 31_250
     n.tick_to(50).unwrap();
-    assert_eq!(n.current_tier_index(), 1, "after 50 held epochs must be tier 1");
+    assert_eq!(
+        n.current_tier_index(),
+        1,
+        "after 50 held epochs must be tier 1"
+    );
     assert_eq!(n.energy, 31_250, "5 halvings of hl=10 must yield 31_250");
 
     // After 100 more epochs at tier-1 (hl=100): 1 halving → 31_250 / 2 = 15_625
@@ -193,11 +241,23 @@ fn non_monotone_tick_rejected_with_error_details() {
 
     // Equal tick
     let err = n.tick_to(100).unwrap_err();
-    assert!(matches!(err, NftError::NonMonotoneTick { incoming: 100, last: 100 }));
+    assert!(matches!(
+        err,
+        NftError::NonMonotoneTick {
+            incoming: 100,
+            last: 100
+        }
+    ));
 
     // Backward tick
     let err = n.tick_to(50).unwrap_err();
-    assert!(matches!(err, NftError::NonMonotoneTick { incoming: 50, last: 100 }));
+    assert!(matches!(
+        err,
+        NftError::NonMonotoneTick {
+            incoming: 50,
+            last: 100
+        }
+    ));
 
     // Energy and clock must not have changed
     assert_eq!(n.last_tick, 100);
@@ -215,7 +275,11 @@ fn two_nfts_are_fully_independent() {
 
     n2.transfer(bob()).unwrap();
     assert_eq!(n2.holder, bob());
-    assert_eq!(n1.holder, alice(), "n1 holder must be unaffected by n2 transfer");
+    assert_eq!(
+        n1.holder,
+        alice(),
+        "n1 holder must be unaffected by n2 transfer"
+    );
 }
 
 #[test]

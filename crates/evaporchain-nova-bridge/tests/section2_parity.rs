@@ -30,8 +30,7 @@ const DUMP_PATH: &str = "/tmp/neptune-bn256-standard.json";
 #[ignore = "requires /tmp/neptune-bn256-standard.json from dump-neptune-constants"]
 fn full_compressed_ark_matches_neptune_crc() {
     let m_inv = extract_mds_inverse_matrix(DUMP_PATH).expect("extract m_inv");
-    let neptune_crc =
-        extract_compressed_round_constants(DUMP_PATH).expect("extract crc");
+    let neptune_crc = extract_compressed_round_constants(DUMP_PATH).expect("extract crc");
 
     let plain_ark = generate_round_constants_bn254_arity_24_standard();
     let ours = compress_full(&plain_ark, &m_inv, 25, 8, 59);
@@ -43,7 +42,11 @@ fn full_compressed_ark_matches_neptune_crc() {
         ours.len(),
         neptune_crc.len()
     );
-    assert_eq!(ours.len(), 259, "expected `(rf+rp)*0 + rf*width + rp = 259`");
+    assert_eq!(
+        ours.len(),
+        259,
+        "expected `(rf+rp)*0 + rf*width + rp = 259`"
+    );
 
     let mut mismatches: Vec<usize> = Vec::new();
     for i in 0..ours.len() {
@@ -84,8 +87,7 @@ fn full_compressed_ark_matches_neptune_crc() {
 #[test]
 #[ignore = "requires /tmp/neptune-bn256-standard.json"]
 fn plain_round_zero_matches_first_three_crc_entries() {
-    let neptune_crc =
-        extract_compressed_round_constants(DUMP_PATH).expect("extract crc");
+    let neptune_crc = extract_compressed_round_constants(DUMP_PATH).expect("extract crc");
     let plain_ark = generate_round_constants_bn254_arity_24_standard();
 
     for i in 0..3 {

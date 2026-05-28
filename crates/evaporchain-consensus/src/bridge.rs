@@ -184,8 +184,7 @@ impl StateProof {
         }
 
         // Leaf hash: DST + key + value so different keys at same value can't collide.
-        let mut leaf_input =
-            Vec::with_capacity(STATE_PROOF_LEAF_DST.len() + 32 + self.value.len());
+        let mut leaf_input = Vec::with_capacity(STATE_PROOF_LEAF_DST.len() + 32 + self.value.len());
         leaf_input.extend_from_slice(STATE_PROOF_LEAF_DST);
         leaf_input.extend_from_slice(&self.key);
         leaf_input.extend_from_slice(&self.value);
@@ -596,7 +595,14 @@ mod tests {
         keypairs: &[BlsKeypair],
         signer_indices: &[usize],
     ) -> CommitCertificate {
-        make_signed_certificate_with_chain("evaporchain", height, block_hash, round, keypairs, signer_indices)
+        make_signed_certificate_with_chain(
+            "evaporchain",
+            height,
+            block_hash,
+            round,
+            keypairs,
+            signer_indices,
+        )
     }
 
     fn make_signed_certificate_with_chain(
@@ -641,8 +647,7 @@ mod tests {
         leaf_index: u64,
     ) -> StateProof {
         // Leaf hash with DST + key binding — mirrors StateProof::verify().
-        let mut leaf_input =
-            Vec::with_capacity(STATE_PROOF_LEAF_DST.len() + 32 + value.len());
+        let mut leaf_input = Vec::with_capacity(STATE_PROOF_LEAF_DST.len() + 32 + value.len());
         leaf_input.extend_from_slice(STATE_PROOF_LEAF_DST);
         leaf_input.extend_from_slice(&key);
         leaf_input.extend_from_slice(value);

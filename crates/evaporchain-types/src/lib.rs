@@ -547,7 +547,6 @@ impl Account {
     }
 }
 
-
 /// Multi-signature transaction executed at the protocol level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiSigTx {
@@ -1574,9 +1573,8 @@ impl UserOpTx {
         let pm_nonce = self.paymaster_nonce?;
         let call_data_hash = blake3::hash(&self.call_data);
         const DOMAIN: &[u8] = b"evaporchain:paymaster_sponsorship:v1\0";
-        let mut buf = Vec::with_capacity(
-            DOMAIN.len() + 4 + chain_id.len() + 32 + 8 + 32 + 8 + 8 + 32,
-        );
+        let mut buf =
+            Vec::with_capacity(DOMAIN.len() + 4 + chain_id.len() + 32 + 8 + 32 + 8 + 8 + 32);
         buf.extend_from_slice(DOMAIN);
         buf.extend_from_slice(&(chain_id.len() as u32).to_le_bytes());
         buf.extend_from_slice(chain_id.as_bytes());
@@ -2842,14 +2840,20 @@ mod tests {
             signature: None,
             public_key: None,
         };
-        let p1 = user_op.paymaster_sponsorship_payload("evaporchain-mainnet").unwrap();
-        let p2 = user_op.paymaster_sponsorship_payload("evaporchain-testnet").unwrap();
+        let p1 = user_op
+            .paymaster_sponsorship_payload("evaporchain-mainnet")
+            .unwrap();
+        let p2 = user_op
+            .paymaster_sponsorship_payload("evaporchain-testnet")
+            .unwrap();
         assert_ne!(
             p1, p2,
             "different chain_ids MUST produce different sponsorship payloads"
         );
         // Same chain id is deterministic.
-        let p1_again = user_op.paymaster_sponsorship_payload("evaporchain-mainnet").unwrap();
+        let p1_again = user_op
+            .paymaster_sponsorship_payload("evaporchain-mainnet")
+            .unwrap();
         assert_eq!(p1, p1_again);
     }
 
@@ -3336,7 +3340,7 @@ mod tests {
             energy_proofs: vec![],
         });
         check_tx_common(&tx, None, "Unshield"); // no sender, no nonce
-        // Unshield is ZK-authenticated — no signature / pubkey expected.
+                                                // Unshield is ZK-authenticated — no signature / pubkey expected.
         assert!(tx.signature().is_none());
         assert!(tx.public_key().is_none());
     }
@@ -3501,7 +3505,7 @@ mod proptests {
 
         let sb = tx.signable_bytes();
         assert!(sb.len() > 32 + 8 + 8 + 6 * 3); // submitter+nonce+deposit+6 guard markers minimum
-        // Marker bytes 0x01..=0x06 must all appear.
+                                                // Marker bytes 0x01..=0x06 must all appear.
         for marker in 1u8..=6 {
             assert!(
                 sb.contains(&marker),

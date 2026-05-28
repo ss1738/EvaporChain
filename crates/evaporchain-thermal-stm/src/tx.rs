@@ -144,7 +144,10 @@ mod tests {
         // Lexicographic order on big-endian byte arrays: leftmost-
         // byte difference dominates.
         assert!(a < c, "a < c (a is all zero, c differs at last byte)");
-        assert!(c < b, "c < b (b differs at first byte ≫ last-byte diff in c)");
+        assert!(
+            c < b,
+            "c < b (b differs at first byte ≫ last-byte diff in c)"
+        );
         assert!(a < b);
     }
 

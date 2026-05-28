@@ -35,10 +35,10 @@
 //!
 //! INVENTION_STACK §4.3: EPA-MMR (Tier-3 App-Layer).
 
+use evaporchain_epa_mmr::proof::{inner_hash, peak_bag_hash};
 use evaporchain_epa_mmr::{
     verify_inclusion, EnergyLeaf, EpaMmr, InclusionProof, MmrError, ProofError,
 };
-use evaporchain_epa_mmr::proof::{inner_hash, peak_bag_hash};
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -68,7 +68,11 @@ fn fixture_8_leaf_all_proofs_above_floor() {
 
     for i in 0..8 {
         let proof = InclusionProof::build(&m, i).unwrap();
-        assert_eq!(proof.sibling_path.len(), 3, "leaf {i}: path must be height-3");
+        assert_eq!(
+            proof.sibling_path.len(),
+            3,
+            "leaf {i}: path must be height-3"
+        );
         verify_inclusion(&proof, &root, 500).unwrap();
     }
 }
@@ -85,7 +89,10 @@ fn fixture_floor_above_leaf_energy_rejects() {
     let err = verify_inclusion(&proof3, &root, 2_000).unwrap_err();
     assert_eq!(
         err,
-        ProofError::EnergyBelowFloor { energy: 1_000, floor: 2_000 }
+        ProofError::EnergyBelowFloor {
+            energy: 1_000,
+            floor: 2_000
+        }
     );
 
     // Floor == energy: still passes (energy >= floor).
@@ -105,7 +112,10 @@ fn fixture_decay_tick_invalidates_proofs() {
     // Simulate decay tick.
     m.update_energy(3, 50).unwrap();
     let root_after = m.root().unwrap();
-    assert_ne!(root_before, root_after, "root must change after energy update");
+    assert_ne!(
+        root_before, root_after,
+        "root must change after energy update"
+    );
 
     // New proof for leaf 3 with new root.
     let new_proof3 = InclusionProof::build(&m, 3).unwrap();
@@ -115,7 +125,10 @@ fn fixture_decay_tick_invalidates_proofs() {
     let err = verify_inclusion(&new_proof3, &root_after, 100).unwrap_err();
     assert_eq!(
         err,
-        ProofError::EnergyBelowFloor { energy: 50, floor: 100 }
+        ProofError::EnergyBelowFloor {
+            energy: 50,
+            floor: 100
+        }
     );
 
     // Floor=25 <= 50: passes.
@@ -171,7 +184,13 @@ fn doctrine_decayed_leaf_unprovable_healthy_leaf_remains_provable() {
     // Leaf 1 is unprovable above floor=100.
     let p1 = InclusionProof::build(&m, 1).unwrap();
     let err = verify_inclusion(&p1, &root2, 100).unwrap_err();
-    assert!(matches!(err, ProofError::EnergyBelowFloor { energy: 30, floor: 100 }));
+    assert!(matches!(
+        err,
+        ProofError::EnergyBelowFloor {
+            energy: 30,
+            floor: 100
+        }
+    ));
 
     // Leaves 0, 2, 3 remain provable.
     for i in [0usize, 2, 3] {
@@ -216,7 +235,10 @@ fn doctrine_root_deterministic_across_equivalent_mmrs() {
 fn adversarial_leaf_out_of_range_rejected() {
     let m = build_8_leaf_mmr();
     let err = InclusionProof::build(&m, 100).unwrap_err();
-    assert!(matches!(err, ProofError::LeafOutOfRange { idx: 100, len: 8 }));
+    assert!(matches!(
+        err,
+        ProofError::LeafOutOfRange { idx: 100, len: 8 }
+    ));
 }
 
 #[test]

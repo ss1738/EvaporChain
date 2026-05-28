@@ -15,12 +15,12 @@
 //! deterministic.
 
 use evaporchain_app_templates::class::{
-    GALLERY_FORGETS, MAYFLY, MNEMOCHAIN_CARD, SGB_TYPE_SYSTEM,
-    SDDC_AUCTION, SINGH_SABI, CHILDKEY_LETTER,
+    CHILDKEY_LETTER, GALLERY_FORGETS, MAYFLY, MNEMOCHAIN_CARD, SDDC_AUCTION, SGB_TYPE_SYSTEM,
+    SINGH_SABI,
 };
 use evaporchain_app_templates::TemplateClass;
-use evaporchain_app_templates_engine::{materialise, EngineError, TypedInit};
 use evaporchain_app_templates_engine::dispatch::MAX_INIT_CALLDATA;
+use evaporchain_app_templates_engine::{materialise, EngineError, TypedInit};
 use evaporchain_app_templates_materialise::MaterialiseInstruction;
 
 fn iid(b: u8) -> evaporchain_app_templates_materialise::InstanceId {
@@ -41,7 +41,8 @@ fn mayfly_cd() -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "initial_energy": 1_000u64,
         "half_life": 100u64,
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn sabi_cd() -> Vec<u8> {
@@ -49,7 +50,8 @@ fn sabi_cd() -> Vec<u8> {
         "initial_energy": 5_000u64,
         "floor_pct": 10u64,
         "half_life": 200u64,
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn sddc_cd() -> Vec<u8> {
@@ -58,26 +60,30 @@ fn sddc_cd() -> Vec<u8> {
         "floor": 1_000u64,
         "lot_lambda": 50u64,
         "duration_epochs": 500u64,
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn mnemochain_cd() -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "initial_energy": 2_000u64,
         "initial_stability": 86400u64,
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn gallery_cd() -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "opened_at_epoch": 1000u64,
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn sgb_cd() -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "fragment": "!A ⊗ ?B",
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn childkey_cd() -> Vec<u8> {
@@ -86,7 +92,8 @@ fn childkey_cd() -> Vec<u8> {
         "epochs_per_year": 365u64,
         "m_threshold": 2u64,
         "n_committee": 3u64,
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -94,50 +101,71 @@ fn childkey_cd() -> Vec<u8> {
 #[test]
 fn nft_lane_mayfly_dispatches() {
     let typed = materialise(&instr(MAYFLY, mayfly_cd(), 0x01)).unwrap();
-    assert!(matches!(typed, TypedInit::Mayfly(_)),
-        "MAYFLY must dispatch to Mayfly variant: {:?}", typed);
+    assert!(
+        matches!(typed, TypedInit::Mayfly(_)),
+        "MAYFLY must dispatch to Mayfly variant: {:?}",
+        typed
+    );
 }
 
 #[test]
 fn nft_lane_singh_sabi_dispatches() {
     let typed = materialise(&instr(SINGH_SABI, sabi_cd(), 0x02)).unwrap();
-    assert!(matches!(typed, TypedInit::SinghSabi(_)),
-        "SINGH_SABI must dispatch to SinghSabi variant: {:?}", typed);
+    assert!(
+        matches!(typed, TypedInit::SinghSabi(_)),
+        "SINGH_SABI must dispatch to SinghSabi variant: {:?}",
+        typed
+    );
 }
 
 #[test]
 fn marketplace_lane_sddc_dispatches() {
     let typed = materialise(&instr(SDDC_AUCTION, sddc_cd(), 0x03)).unwrap();
-    assert!(matches!(typed, TypedInit::Sddc(_)),
-        "SDDC_AUCTION must dispatch to Sddc variant: {:?}", typed);
+    assert!(
+        matches!(typed, TypedInit::Sddc(_)),
+        "SDDC_AUCTION must dispatch to Sddc variant: {:?}",
+        typed
+    );
 }
 
 #[test]
 fn consumer_lane_mnemochain_dispatches() {
     let typed = materialise(&instr(MNEMOCHAIN_CARD, mnemochain_cd(), 0x04)).unwrap();
-    assert!(matches!(typed, TypedInit::Mnemochain(_)),
-        "MNEMOCHAIN_CARD must dispatch to Mnemochain variant: {:?}", typed);
+    assert!(
+        matches!(typed, TypedInit::Mnemochain(_)),
+        "MNEMOCHAIN_CARD must dispatch to Mnemochain variant: {:?}",
+        typed
+    );
 }
 
 #[test]
 fn cultural_lane_gallery_dispatches() {
     let typed = materialise(&instr(GALLERY_FORGETS, gallery_cd(), 0x05)).unwrap();
-    assert!(matches!(typed, TypedInit::GalleryForgets(_)),
-        "GALLERY_FORGETS must dispatch to GalleryForgets variant: {:?}", typed);
+    assert!(
+        matches!(typed, TypedInit::GalleryForgets(_)),
+        "GALLERY_FORGETS must dispatch to GalleryForgets variant: {:?}",
+        typed
+    );
 }
 
 #[test]
 fn paradigm_lane_sgb_dispatches() {
     let typed = materialise(&instr(SGB_TYPE_SYSTEM, sgb_cd(), 0x06)).unwrap();
-    assert!(matches!(typed, TypedInit::Sgb(_)),
-        "SGB_TYPE_SYSTEM must dispatch to Sgb variant: {:?}", typed);
+    assert!(
+        matches!(typed, TypedInit::Sgb(_)),
+        "SGB_TYPE_SYSTEM must dispatch to Sgb variant: {:?}",
+        typed
+    );
 }
 
 #[test]
 fn childkey_letter_dispatches() {
     let typed = materialise(&instr(CHILDKEY_LETTER, childkey_cd(), 0x07)).unwrap();
-    assert!(matches!(typed, TypedInit::Childkey(_)),
-        "CHILDKEY_LETTER must dispatch to Childkey variant: {:?}", typed);
+    assert!(
+        matches!(typed, TypedInit::Childkey(_)),
+        "CHILDKEY_LETTER must dispatch to Childkey variant: {:?}",
+        typed
+    );
 }
 
 #[test]
@@ -145,7 +173,8 @@ fn unknown_class_returns_engine_error() {
     let err = materialise(&instr(TemplateClass(0xFFFF_FFFF), vec![], 0x08)).unwrap_err();
     assert!(
         matches!(err, EngineError::UnknownTemplate(0xFFFF_FFFF)),
-        "unknown class must produce UnknownTemplate error: {:?}", err
+        "unknown class must produce UnknownTemplate error: {:?}",
+        err
     );
 }
 
@@ -154,7 +183,8 @@ fn malformed_json_returns_parse_failed() {
     let err = materialise(&instr(MAYFLY, vec![b'!', b'@'], 0x09)).unwrap_err();
     assert!(
         matches!(err, EngineError::ParseFailed(_)),
-        "malformed JSON must produce ParseFailed: {:?}", err
+        "malformed JSON must produce ParseFailed: {:?}",
+        err
     );
 }
 
@@ -166,7 +196,8 @@ fn calldata_too_large_rejected() {
     assert!(
         matches!(err, EngineError::CalldataTooLarge { got, cap }
             if got == MAX_INIT_CALLDATA + 1 && cap == MAX_INIT_CALLDATA),
-        "oversized calldata must be rejected: {:?}", err
+        "oversized calldata must be rejected: {:?}",
+        err
     );
 }
 
@@ -183,7 +214,8 @@ fn calldata_at_exact_cap_is_ok_structurally() {
     let result = materialise(&instr(MAYFLY, cd, 0x0B));
     assert!(
         !matches!(result, Err(EngineError::CalldataTooLarge { .. })),
-        "at-cap calldata must not be rejected by length guard: {:?}", result
+        "at-cap calldata must not be rejected by length guard: {:?}",
+        result
     );
 }
 
@@ -191,8 +223,11 @@ fn calldata_at_exact_cap_is_ok_structurally() {
 fn dispatch_is_deterministic() {
     let i1 = instr(SDDC_AUCTION, sddc_cd(), 0x0C);
     let i2 = instr(SDDC_AUCTION, sddc_cd(), 0x0C);
-    assert_eq!(materialise(&i1).unwrap(), materialise(&i2).unwrap(),
-        "same instruction must produce identical TypedInit");
+    assert_eq!(
+        materialise(&i1).unwrap(),
+        materialise(&i2).unwrap(),
+        "same instruction must produce identical TypedInit"
+    );
 }
 
 #[test]
@@ -202,7 +237,7 @@ fn typed_init_carries_parsed_fields() {
     match typed {
         TypedInit::Sddc(cfg) => {
             assert_eq!(cfg.ceiling, 10_000);
-            assert_eq!(cfg.floor,   1_000);
+            assert_eq!(cfg.floor, 1_000);
             assert_eq!(cfg.lot_lambda, 50);
             assert_eq!(cfg.duration_epochs, 500);
         }
@@ -214,9 +249,9 @@ fn typed_init_carries_parsed_fields() {
 fn priya_engine_dispatch_full_arc() {
     // Full arc: PRIYA processes one instruction per lane.
     let cases: &[(TemplateClass, Vec<u8>)] = &[
-        (MAYFLY,          mayfly_cd()),
-        (SINGH_SABI,      sabi_cd()),
-        (SDDC_AUCTION,    sddc_cd()),
+        (MAYFLY, mayfly_cd()),
+        (SINGH_SABI, sabi_cd()),
+        (SDDC_AUCTION, sddc_cd()),
         (MNEMOCHAIN_CARD, mnemochain_cd()),
         (GALLERY_FORGETS, gallery_cd()),
         (SGB_TYPE_SYSTEM, sgb_cd()),
@@ -225,14 +260,21 @@ fn priya_engine_dispatch_full_arc() {
 
     for (i, (class, cd)) in cases.iter().enumerate() {
         let result = materialise(&instr(*class, cd.clone(), i as u8));
-        assert!(result.is_ok(),
-            "lane dispatch for class {:#010x} must succeed: {:?}", class.0, result);
+        assert!(
+            result.is_ok(),
+            "lane dispatch for class {:#010x} must succeed: {:?}",
+            class.0,
+            result
+        );
     }
 
     // Unknown class is a hard error, not a fallback.
     let ghost = TemplateClass(0x0001_FFFE);
     assert!(
-        matches!(materialise(&instr(ghost, vec![], 0xFF)), Err(EngineError::UnknownTemplate(_))),
+        matches!(
+            materialise(&instr(ghost, vec![], 0xFF)),
+            Err(EngineError::UnknownTemplate(_))
+        ),
         "unknown class must be hard error"
     );
 }

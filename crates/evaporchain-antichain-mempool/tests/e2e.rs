@@ -40,17 +40,21 @@
 use std::collections::BTreeSet;
 
 use evaporchain_antichain_mempool::{
-    extend_to_maximal, is_maximal_antichain, total_energy_meets_threshold,
-    Antichain, AntichainError,
+    extend_to_maximal, is_maximal_antichain, total_energy_meets_threshold, Antichain,
+    AntichainError,
 };
 use evaporchain_energy_kernel::{ChainLambda, Lambda};
 use evaporchain_light_cone::{Block, BlockId, LightCone};
 
 // ── Fixture ──────────────────────────────────────────────────────────────────
 
-fn id(b: u8) -> BlockId { [b; 32] }
+fn id(b: u8) -> BlockId {
+    [b; 32]
+}
 
-fn cl() -> ChainLambda { ChainLambda::new(Lambda::from_epochs(100)) }
+fn cl() -> ChainLambda {
+    ChainLambda::new(Lambda::from_epochs(100))
+}
 
 const THRESHOLD: u64 = 2_000_000;
 
@@ -58,14 +62,19 @@ const THRESHOLD: u64 = 2_000_000;
 fn three_producer_dag() -> LightCone {
     let mut lc = LightCone::new();
     // Genesis
-    lc.insert(Block::new(id(0), vec![],        500_000, 0)).unwrap();
+    lc.insert(Block::new(id(0), vec![], 500_000, 0)).unwrap();
     // Concurrent tips from P1, P2, P3, P4 — all children of genesis only.
-    lc.insert(Block::new(id(1), vec![id(0)],   800_000, 1)).unwrap(); // Fork A  (P1)
-    lc.insert(Block::new(id(2), vec![id(0)],   700_000, 1)).unwrap(); // Fork B  (P2)
-    lc.insert(Block::new(id(3), vec![id(0)],   600_000, 1)).unwrap(); // Fork C  (P3)
-    lc.insert(Block::new(id(4), vec![id(0)],   200_000, 1)).unwrap(); // Fork D  (P4)
-    // P1 extends its own tip.
-    lc.insert(Block::new(id(5), vec![id(1)],   900_000, 2)).unwrap(); // Fork A'
+    lc.insert(Block::new(id(1), vec![id(0)], 800_000, 1))
+        .unwrap(); // Fork A  (P1)
+    lc.insert(Block::new(id(2), vec![id(0)], 700_000, 1))
+        .unwrap(); // Fork B  (P2)
+    lc.insert(Block::new(id(3), vec![id(0)], 600_000, 1))
+        .unwrap(); // Fork C  (P3)
+    lc.insert(Block::new(id(4), vec![id(0)], 200_000, 1))
+        .unwrap(); // Fork D  (P4)
+                   // P1 extends its own tip.
+    lc.insert(Block::new(id(5), vec![id(1)], 900_000, 2))
+        .unwrap(); // Fork A'
     lc
 }
 
@@ -99,8 +108,10 @@ fn abcd_is_maximal_antichain_of_the_dag() {
     // introducing a comparable pair (genesis precedes all; A' is A's child).
     let abcd: BTreeSet<BlockId> = [id(1), id(2), id(3), id(4)].into_iter().collect();
     let a = Antichain::from_set(abcd, &lc).unwrap();
-    assert!(is_maximal_antichain(&a, &lc),
-        "ABCD must be a maximal antichain — no concurrent outsider exists");
+    assert!(
+        is_maximal_antichain(&a, &lc),
+        "ABCD must be a maximal antichain — no concurrent outsider exists"
+    );
 }
 
 #[test]
@@ -108,8 +119,10 @@ fn abc_not_maximal_while_d_is_concurrent() {
     let lc = three_producer_dag();
     let abc: BTreeSet<BlockId> = [id(1), id(2), id(3)].into_iter().collect();
     let a = Antichain::from_set(abc, &lc).unwrap();
-    assert!(!is_maximal_antichain(&a, &lc),
-        "ABC is not maximal — D is concurrent with all three and can be added");
+    assert!(
+        !is_maximal_antichain(&a, &lc),
+        "ABC is not maximal — D is concurrent with all three and can be added"
+    );
 }
 
 #[test]
@@ -123,11 +136,26 @@ fn extend_from_seed_a_reaches_maximal() {
     // B, C, D are concurrent with A → included.
     // Genesis precedes A → excluded.
     assert!(is_maximal_antichain(&maximal, &lc));
-    assert!(maximal.contains(&id(2)), "B must be in the maximal extension");
-    assert!(maximal.contains(&id(3)), "C must be in the maximal extension");
-    assert!(maximal.contains(&id(4)), "D must be in the maximal extension");
-    assert!(!maximal.contains(&id(5)), "A' is A's child — must not be added");
-    assert!(!maximal.contains(&id(0)), "Genesis precedes A — must not be added");
+    assert!(
+        maximal.contains(&id(2)),
+        "B must be in the maximal extension"
+    );
+    assert!(
+        maximal.contains(&id(3)),
+        "C must be in the maximal extension"
+    );
+    assert!(
+        maximal.contains(&id(4)),
+        "D must be in the maximal extension"
+    );
+    assert!(
+        !maximal.contains(&id(5)),
+        "A' is A's child — must not be added"
+    );
+    assert!(
+        !maximal.contains(&id(0)),
+        "Genesis precedes A — must not be added"
+    );
 }
 
 // ── Energy-threshold gate ─────────────────────────────────────────────────────
@@ -138,10 +166,14 @@ fn abc_clears_threshold_at_epoch_1() {
     let abc: BTreeSet<BlockId> = [id(1), id(2), id(3)].into_iter().collect();
     let a = Antichain::from_set(abc, &lc).unwrap();
     // Total at epoch 1 (elapsed=0): 800_000 + 700_000 + 600_000 = 2_100_000
-    assert!(total_energy_meets_threshold(&a, &lc, cl(), 1, THRESHOLD),
-        "ABC total 2_100_000 must clear threshold {THRESHOLD}");
-    assert!(!total_energy_meets_threshold(&a, &lc, cl(), 1, 2_200_000),
-        "ABC total 2_100_000 must NOT clear threshold 2_200_000");
+    assert!(
+        total_energy_meets_threshold(&a, &lc, cl(), 1, THRESHOLD),
+        "ABC total 2_100_000 must clear threshold {THRESHOLD}"
+    );
+    assert!(
+        !total_energy_meets_threshold(&a, &lc, cl(), 1, 2_200_000),
+        "ABC total 2_100_000 must NOT clear threshold 2_200_000"
+    );
 }
 
 #[test]
@@ -150,8 +182,10 @@ fn low_energy_pair_bd_fails_threshold() {
     let bd: BTreeSet<BlockId> = [id(2), id(4)].into_iter().collect();
     let a = Antichain::from_set(bd, &lc).unwrap();
     // Total at epoch 1: 700_000 + 200_000 = 900_000
-    assert!(!total_energy_meets_threshold(&a, &lc, cl(), 1, THRESHOLD),
-        "BD total 900_000 must not clear threshold {THRESHOLD}");
+    assert!(
+        !total_energy_meets_threshold(&a, &lc, cl(), 1, THRESHOLD),
+        "BD total 900_000 must not clear threshold {THRESHOLD}"
+    );
 }
 
 #[test]
@@ -161,11 +195,15 @@ fn abc_decay_drops_below_threshold_after_one_half_life() {
     let a = Antichain::from_set(abc, &lc).unwrap();
     // After 100 epochs of decay (half-life=100) from observed_epoch=1:
     // each energy halves. New total ≈ 400_000 + 350_000 + 300_000 = 1_050_000.
-    assert!(!total_energy_meets_threshold(&a, &lc, cl(), 101, THRESHOLD),
-        "ABC after one half-life of decay must not clear threshold {THRESHOLD}");
+    assert!(
+        !total_energy_meets_threshold(&a, &lc, cl(), 101, THRESHOLD),
+        "ABC after one half-life of decay must not clear threshold {THRESHOLD}"
+    );
     // But it still clears a lower threshold (1_000_000).
-    assert!(total_energy_meets_threshold(&a, &lc, cl(), 101, 1_000_000),
-        "ABC after one half-life must still clear a lower threshold 1_000_000");
+    assert!(
+        total_energy_meets_threshold(&a, &lc, cl(), 101, 1_000_000),
+        "ABC after one half-life must still clear a lower threshold 1_000_000"
+    );
 }
 
 // ── Proposer full-flow decision ───────────────────────────────────────────────
@@ -182,8 +220,10 @@ fn proposer_admits_maximal_concurrent_tips_when_energy_clears_gate() {
 
     // Gate check at epoch 1 with the chain threshold.
     let gate_pass = total_energy_meets_threshold(&proposal, &lc, cl(), 1, THRESHOLD);
-    assert!(gate_pass,
-        "maximal antichain {{A,B,C,D}} at epoch 1 must pass the proposer energy gate");
+    assert!(
+        gate_pass,
+        "maximal antichain {{A,B,C,D}} at epoch 1 must pass the proposer energy gate"
+    );
 }
 
 // ── Adversarial checks ───────────────────────────────────────────────────────
@@ -191,51 +231,58 @@ fn proposer_admits_maximal_concurrent_tips_when_energy_clears_gate() {
 #[test]
 fn adversarial_comparable_pair_genesis_and_child_rejected() {
     let lc = three_producer_dag();
-    let err = Antichain::from_set(
-        [id(0), id(1)].into_iter().collect::<BTreeSet<_>>(), &lc,
-    ).unwrap_err();
-    assert!(matches!(err, AntichainError::Comparable { .. }),
-        "genesis < A is comparable — must be rejected from antichain");
+    let err =
+        Antichain::from_set([id(0), id(1)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap_err();
+    assert!(
+        matches!(err, AntichainError::Comparable { .. }),
+        "genesis < A is comparable — must be rejected from antichain"
+    );
 }
 
 #[test]
 fn adversarial_comparable_pair_parent_and_grandchild_rejected() {
     let lc = three_producer_dag();
     // Genesis < A' (ancestor/descendant).
-    let err = Antichain::from_set(
-        [id(0), id(5)].into_iter().collect::<BTreeSet<_>>(), &lc,
-    ).unwrap_err();
-    assert!(matches!(err, AntichainError::Comparable { .. }),
-        "genesis < A' (ancestor) is comparable — must be rejected");
+    let err =
+        Antichain::from_set([id(0), id(5)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap_err();
+    assert!(
+        matches!(err, AntichainError::Comparable { .. }),
+        "genesis < A' (ancestor) is comparable — must be rejected"
+    );
 }
 
 #[test]
 fn adversarial_absent_block_rejected() {
     let lc = three_producer_dag();
-    let err = Antichain::from_set(
-        [id(99)].into_iter().collect::<BTreeSet<_>>(), &lc,
-    ).unwrap_err();
-    assert!(matches!(err, AntichainError::Absent(_)),
-        "a block not present in the LightCone must be rejected");
+    let err = Antichain::from_set([id(99)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap_err();
+    assert!(
+        matches!(err, AntichainError::Absent(_)),
+        "a block not present in the LightCone must be rejected"
+    );
 }
 
 #[test]
 fn adversarial_a_and_a_prime_rejected_parent_child() {
     let lc = three_producer_dag();
     // A (id=1) is parent of A' (id=5).
-    let err = Antichain::from_set(
-        [id(1), id(5)].into_iter().collect::<BTreeSet<_>>(), &lc,
-    ).unwrap_err();
-    assert!(matches!(err, AntichainError::Comparable { .. }),
-        "A < A' (parent/child) must be rejected from antichain");
+    let err =
+        Antichain::from_set([id(1), id(5)].into_iter().collect::<BTreeSet<_>>(), &lc).unwrap_err();
+    assert!(
+        matches!(err, AntichainError::Comparable { .. }),
+        "A < A' (parent/child) must be rejected from antichain"
+    );
 }
 
 #[test]
 fn empty_antichain_never_meets_positive_threshold() {
     let lc = three_producer_dag();
     let empty = Antichain::empty();
-    assert!(!total_energy_meets_threshold(&empty, &lc, cl(), 0, 1),
-        "empty antichain must fail any positive threshold");
-    assert!(total_energy_meets_threshold(&empty, &lc, cl(), 0, 0),
-        "empty antichain meets a zero threshold");
+    assert!(
+        !total_energy_meets_threshold(&empty, &lc, cl(), 0, 1),
+        "empty antichain must fail any positive threshold"
+    );
+    assert!(
+        total_energy_meets_threshold(&empty, &lc, cl(), 0, 0),
+        "empty antichain meets a zero threshold"
+    );
 }

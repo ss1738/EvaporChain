@@ -14,16 +14,21 @@
 
 use evaporchain_app_templates_bind::{bind, BindContext, BindError};
 use evaporchain_app_templates_engine::{
-    init_childkey, init_gallery_forgets, init_mayfly, init_mnemochain,
-    init_sddc, init_sfsv, init_sgb, init_singh_heartbeat, init_singh_lineage,
-    init_singh_posthuma, init_singh_resonance, init_singh_sabi, init_singh_triage,
-    TypedInit,
+    init_childkey, init_gallery_forgets, init_mayfly, init_mnemochain, init_sddc, init_sfsv,
+    init_sgb, init_singh_heartbeat, init_singh_lineage, init_singh_posthuma, init_singh_resonance,
+    init_singh_sabi, init_singh_triage, TypedInit,
 };
 
 // ── Deployer ──────────────────────────────────────────────────────────────
-fn arjun() -> [u8; 32] { [0xA4; 32] }
-fn instance(n: u8) -> [u8; 32] { [n; 32] }
-fn ctx(n: u8) -> BindContext { BindContext::new(arjun(), instance(n), 1_000) }
+fn arjun() -> [u8; 32] {
+    [0xA4; 32]
+}
+fn instance(n: u8) -> [u8; 32] {
+    [n; 32]
+}
+fn ctx(n: u8) -> BindContext {
+    BindContext::new(arjun(), instance(n), 1_000)
+}
 
 // ── Valid-init helpers ────────────────────────────────────────────────────
 
@@ -89,9 +94,18 @@ fn valid_heartbeat() -> TypedInit {
 fn valid_lineage() -> TypedInit {
     TypedInit::SinghLineage(init_singh_lineage::InitConfig {
         ladder: vec![
-            init_singh_lineage::LadderRung { days: 30,  share_bp: 1000 },
-            init_singh_lineage::LadderRung { days: 90,  share_bp: 2500 },
-            init_singh_lineage::LadderRung { days: 180, share_bp: 5000 },
+            init_singh_lineage::LadderRung {
+                days: 30,
+                share_bp: 1000,
+            },
+            init_singh_lineage::LadderRung {
+                days: 90,
+                share_bp: 2500,
+            },
+            init_singh_lineage::LadderRung {
+                days: 180,
+                share_bp: 5000,
+            },
         ],
     })
 }
@@ -165,19 +179,37 @@ fn cultural_and_paradigm_lanes_bind() {
 fn nft_lane_zero_energy_rejects_across_three_primitives() {
     // Zero initial_energy must be caught at bind for SinghSabi, SinghResonance, Mayfly.
     let bad_sabi = TypedInit::SinghSabi(init_singh_sabi::InitConfig {
-        initial_energy: 0, floor_pct: 10, half_life: 365,
+        initial_energy: 0,
+        floor_pct: 10,
+        half_life: 365,
     });
     let err = bind(bad_sabi).unwrap_err();
-    assert!(matches!(err, BindError::Invariant { primitive: "Singh-Sabi", .. }),
-        "zero energy: {:?}", err);
+    assert!(
+        matches!(
+            err,
+            BindError::Invariant {
+                primitive: "Singh-Sabi",
+                ..
+            }
+        ),
+        "zero energy: {:?}",
+        err
+    );
 
     let bad_resonance = TypedInit::SinghResonance(init_singh_resonance::InitConfig {
-        initial_energy: 0, base_half_life: 100, saturation: 50, max_scale_bp: 200,
+        initial_energy: 0,
+        base_half_life: 100,
+        saturation: 50,
+        max_scale_bp: 200,
     });
-    assert!(bind(bad_resonance).is_err(), "SinghResonance zero energy must reject");
+    assert!(
+        bind(bad_resonance).is_err(),
+        "SinghResonance zero energy must reject"
+    );
 
     let bad_mayfly = TypedInit::Mayfly(init_mayfly::InitConfig {
-        initial_energy: 0, half_life: 30,
+        initial_energy: 0,
+        half_life: 30,
     });
     assert!(bind(bad_mayfly).is_err(), "Mayfly zero energy must reject");
 }
@@ -186,21 +218,39 @@ fn nft_lane_zero_energy_rejects_across_three_primitives() {
 fn posthuma_quorum_invariant_m_le_n() {
     // m > n must reject; m == n (unanimous) must accept; m == 1 must accept.
     let too_strict = TypedInit::SinghPosthuma(init_singh_posthuma::InitConfig {
-        half_life: 365, initial_visible_energy: 5_000, m_threshold: 6, n_committee: 5,
+        half_life: 365,
+        initial_visible_energy: 5_000,
+        m_threshold: 6,
+        n_committee: 5,
     });
     let err = bind(too_strict).unwrap_err();
-    assert!(matches!(err, BindError::Invariant { primitive: "Singh-Posthuma", .. }),
-        "m=6 > n=5 must reject: {:?}", err);
+    assert!(
+        matches!(
+            err,
+            BindError::Invariant {
+                primitive: "Singh-Posthuma",
+                ..
+            }
+        ),
+        "m=6 > n=5 must reject: {:?}",
+        err
+    );
 
     // Unanimous (m == n): valid.
     let unanimous = TypedInit::SinghPosthuma(init_singh_posthuma::InitConfig {
-        half_life: 365, initial_visible_energy: 5_000, m_threshold: 5, n_committee: 5,
+        half_life: 365,
+        initial_visible_energy: 5_000,
+        m_threshold: 5,
+        n_committee: 5,
     });
     bind(unanimous).expect("m=n (unanimous) must bind");
 
     // Sole guardian (m=1, n=1): valid.
     let sole = TypedInit::SinghPosthuma(init_singh_posthuma::InitConfig {
-        half_life: 365, initial_visible_energy: 1_000, m_threshold: 1, n_committee: 1,
+        half_life: 365,
+        initial_visible_energy: 1_000,
+        m_threshold: 1,
+        n_committee: 1,
     });
     bind(sole).expect("m=1,n=1 (sole guardian) must bind");
 }
@@ -209,12 +259,18 @@ fn posthuma_quorum_invariant_m_le_n() {
 fn marketplace_sddc_ceiling_floor_boundary() {
     // ceiling == floor must reject; ceiling == floor + 1 must accept.
     let equal = TypedInit::Sddc(init_sddc::InitConfig {
-        ceiling: 100, floor: 100, lot_lambda: 10, duration_epochs: 100,
+        ceiling: 100,
+        floor: 100,
+        lot_lambda: 10,
+        duration_epochs: 100,
     });
     assert!(bind(equal).is_err(), "ceiling==floor must reject");
 
     let one_above = TypedInit::Sddc(init_sddc::InitConfig {
-        ceiling: 101, floor: 100, lot_lambda: 10, duration_epochs: 100,
+        ceiling: 101,
+        floor: 100,
+        lot_lambda: 10,
+        duration_epochs: 100,
     });
     bind(one_above).expect("ceiling=floor+1 must bind (strict boundary)");
 }
@@ -223,12 +279,16 @@ fn marketplace_sddc_ceiling_floor_boundary() {
 fn wallet_ux_triage_horizons_must_be_strictly_increasing() {
     // today == tomorrow must reject; today > week must reject.
     let flat = TypedInit::SinghTriage(init_singh_triage::InitConfig {
-        horizon_today: 2, horizon_tomorrow: 2, horizon_week: 7,
+        horizon_today: 2,
+        horizon_tomorrow: 2,
+        horizon_week: 7,
     });
     assert!(bind(flat).is_err(), "today==tomorrow must reject");
 
     let reversed = TypedInit::SinghTriage(init_singh_triage::InitConfig {
-        horizon_today: 7, horizon_tomorrow: 5, horizon_week: 3,
+        horizon_today: 7,
+        horizon_tomorrow: 5,
+        horizon_week: 3,
     });
     assert!(bind(reversed).is_err(), "reversed horizons must reject");
 }
@@ -259,8 +319,14 @@ fn wallet_ux_lineage_ladder_ordering_and_bounds() {
     // Days non-monotone: reject.
     let unsorted = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
         ladder: vec![
-            init_singh_lineage::LadderRung { days: 90, share_bp: 2500 },
-            init_singh_lineage::LadderRung { days: 30, share_bp: 5000 },
+            init_singh_lineage::LadderRung {
+                days: 90,
+                share_bp: 2500,
+            },
+            init_singh_lineage::LadderRung {
+                days: 30,
+                share_bp: 5000,
+            },
         ],
     });
     assert!(bind(unsorted).is_err(), "unsorted days must reject");
@@ -268,25 +334,38 @@ fn wallet_ux_lineage_ladder_ordering_and_bounds() {
     // Share_bp decreasing: reject (graduated dormancy must be monotonic).
     let decreasing = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
         ladder: vec![
-            init_singh_lineage::LadderRung { days: 30,  share_bp: 8000 },
-            init_singh_lineage::LadderRung { days: 90,  share_bp: 3000 },
+            init_singh_lineage::LadderRung {
+                days: 30,
+                share_bp: 8000,
+            },
+            init_singh_lineage::LadderRung {
+                days: 90,
+                share_bp: 3000,
+            },
         ],
     });
     assert!(bind(decreasing).is_err(), "decreasing share_bp must reject");
 
     // share_bp > 10000 (>100%): reject.
     let oob = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
-        ladder: vec![
-            init_singh_lineage::LadderRung { days: 30, share_bp: 12000 },
-        ],
+        ladder: vec![init_singh_lineage::LadderRung {
+            days: 30,
+            share_bp: 12000,
+        }],
     });
     assert!(bind(oob).is_err(), "share_bp > 10000 must reject");
 
     // Flat share_bp (equal rungs, not decreasing): accept.
     let flat_share = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
         ladder: vec![
-            init_singh_lineage::LadderRung { days: 30, share_bp: 5000 },
-            init_singh_lineage::LadderRung { days: 90, share_bp: 5000 },
+            init_singh_lineage::LadderRung {
+                days: 30,
+                share_bp: 5000,
+            },
+            init_singh_lineage::LadderRung {
+                days: 90,
+                share_bp: 5000,
+            },
         ],
     });
     bind(flat_share).expect("non-decreasing flat share_bp must bind");
@@ -296,17 +375,26 @@ fn wallet_ux_lineage_ladder_ordering_and_bounds() {
 fn consumer_childkey_quorum_boundary() {
     // m_threshold == 0 rejects; m == n (unanimous) accepts.
     let zero_m = TypedInit::Childkey(init_childkey::InitConfig {
-        unlock_age_years: 18, epochs_per_year: 365, m_threshold: 0, n_committee: 3,
+        unlock_age_years: 18,
+        epochs_per_year: 365,
+        m_threshold: 0,
+        n_committee: 3,
     });
     assert!(bind(zero_m).is_err(), "m=0 must reject");
 
     let m_gt_n = TypedInit::Childkey(init_childkey::InitConfig {
-        unlock_age_years: 18, epochs_per_year: 365, m_threshold: 4, n_committee: 3,
+        unlock_age_years: 18,
+        epochs_per_year: 365,
+        m_threshold: 4,
+        n_committee: 3,
     });
     assert!(bind(m_gt_n).is_err(), "m>n must reject");
 
     let unanimous = TypedInit::Childkey(init_childkey::InitConfig {
-        unlock_age_years: 18, epochs_per_year: 365, m_threshold: 3, n_committee: 3,
+        unlock_age_years: 18,
+        epochs_per_year: 365,
+        m_threshold: 3,
+        n_committee: 3,
     });
     bind(unanimous).expect("m=n unanimous must bind");
 }
@@ -316,8 +404,10 @@ fn bound_is_transparent_passthrough() {
     // Bound(typed).0 must equal the input — no mutation, no wrapping.
     let typed = valid_sabi();
     let bound = bind(typed.clone()).unwrap();
-    assert_eq!(bound.0, typed,
-        "Bound must preserve the exact TypedInit value");
+    assert_eq!(
+        bound.0, typed,
+        "Bound must preserve the exact TypedInit value"
+    );
 }
 
 #[test]
@@ -350,10 +440,10 @@ fn arjun_app_store_full_deploy_arc() {
 
     // Valid deploys: SinghSabi, SDDC, Mnemochain, GalleryForgets
     let deploys: Vec<(&str, TypedInit)> = vec![
-        ("SinghSabi",     valid_sabi()),
-        ("SDDC",          valid_sddc()),
-        ("Mnemochain",    valid_mnemochain()),
-        ("GalleryForgets",valid_gallery()),
+        ("SinghSabi", valid_sabi()),
+        ("SDDC", valid_sddc()),
+        ("Mnemochain", valid_mnemochain()),
+        ("GalleryForgets", valid_gallery()),
     ];
     for (name, typed) in deploys {
         bind(typed).unwrap_or_else(|e| panic!("{name} must bind: {:?}", e));
@@ -361,20 +451,39 @@ fn arjun_app_store_full_deploy_arc() {
 
     // Adversarial: Mayfly with zero half_life → must be stopped here.
     let bad_mayfly = TypedInit::Mayfly(init_mayfly::InitConfig {
-        initial_energy: 1_000, half_life: 0,
+        initial_energy: 1_000,
+        half_life: 0,
     });
     let err = bind(bad_mayfly).unwrap_err();
-    assert!(matches!(err, BindError::Invariant { primitive: "Mayfly", .. }),
-        "zero half_life: {:?}", err);
+    assert!(
+        matches!(
+            err,
+            BindError::Invariant {
+                primitive: "Mayfly",
+                ..
+            }
+        ),
+        "zero half_life: {:?}",
+        err
+    );
 
     // Adversarial: SFSV with predicate_type=2 → must be stopped here.
     let bad_sfsv = TypedInit::Sfsv(init_sfsv::InitConfig {
         deposit_amount: 500,
-        predicate_type: 2,  // only 0 and 1 are valid
+        predicate_type: 2, // only 0 and 1 are valid
         release_param: 200,
         future_self: "0xbob".into(),
     });
     let err2 = bind(bad_sfsv).unwrap_err();
-    assert!(matches!(err2, BindError::Invariant { primitive: "SFSV", .. }),
-        "invalid predicate_type: {:?}", err2);
+    assert!(
+        matches!(
+            err2,
+            BindError::Invariant {
+                primitive: "SFSV",
+                ..
+            }
+        ),
+        "invalid predicate_type: {:?}",
+        err2
+    );
 }

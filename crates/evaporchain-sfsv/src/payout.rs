@@ -149,7 +149,7 @@ mod tests {
         // Live energy still 800 ≥ 500 → blocked (epoch is irrelevant).
         assert!(payout(&mut v, 5, 800).is_err());
         assert!(payout(&mut v, 9_999, 500).is_err()); // exactly 500 not < 500
-        // Engine decayed it to 499 < 500 → releases.
+                                                      // Engine decayed it to 499 < 500 → releases.
         let res = payout(&mut v, 1_000, 499).unwrap();
         assert_eq!(res.paid_to, addr(0xBB));
         assert_eq!(res.amount, 1_000);

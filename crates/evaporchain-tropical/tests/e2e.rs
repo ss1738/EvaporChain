@@ -12,17 +12,17 @@
 //! "tropical-plucker").
 
 use evaporchain_tropical::{
-    plucker_commitment, satisfies_four_point, star_tree_distances, tropical_weight,
-    TropicalMatrix, TropicalScalar,
+    plucker_commitment, satisfies_four_point, star_tree_distances, tropical_weight, TropicalMatrix,
+    TropicalScalar,
 };
 
 // ── Validator energies (all exact powers of 2 for integer-exact weights) ──
 // Weight formula: tropical_weight(2^k) = -(k)
 const ALICE: u64 = 4096; // w = -12  (full stake validator)
-const BOB: u64 = 1024;   // w = -10
-const CAROL: u64 = 64;   // w =  -6
-const DAVE: u64 = 4;     // w =  -2
-const EVE: u64 = 1;      // w =   0  (barely alive)
+const BOB: u64 = 1024; // w = -10
+const CAROL: u64 = 64; // w =  -6
+const DAVE: u64 = 4; // w =  -2
+const EVE: u64 = 1; // w =   0  (barely alive)
 
 fn validator_energies() -> Vec<u64> {
     vec![ALICE, BOB, CAROL, DAVE, EVE]
@@ -37,7 +37,10 @@ fn validator_energy_archive_full_lifecycle() {
     let m = star_tree_distances(&validator_energies());
 
     // §A1.4 — star tree must be a valid tree-metric (Buneman four-point)
-    assert!(satisfies_four_point(&m), "validator star tree must satisfy four-point condition");
+    assert!(
+        satisfies_four_point(&m),
+        "validator star tree must satisfy four-point condition"
+    );
 
     // Commitment is deterministic over repeated calls
     let c1 = plucker_commitment(&m);
@@ -48,7 +51,10 @@ fn validator_energy_archive_full_lifecycle() {
     let decayed = vec![ALICE, 512, CAROL, DAVE, EVE];
     let m_decayed = star_tree_distances(&decayed);
     let c_decayed = plucker_commitment(&m_decayed);
-    assert_ne!(c1, c_decayed, "commitment must change after validator energy decay");
+    assert_ne!(
+        c1, c_decayed,
+        "commitment must change after validator energy decay"
+    );
 }
 
 #[test]
@@ -56,7 +62,7 @@ fn tropical_semiring_axioms_with_validator_energies() {
     // §A1.4 — (min, +) semiring: ZERO_T=∞ is additive identity;
     //          ONE_T=0 is multiplicative identity; mul is +.
     let w_alice = tropical_weight(ALICE); // -12
-    let w_bob   = tropical_weight(BOB);   // -10
+    let w_bob = tropical_weight(BOB); // -10
 
     // Additive identity: w ⊕ ∞ = w
     assert_eq!(w_alice.add(TropicalScalar::ZERO_T), w_alice);
@@ -67,7 +73,11 @@ fn tropical_semiring_axioms_with_validator_energies() {
     assert_eq!(TropicalScalar::ONE_T.mul(w_bob), w_bob);
 
     // Tropical add = min: min(-12, -10) = -12
-    assert_eq!(w_alice.add(w_bob), w_alice, "min(-12,-10) must be -12 (Alice's weight)");
+    assert_eq!(
+        w_alice.add(w_bob),
+        w_alice,
+        "min(-12,-10) must be -12 (Alice's weight)"
+    );
 
     // Tropical mul = ordinary +: -12 + (-10) = -22
     assert_eq!(
@@ -82,19 +92,35 @@ fn weight_monotone_higher_energy_shorter_edge() {
     // §A1.4 — higher remaining energy → more-negative weight → "shorter" tropical edge.
     // In (min, +) shorter means closer to the multiplicative identity (0).
     let w_alice = tropical_weight(ALICE); // -12
-    let w_bob   = tropical_weight(BOB);   // -10
+    let w_bob = tropical_weight(BOB); // -10
     let w_carol = tropical_weight(CAROL); // -6
-    let w_dave  = tropical_weight(DAVE);  // -2
-    let w_eve   = tropical_weight(EVE);   //  0
+    let w_dave = tropical_weight(DAVE); // -2
+    let w_eve = tropical_weight(EVE); //  0
 
     // Strictly decreasing with energy (more negative = less in ℤ = shorter edge)
-    assert!(w_alice < w_bob,  "Alice (4096 energy) must have shorter edge than Bob");
-    assert!(w_bob   < w_carol,"Bob (1024 energy) must have shorter edge than Carol");
-    assert!(w_carol < w_dave, "Carol (64 energy) must have shorter edge than Dave");
-    assert!(w_dave  < w_eve,  "Dave (4 energy) must have shorter edge than Eve");
+    assert!(
+        w_alice < w_bob,
+        "Alice (4096 energy) must have shorter edge than Bob"
+    );
+    assert!(
+        w_bob < w_carol,
+        "Bob (1024 energy) must have shorter edge than Carol"
+    );
+    assert!(
+        w_carol < w_dave,
+        "Carol (64 energy) must have shorter edge than Dave"
+    );
+    assert!(
+        w_dave < w_eve,
+        "Dave (4 energy) must have shorter edge than Eve"
+    );
 
     // Eve at energy=1 has weight exactly 0 (the multiplicative identity)
-    assert_eq!(w_eve, TropicalScalar::ONE_T, "Eve's weight must equal tropical ONE_T");
+    assert_eq!(
+        w_eve,
+        TropicalScalar::ONE_T,
+        "Eve's weight must equal tropical ONE_T"
+    );
 }
 
 #[test]
@@ -103,19 +129,47 @@ fn star_tree_pairwise_distances_exact() {
     let m = star_tree_distances(&validator_energies());
 
     // d(ALICE=0, BOB=1) = -12 + -10 = -22
-    assert_eq!(m.get(0, 1), TropicalScalar::finite(-22), "d(Alice,Bob) must be -22");
+    assert_eq!(
+        m.get(0, 1),
+        TropicalScalar::finite(-22),
+        "d(Alice,Bob) must be -22"
+    );
     // d(ALICE=0, CAROL=2) = -12 + -6 = -18
-    assert_eq!(m.get(0, 2), TropicalScalar::finite(-18), "d(Alice,Carol) must be -18");
+    assert_eq!(
+        m.get(0, 2),
+        TropicalScalar::finite(-18),
+        "d(Alice,Carol) must be -18"
+    );
     // d(ALICE=0, DAVE=3) = -12 + -2 = -14
-    assert_eq!(m.get(0, 3), TropicalScalar::finite(-14), "d(Alice,Dave) must be -14");
+    assert_eq!(
+        m.get(0, 3),
+        TropicalScalar::finite(-14),
+        "d(Alice,Dave) must be -14"
+    );
     // d(ALICE=0, EVE=4) = -12 + 0 = -12
-    assert_eq!(m.get(0, 4), TropicalScalar::finite(-12), "d(Alice,Eve) must be -12");
+    assert_eq!(
+        m.get(0, 4),
+        TropicalScalar::finite(-12),
+        "d(Alice,Eve) must be -12"
+    );
     // d(BOB=1, EVE=4) = -10 + 0 = -10
-    assert_eq!(m.get(1, 4), TropicalScalar::finite(-10), "d(Bob,Eve) must be -10");
+    assert_eq!(
+        m.get(1, 4),
+        TropicalScalar::finite(-10),
+        "d(Bob,Eve) must be -10"
+    );
     // d(CAROL=2, DAVE=3) = -6 + -2 = -8
-    assert_eq!(m.get(2, 3), TropicalScalar::finite(-8), "d(Carol,Dave) must be -8");
+    assert_eq!(
+        m.get(2, 3),
+        TropicalScalar::finite(-8),
+        "d(Carol,Dave) must be -8"
+    );
     // d(DAVE=3, EVE=4) = -2 + 0 = -2
-    assert_eq!(m.get(3, 4), TropicalScalar::finite(-2), "d(Dave,Eve) must be -2");
+    assert_eq!(
+        m.get(3, 4),
+        TropicalScalar::finite(-2),
+        "d(Dave,Eve) must be -2"
+    );
 }
 
 #[test]
@@ -132,8 +186,14 @@ fn four_point_all_sums_equal_for_star_tree() {
     assert_eq!(s1, TropicalScalar::finite(-30), "s1 must be -30");
     assert_eq!(s2, TropicalScalar::finite(-30), "s2 must be -30");
     assert_eq!(s3, TropicalScalar::finite(-30), "s3 must be -30");
-    assert_eq!(s1, s2, "all three pairwise sums must be equal for star tree");
-    assert_eq!(s2, s3, "all three pairwise sums must be equal for star tree");
+    assert_eq!(
+        s1, s2,
+        "all three pairwise sums must be equal for star tree"
+    );
+    assert_eq!(
+        s2, s3,
+        "all three pairwise sums must be equal for star tree"
+    );
 }
 
 #[test]
@@ -159,13 +219,29 @@ fn dead_validator_pulls_all_distances_to_infinity() {
 
     // All distances involving leaf 1 (dead BOB) must be Infinity
     for j in [0, 2, 3, 4] {
-        assert_eq!(m.get(1, j), TropicalScalar::Infinity, "dead leaf must have ∞ distance");
-        assert_eq!(m.get(j, 1), TropicalScalar::Infinity, "dead leaf must have ∞ distance (sym)");
+        assert_eq!(
+            m.get(1, j),
+            TropicalScalar::Infinity,
+            "dead leaf must have ∞ distance"
+        );
+        assert_eq!(
+            m.get(j, 1),
+            TropicalScalar::Infinity,
+            "dead leaf must have ∞ distance (sym)"
+        );
     }
 
     // Distances among living validators are unaffected
-    assert_eq!(m.get(0, 2), TropicalScalar::finite(-18), "Alice↔Carol unaffected");
-    assert_eq!(m.get(3, 4), TropicalScalar::finite(-2),  "Dave↔Eve unaffected");
+    assert_eq!(
+        m.get(0, 2),
+        TropicalScalar::finite(-18),
+        "Alice↔Carol unaffected"
+    );
+    assert_eq!(
+        m.get(3, 4),
+        TropicalScalar::finite(-2),
+        "Dave↔Eve unaffected"
+    );
 }
 
 #[test]
@@ -182,11 +258,18 @@ fn energy_decay_trace_commits_distinctly() {
     let living: Vec<_> = commitments[..commitments.len() - 1].iter().collect();
     let mut dedup = living.clone();
     dedup.dedup();
-    assert_eq!(dedup.len(), living.len(), "each decay epoch must produce a distinct commitment");
+    assert_eq!(
+        dedup.len(),
+        living.len(),
+        "each decay epoch must produce a distinct commitment"
+    );
     // The dead epoch (energy=0) differs from all living epochs
     let dead_c = *commitments.last().unwrap();
     for c in &commitments[..commitments.len() - 1] {
-        assert_ne!(*c, dead_c, "dead-epoch commitment must differ from all living");
+        assert_ne!(
+            *c, dead_c,
+            "dead-epoch commitment must differ from all living"
+        );
     }
 }
 
@@ -204,8 +287,12 @@ fn adversarial_non_tree_metric_fails_four_point() {
     //  Max=100 achieved once → four-point fails.
     let mut m = TropicalMatrix::new(4);
     let entries = [
-        (0, 1, 1i64), (0, 2, 2), (0, 3, 3),
-        (1, 2, 4),    (1, 3, 5), (2, 3, 99),
+        (0, 1, 1i64),
+        (0, 2, 2),
+        (0, 3, 3),
+        (1, 2, 4),
+        (1, 3, 5),
+        (2, 3, 99),
     ];
     for (i, j, v) in entries {
         m.set(i, j, TropicalScalar::finite(v));
@@ -230,11 +317,19 @@ fn commitment_changes_on_single_entry_mutation() {
 #[test]
 fn weight_extremes_exact() {
     // §A1.4 — boundary weights: energy=1 → w=0; energy=u64::MAX → w=-63.
-    assert_eq!(tropical_weight(1), TropicalScalar::finite(0),   "w(1) = 0");
-    assert_eq!(tropical_weight(2), TropicalScalar::finite(-1),  "w(2) = -1");
-    assert_eq!(tropical_weight(4), TropicalScalar::finite(-2),  "w(4) = -2");
-    assert_eq!(tropical_weight(1024), TropicalScalar::finite(-10), "w(1024) = -10");
-    assert_eq!(tropical_weight(u64::MAX), TropicalScalar::finite(-63), "w(u64::MAX) = -63");
+    assert_eq!(tropical_weight(1), TropicalScalar::finite(0), "w(1) = 0");
+    assert_eq!(tropical_weight(2), TropicalScalar::finite(-1), "w(2) = -1");
+    assert_eq!(tropical_weight(4), TropicalScalar::finite(-2), "w(4) = -2");
+    assert_eq!(
+        tropical_weight(1024),
+        TropicalScalar::finite(-10),
+        "w(1024) = -10"
+    );
+    assert_eq!(
+        tropical_weight(u64::MAX),
+        TropicalScalar::finite(-63),
+        "w(u64::MAX) = -63"
+    );
     assert_eq!(tropical_weight(0), TropicalScalar::Infinity, "w(0) = ∞");
 }
 
@@ -245,6 +340,10 @@ fn star_tree_symmetric_and_infinity_diagonal() {
     let m = star_tree_distances(&validator_energies());
     assert!(m.is_symmetric(), "star tree must be symmetric");
     for i in 0..5 {
-        assert_eq!(m.get(i, i), TropicalScalar::Infinity, "diagonal must be Infinity");
+        assert_eq!(
+            m.get(i, i),
+            TropicalScalar::Infinity,
+            "diagonal must be Infinity"
+        );
     }
 }

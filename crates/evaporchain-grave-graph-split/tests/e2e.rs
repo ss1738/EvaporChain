@@ -6,15 +6,31 @@
 //! the chain tracks total_share_paid_bp and refuses all further claims once
 //! the split reaches 10_000 bp.
 
-use evaporchain_grave_graph_split::{split::Curation, SplitError, SplitId, SplitLegacy, SplitState};
+use evaporchain_grave_graph_split::{
+    split::Curation, SplitError, SplitId, SplitLegacy, SplitState,
+};
 
-fn woolf()    -> [u8; 32] { [0xAA; 32] }
-fn leonard()  -> [u8; 32] { [0xBB; 32] }
-fn vanessa()  -> [u8; 32] { [0xCC; 32] }
-fn octavia()  -> [u8; 32] { [0xDD; 32] }
-fn vita()     -> [u8; 32] { [0xEE; 32] }
-fn stranger() -> [u8; 32] { [0xFF; 32] }
-fn sid(n: u8) -> SplitId  { SplitId([n; 32]) }
+fn woolf() -> [u8; 32] {
+    [0xAA; 32]
+}
+fn leonard() -> [u8; 32] {
+    [0xBB; 32]
+}
+fn vanessa() -> [u8; 32] {
+    [0xCC; 32]
+}
+fn octavia() -> [u8; 32] {
+    [0xDD; 32]
+}
+fn vita() -> [u8; 32] {
+    [0xEE; 32]
+}
+fn stranger() -> [u8; 32] {
+    [0xFF; 32]
+}
+fn sid(n: u8) -> SplitId {
+    SplitId([n; 32])
+}
 
 /// WOOLF estate: Leonard 40%, Vanessa 30%, Octavia 20%, Vita 10%.
 fn woolf_estate() -> SplitLegacy {
@@ -25,7 +41,7 @@ fn woolf_estate() -> SplitLegacy {
             (leonard(), 4_000),
             (vanessa(), 3_000),
             (octavia(), 2_000),
-            (vita(),    1_000),
+            (vita(), 1_000),
         ],
         5,
     )
@@ -55,7 +71,9 @@ fn woolf_estate_full_lifecycle() {
     estate.certify_source_death(1941);
     assert!(matches!(
         estate.state,
-        SplitState::Inverted { died_at_epoch: 1941 }
+        SplitState::Inverted {
+            died_at_epoch: 1941
+        }
     ));
 
     // Each beneficiary curates independently
@@ -86,10 +104,13 @@ fn share_accounting_exact() {
     assert_eq!(estate.share_for(leonard()), Some(4_000));
     assert_eq!(estate.share_for(vanessa()), Some(3_000));
     assert_eq!(estate.share_for(octavia()), Some(2_000));
-    assert_eq!(estate.share_for(vita()),    Some(1_000));
+    assert_eq!(estate.share_for(vita()), Some(1_000));
     assert_eq!(estate.share_for(stranger()), None);
     let total: u64 = estate.dedications.iter().map(|d| d.share_bp).sum();
-    assert_eq!(total, 10_000, "declared shares must sum to exactly 10_000 bp");
+    assert_eq!(
+        total, 10_000,
+        "declared shares must sum to exactly 10_000 bp"
+    );
 }
 
 #[test]
@@ -104,7 +125,11 @@ fn partial_distribution_tracks_unclaimed_slots() {
     assert_eq!(estate.total_share_paid_bp, 7_000);
     assert!(!estate.is_fully_distributed());
 
-    let oct_ded = estate.dedications.iter().find(|d| d.recipient == octavia()).unwrap();
+    let oct_ded = estate
+        .dedications
+        .iter()
+        .find(|d| d.recipient == octavia())
+        .unwrap();
     assert!(!oct_ded.claimed, "Octavia's slot must remain unclaimed");
     assert!(matches!(oct_ded.curation, Curation::Pending));
 }
@@ -116,9 +141,16 @@ fn pending_curation_is_not_a_real_claim() {
     estate.certify_source_death(1941);
 
     estate.curate(leonard(), Curation::Pending).unwrap();
-    assert_eq!(estate.total_share_paid_bp, 0, "Pending curation must not increment share");
+    assert_eq!(
+        estate.total_share_paid_bp, 0,
+        "Pending curation must not increment share"
+    );
 
-    let ded = estate.dedications.iter().find(|d| d.recipient == leonard()).unwrap();
+    let ded = estate
+        .dedications
+        .iter()
+        .find(|d| d.recipient == leonard())
+        .unwrap();
     assert!(!ded.claimed, "Pending must not mark slot claimed");
 
     // Leonard can still submit a real curation afterwards
@@ -133,11 +165,11 @@ fn curation_order_does_not_affect_final_total() {
     fwd.curate(leonard(), Curation::Accepted).unwrap();
     fwd.curate(vanessa(), Curation::Rejected).unwrap();
     fwd.curate(octavia(), Curation::Hidden).unwrap();
-    fwd.curate(vita(),    Curation::Accepted).unwrap();
+    fwd.curate(vita(), Curation::Accepted).unwrap();
 
     let mut rev = woolf_estate();
     rev.certify_source_death(1941);
-    rev.curate(vita(),    Curation::Accepted).unwrap();
+    rev.curate(vita(), Curation::Accepted).unwrap();
     rev.curate(octavia(), Curation::Hidden).unwrap();
     rev.curate(vanessa(), Curation::Rejected).unwrap();
     rev.curate(leonard(), Curation::Accepted).unwrap();
@@ -155,22 +187,29 @@ fn two_independent_legacies_do_not_interfere() {
     let shared_r = [0x10; 32];
 
     let mut leg_a = SplitLegacy::declare(
-        sid(1), source_a,
+        sid(1),
+        source_a,
         vec![(shared_r, 7_000), (leonard(), 3_000)],
         0,
-    ).unwrap();
+    )
+    .unwrap();
     let mut leg_b = SplitLegacy::declare(
-        sid(2), source_b,
+        sid(2),
+        source_b,
         vec![(shared_r, 5_000), (vanessa(), 5_000)],
         0,
-    ).unwrap();
+    )
+    .unwrap();
 
     leg_a.certify_source_death(100);
     leg_b.certify_source_death(200);
 
     leg_a.curate(shared_r, Curation::Accepted).unwrap();
     assert_eq!(leg_a.total_share_paid_bp, 7_000);
-    assert_eq!(leg_b.total_share_paid_bp, 0, "leg_b must be unaffected by leg_a curations");
+    assert_eq!(
+        leg_b.total_share_paid_bp, 0,
+        "leg_b must be unaffected by leg_a curations"
+    );
 
     leg_b.curate(shared_r, Curation::Rejected).unwrap();
     assert_eq!(leg_b.total_share_paid_bp, 5_000);
@@ -184,9 +223,7 @@ fn two_independent_legacies_do_not_interfere() {
 
 #[test]
 fn single_recipient_full_stake_split() {
-    let mut leg = SplitLegacy::declare(
-        sid(9), woolf(), vec![(leonard(), 10_000)], 0,
-    ).unwrap();
+    let mut leg = SplitLegacy::declare(sid(9), woolf(), vec![(leonard(), 10_000)], 0).unwrap();
     assert_eq!(leg.dedications.len(), 1);
 
     leg.certify_source_death(50);
@@ -199,7 +236,7 @@ fn single_recipient_full_stake_split() {
 #[test]
 fn ten_way_equal_split_fully_distributes() {
     // 10 recipients × 1000 bp = 10_000 bp exactly.
-    let source    = [0x00; 32];
+    let source = [0x00; 32];
     let recipients: Vec<[u8; 32]> = (1u8..=10).map(|i| [i; 32]).collect();
     let spec: Vec<([u8; 32], u64)> = recipients.iter().map(|&r| (r, 1_000)).collect();
 
@@ -223,7 +260,8 @@ fn adversarial_stranger_cannot_claim_existing_slot() {
     let err = estate.curate(stranger(), Curation::Accepted).unwrap_err();
     assert!(
         matches!(err, SplitError::UnknownRecipient(_)),
-        "stranger must receive UnknownRecipient, got {:?}", err
+        "stranger must receive UnknownRecipient, got {:?}",
+        err
     );
     // No bp leaked
     assert_eq!(estate.total_share_paid_bp, 0);
@@ -238,8 +276,12 @@ fn adversarial_double_claim_blocked_at_any_curation_variant() {
 
     for choice in [Curation::Accepted, Curation::Rejected, Curation::Hidden] {
         assert!(
-            matches!(estate.curate(leonard(), choice), Err(SplitError::AlreadyCurated(_))),
-            "double-claim with {:?} must be rejected", choice
+            matches!(
+                estate.curate(leonard(), choice),
+                Err(SplitError::AlreadyCurated(_))
+            ),
+            "double-claim with {:?} must be rejected",
+            choice
         );
     }
     // Share did not double-count
@@ -251,20 +293,24 @@ fn declaration_guards_zero_share_duplicate_and_self() {
     // Zero share at position 1 → ZeroShare(1)
     assert!(matches!(
         SplitLegacy::declare(
-            sid(1), woolf(),
+            sid(1),
+            woolf(),
             vec![(leonard(), 5_000), (vanessa(), 0), (octavia(), 5_000)],
             0,
-        ).unwrap_err(),
+        )
+        .unwrap_err(),
         SplitError::ZeroShare(1)
     ));
 
     // Duplicate recipient → DuplicateRecipient
     assert!(matches!(
         SplitLegacy::declare(
-            sid(2), woolf(),
+            sid(2),
+            woolf(),
             vec![(leonard(), 5_000), (leonard(), 5_000)],
             0,
-        ).unwrap_err(),
+        )
+        .unwrap_err(),
         SplitError::DuplicateRecipient(_)
     ));
 
@@ -287,7 +333,10 @@ fn epoch_of_death_recorded_precisely() {
     estate.certify_source_death(1941);
     match estate.state {
         SplitState::Inverted { died_at_epoch } => {
-            assert_eq!(died_at_epoch, 1941, "epoch of death must match certify_source_death arg");
+            assert_eq!(
+                died_at_epoch, 1941,
+                "epoch of death must match certify_source_death arg"
+            );
         }
         SplitState::Pending => panic!("state must be Inverted after certify_source_death"),
     }

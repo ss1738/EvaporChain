@@ -68,11 +68,11 @@ fn default_auction() -> DecayBoundAuction {
         [0xAA; 32],
         "evaporchain-e2e-1".into(),
         AuctionId::default(),
-        1_000,   // reserve_price
-        100,     // commit_deadline_epoch
-        200,     // reveal_deadline_epoch
+        1_000,     // reserve_price
+        100,       // commit_deadline_epoch
+        200,       // reveal_deadline_epoch
         1_000_000, // initial_energy
-        50,      // half_life_epochs
+        50,        // half_life_epochs
     )
 }
 
@@ -89,30 +89,29 @@ fn default_auction() -> DecayBoundAuction {
 fn fixture_four_bidder_compound_scenario() {
     let mut a = default_auction();
     let alice = addr(0x01);
-    let bob   = addr(0x02);
+    let bob = addr(0x02);
     let carol = addr(0x03);
-    let dave  = addr(0x04);
+    let dave = addr(0x04);
 
     let alice_price = 5_000u64;
-    let bob_price   = 9_000u64; // highest but Bob never reveals
-    let carol_price =   800u64; // below reserve_price=1_000
-    let dave_price  = 2_500u64;
+    let bob_price = 9_000u64; // highest but Bob never reveals
+    let carol_price = 800u64; // below reserve_price=1_000
+    let dave_price = 2_500u64;
 
     let alice_nonce = nonce(0xA1);
-    let bob_nonce   = nonce(0xB2);
+    let bob_nonce = nonce(0xB2);
     let carol_nonce = nonce(0xC3);
-    let dave_nonce  = nonce(0xD4);
+    let dave_nonce = nonce(0xD4);
 
     // ── Commit phase ─────────────────────────────────────────────────────────
     for (bidder, price, n) in [
         (alice, alice_price, alice_nonce),
-        (bob,   bob_price,   bob_nonce),
+        (bob, bob_price, bob_nonce),
         (carol, carol_price, carol_nonce),
-        (dave,  dave_price,  dave_nonce),
+        (dave, dave_price, dave_nonce),
     ] {
-        let c = DecayBoundAuction::compute_commitment(
-            &a.chain_id, &a.auction_id, &bidder, price, &n,
-        );
+        let c =
+            DecayBoundAuction::compute_commitment(&a.chain_id, &a.auction_id, &bidder, price, &n);
         a.submit_commitment(bidder, c).unwrap();
     }
     assert_eq!(a.bids.len(), 4);
@@ -126,14 +125,18 @@ fn fixture_four_bidder_compound_scenario() {
     a.reveal_bid(alice, alice_price, alice_nonce).unwrap();
     // Bob: no-show
     a.reveal_bid(carol, carol_price, carol_nonce).unwrap();
-    a.reveal_bid(dave,  dave_price,  dave_nonce).unwrap();
+    a.reveal_bid(dave, dave_price, dave_nonce).unwrap();
 
     // ── Close reveals + settle ────────────────────────────────────────────────
     a.close_reveals(200).unwrap();
     let winner = a.settle(201).unwrap();
 
     // Alice wins with 5_000; Bob's 9_000 is invisible (no reveal).
-    assert_eq!(winner, Some(alice), "Alice must win despite Bob's higher committed-but-unrevealed price");
+    assert_eq!(
+        winner,
+        Some(alice),
+        "Alice must win despite Bob's higher committed-but-unrevealed price"
+    );
     assert_eq!(a.clearing_price, Some(alice_price));
     assert_eq!(a.phase, AuctionPhase::Settled);
 
@@ -152,7 +155,11 @@ fn fixture_submission_order_independent() {
         let mut a = default_auction();
         for &(bidder, price, n) in order {
             let c = DecayBoundAuction::compute_commitment(
-                &a.chain_id, &a.auction_id, &bidder, price, &n,
+                &a.chain_id,
+                &a.auction_id,
+                &bidder,
+                price,
+                &n,
             );
             a.submit_commitment(bidder, c).unwrap();
         }
@@ -166,18 +173,18 @@ fn fixture_submission_order_independent() {
     };
 
     let alice = addr(1);
-    let bob   = addr(2);
+    let bob = addr(2);
     let carol = addr(3);
 
     let bids = [
         (alice, 5_000u64, nonce(0xA1)),
-        (bob,   3_000,    nonce(0xB2)),
-        (carol, 4_500,    nonce(0xC3)),
+        (bob, 3_000, nonce(0xB2)),
+        (carol, 4_500, nonce(0xC3)),
     ];
     let bids_rev = [
         (carol, 4_500u64, nonce(0xC3)),
-        (bob,   3_000,    nonce(0xB2)),
-        (alice, 5_000,    nonce(0xA1)),
+        (bob, 3_000, nonce(0xB2)),
+        (alice, 5_000, nonce(0xA1)),
     ];
 
     let fwd = run(&bids);
@@ -200,13 +207,12 @@ fn adversarial_cross_auction_replay_rejected() {
     let auction_id_1: [u8; 32] = [0x01; 32];
     let auction_id_2: [u8; 32] = [0x02; 32];
     let bidder = addr(1);
-    let price  = 2_000u64;
-    let n      = nonce(0x42);
+    let price = 2_000u64;
+    let n = nonce(0x42);
 
     // Attacker computes commitment for auction 1.
-    let c_for_auction_1 = DecayBoundAuction::compute_commitment(
-        chain_id, &auction_id_1, &bidder, price, &n,
-    );
+    let c_for_auction_1 =
+        DecayBoundAuction::compute_commitment(chain_id, &auction_id_1, &bidder, price, &n);
 
     // Auction 2: same chain_id but different auction_id.
     let mut a2 = DecayBoundAuction::new(
@@ -239,12 +245,11 @@ fn adversarial_cross_auction_replay_rejected() {
 fn adversarial_cross_chain_replay_rejected() {
     let auction_id: [u8; 32] = [0xBB; 32];
     let bidder = addr(2);
-    let price  = 3_000u64;
-    let n      = nonce(0x55);
+    let price = 3_000u64;
+    let n = nonce(0x55);
 
-    let c_for_chain_a = DecayBoundAuction::compute_commitment(
-        "chain-A", &auction_id, &bidder, price, &n,
-    );
+    let c_for_chain_a =
+        DecayBoundAuction::compute_commitment("chain-A", &auction_id, &bidder, price, &n);
 
     // Identical auction deployed on "chain-B".
     let mut a_b = DecayBoundAuction::new(
@@ -281,17 +286,16 @@ fn adversarial_cross_chain_replay_rejected() {
 fn adversarial_evaporation_with_full_valid_reveals() {
     let mut a = default_auction();
     let alice = addr(1);
-    let bob   = addr(2);
+    let bob = addr(2);
 
     for (bidder, price, n) in [(alice, 5_000u64, nonce(0xA1)), (bob, 3_000, nonce(0xB2))] {
-        let c = DecayBoundAuction::compute_commitment(
-            &a.chain_id, &a.auction_id, &bidder, price, &n,
-        );
+        let c =
+            DecayBoundAuction::compute_commitment(&a.chain_id, &a.auction_id, &bidder, price, &n);
         a.submit_commitment(bidder, c).unwrap();
     }
     a.close_commits(100).unwrap();
     a.reveal_bid(alice, 5_000, nonce(0xA1)).unwrap();
-    a.reveal_bid(bob,   3_000, nonce(0xB2)).unwrap();
+    a.reveal_bid(bob, 3_000, nonce(0xB2)).unwrap();
     a.close_reveals(200).unwrap();
 
     // Settle at epoch 10_000 — far past every half-life; energy == 0.
@@ -302,8 +306,14 @@ fn adversarial_evaporation_with_full_valid_reveals() {
         "settle at far-future epoch must evaporate even with full reveals"
     );
     assert_eq!(a.phase, AuctionPhase::Evaporated);
-    assert!(a.winner.is_none(), "evaporated auction must not record a winner");
-    assert!(a.clearing_price.is_none(), "evaporated auction must not record a clearing price");
+    assert!(
+        a.winner.is_none(),
+        "evaporated auction must not record a winner"
+    );
+    assert!(
+        a.clearing_price.is_none(),
+        "evaporated auction must not record a clearing price"
+    );
 }
 
 /// An evaporated auction must not be settleable a second time.
@@ -312,7 +322,11 @@ fn adversarial_settle_after_evaporation_rejected() {
     let mut a = default_auction();
     let bidder = addr(1);
     let c = DecayBoundAuction::compute_commitment(
-        &a.chain_id, &a.auction_id, &bidder, 5_000, &nonce(0x01),
+        &a.chain_id,
+        &a.auction_id,
+        &bidder,
+        5_000,
+        &nonce(0x01),
     );
     a.submit_commitment(bidder, c).unwrap();
     a.close_commits(100).unwrap();
@@ -334,7 +348,11 @@ fn adversarial_reveal_in_open_phase_rejected() {
     let mut a = default_auction();
     let bidder = addr(1);
     let c = DecayBoundAuction::compute_commitment(
-        &a.chain_id, &a.auction_id, &bidder, 2_000, &nonce(0x01),
+        &a.chain_id,
+        &a.auction_id,
+        &bidder,
+        2_000,
+        &nonce(0x01),
     );
     a.submit_commitment(bidder, c).unwrap();
     // Phase is still Open — reveal must fail.
@@ -348,14 +366,21 @@ fn adversarial_settle_skips_close_reveals_rejected() {
     let mut a = default_auction();
     let bidder = addr(1);
     let c = DecayBoundAuction::compute_commitment(
-        &a.chain_id, &a.auction_id, &bidder, 2_000, &nonce(0x01),
+        &a.chain_id,
+        &a.auction_id,
+        &bidder,
+        2_000,
+        &nonce(0x01),
     );
     a.submit_commitment(bidder, c).unwrap();
     a.close_commits(100).unwrap();
     a.reveal_bid(bidder, 2_000, nonce(0x01)).unwrap();
     // Phase is CommitClosed, not RevealClosed — settle must fail.
     let err = a.settle(150).unwrap_err();
-    assert_eq!(err, AuctionError::NotRevealClosed(AuctionPhase::CommitClosed));
+    assert_eq!(
+        err,
+        AuctionError::NotRevealClosed(AuctionPhase::CommitClosed)
+    );
 }
 
 /// close_commits cannot be called after auction has already passed Open.
@@ -373,7 +398,10 @@ fn adversarial_double_close_commits_rejected() {
 /// Verify the exact constant value so future changes are flagged here.
 #[test]
 fn adversarial_cap_at_max_bidders() {
-    assert_eq!(MAX_BIDDERS_PER_AUCTION, 1_024, "MAX_BIDDERS_PER_AUCTION constant changed — review memory + settle sort bounds");
+    assert_eq!(
+        MAX_BIDDERS_PER_AUCTION, 1_024,
+        "MAX_BIDDERS_PER_AUCTION constant changed — review memory + settle sort bounds"
+    );
 
     let mut a = default_auction();
     for i in 0u64..MAX_BIDDERS_PER_AUCTION as u64 {
@@ -382,7 +410,9 @@ fn adversarial_cap_at_max_bidders() {
         a.submit_commitment(b, BidCommitment([0u8; 32])).unwrap();
     }
     let overflow: AccountAddress = [0xFF; 32];
-    let err = a.submit_commitment(overflow, BidCommitment([0u8; 32])).unwrap_err();
+    let err = a
+        .submit_commitment(overflow, BidCommitment([0u8; 32]))
+        .unwrap_err();
     assert_eq!(err, AuctionError::TooManyBidders);
 }
 
@@ -407,9 +437,8 @@ fn doctrine_all_bids_below_reserve_settles_with_no_winner() {
     for (i, bidder) in [addr(1), addr(2), addr(3)].iter().enumerate() {
         let price = 100 * (i + 1) as u64; // max 300 < reserve 1_000
         let n = nonce(i as u8);
-        let c = DecayBoundAuction::compute_commitment(
-            &a.chain_id, &a.auction_id, bidder, price, &n,
-        );
+        let c =
+            DecayBoundAuction::compute_commitment(&a.chain_id, &a.auction_id, bidder, price, &n);
         a.submit_commitment(*bidder, c).unwrap();
     }
     a.close_commits(100).unwrap();
@@ -420,7 +449,10 @@ fn doctrine_all_bids_below_reserve_settles_with_no_winner() {
     }
     a.close_reveals(200).unwrap();
     let winner = a.settle(201).unwrap();
-    assert_eq!(winner, None, "no bid meets reserve → no winner but still Settled");
+    assert_eq!(
+        winner, None,
+        "no bid meets reserve → no winner but still Settled"
+    );
     assert_eq!(a.phase, AuctionPhase::Settled);
 }
 
@@ -431,21 +463,24 @@ fn doctrine_all_bids_below_reserve_settles_with_no_winner() {
 fn doctrine_three_way_tie_lex_smallest_wins() {
     let mut a = default_auction();
     let price = 5_000u64;
-    let lo  = addr(0x01); // lex smallest
+    let lo = addr(0x01); // lex smallest
     let mid = addr(0x02);
-    let hi  = addr(0x03);
+    let hi = addr(0x03);
 
     for (bidder, n) in [(lo, nonce(0x01)), (mid, nonce(0x02)), (hi, nonce(0x03))] {
-        let c = DecayBoundAuction::compute_commitment(
-            &a.chain_id, &a.auction_id, &bidder, price, &n,
-        );
+        let c =
+            DecayBoundAuction::compute_commitment(&a.chain_id, &a.auction_id, &bidder, price, &n);
         a.submit_commitment(bidder, c).unwrap();
     }
     a.close_commits(100).unwrap();
-    a.reveal_bid(lo,  price, nonce(0x01)).unwrap();
+    a.reveal_bid(lo, price, nonce(0x01)).unwrap();
     a.reveal_bid(mid, price, nonce(0x02)).unwrap();
-    a.reveal_bid(hi,  price, nonce(0x03)).unwrap();
+    a.reveal_bid(hi, price, nonce(0x03)).unwrap();
     a.close_reveals(200).unwrap();
     let winner = a.settle(201).unwrap();
-    assert_eq!(winner, Some(lo), "lex smallest address wins on a three-way price tie");
+    assert_eq!(
+        winner,
+        Some(lo),
+        "lex smallest address wins on a three-way price tie"
+    );
 }

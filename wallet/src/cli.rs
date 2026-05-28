@@ -4434,7 +4434,15 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             dry_run,
             wait_each,
         } => {
-            cmd_batch(rpc, &keystore_path, &history_path, &file, dry_run, wait_each).await?;
+            cmd_batch(
+                rpc,
+                &keystore_path,
+                &history_path,
+                &file,
+                dry_run,
+                wait_each,
+            )
+            .await?;
             return Ok(());
         }
         Commands::Dashboard => {
@@ -4740,8 +4748,8 @@ async fn cmd_account(
             validation::validate_name(&name)?;
             let raw = std::fs::read_to_string(&key_file)
                 .map_err(|e| format!("read key file {}: {e}", key_file.display()))?;
-            let parsed: serde_json::Value = serde_json::from_str(&raw)
-                .map_err(|e| format!("parse key file as JSON: {e}"))?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&raw).map_err(|e| format!("parse key file as JSON: {e}"))?;
             let pk_hex = parsed
                 .get("ml_dsa")
                 .and_then(|v| v.get("public_key"))
@@ -4752,10 +4760,10 @@ async fn cmd_account(
                 .and_then(|v| v.get("secret_key"))
                 .and_then(|v| v.as_str())
                 .ok_or("key file missing ml_dsa.secret_key (string)")?;
-            let public_key = hex::decode(pk_hex)
-                .map_err(|e| format!("ml_dsa.public_key hex-decode: {e}"))?;
-            let secret_key = hex::decode(sk_hex)
-                .map_err(|e| format!("ml_dsa.secret_key hex-decode: {e}"))?;
+            let public_key =
+                hex::decode(pk_hex).map_err(|e| format!("ml_dsa.public_key hex-decode: {e}"))?;
+            let secret_key =
+                hex::decode(sk_hex).map_err(|e| format!("ml_dsa.secret_key hex-decode: {e}"))?;
             let password = prompt_password("Enter password to encrypt the imported key")?;
             validation::validate_password(&password)?;
 
@@ -7233,8 +7241,7 @@ async fn cmd_offline(
             let signer = mgr.get_signer(&name, &password)?;
 
             let to_addr = parse_address(&to)?;
-            let signed =
-                OfflineSigner::sign_transfer(&signer, &to_addr, amount, nonce, &chain_id);
+            let signed = OfflineSigner::sign_transfer(&signer, &to_addr, amount, nonce, &chain_id);
             signed.save(&file)?;
 
             println!(
@@ -21173,17 +21180,15 @@ mod tests {
         // MultiSig isn't a chain-sponsorable variant; under a whitelist
         // it should reject with a clear message about variant mismatch.
         let info = make_info(Some(vec!["transfer"]));
-        let inner = evaporchain_types::Transaction::MultiSig(
-            evaporchain_types::MultiSigTx {
-                multisig_address: [1u8; 32],
-                threshold: 1,
-                signers: vec![],
-                inner_tx_bytes: vec![],
-                signatures: vec![],
-                public_keys: vec![],
-                nonce: 0,
-            },
-        );
+        let inner = evaporchain_types::Transaction::MultiSig(evaporchain_types::MultiSigTx {
+            multisig_address: [1u8; 32],
+            threshold: 1,
+            signers: vec![],
+            inner_tx_bytes: vec![],
+            signatures: vec![],
+            public_keys: vec![],
+            nonce: 0,
+        });
         let r = pre_check_paymaster_policy(&info, &inner);
         assert!(r.is_err());
     }

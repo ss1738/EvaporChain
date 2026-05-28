@@ -123,10 +123,7 @@ fn main() -> ExitCode {
         fr_to_hex_be(&circuit.committed_hash_primary),
         fr_to_hex_be(&circuit.committed_hash_secondary),
     );
-    eprintln!(
-        "fixture-proof-emit: zi[0]={}",
-        fr_to_hex_be(&circuit.zi[0])
-    );
+    eprintln!("fixture-proof-emit: zi[0]={}", fr_to_hex_be(&circuit.zi[0]));
 
     let t_setup = Instant::now();
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(seed);

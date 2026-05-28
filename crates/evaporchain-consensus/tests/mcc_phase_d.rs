@@ -1536,8 +1536,14 @@ fn t0_6_multi_validator_equivocation_slash_is_deterministic() {
     let amount_v3 = v3.sanov_slash_equivocation(target_validator, WINDOW);
     let amount_v4 = v4.sanov_slash_equivocation(target_validator, WINDOW);
 
-    assert!(amount_v1 > 0, "non-zero stake + equivocation → non-zero slash");
-    assert_eq!(amount_v1, amount_v2, "slash amount must be identical across validators");
+    assert!(
+        amount_v1 > 0,
+        "non-zero stake + equivocation → non-zero slash"
+    );
+    assert_eq!(
+        amount_v1, amount_v2,
+        "slash amount must be identical across validators"
+    );
     assert_eq!(amount_v2, amount_v3);
     assert_eq!(amount_v3, amount_v4);
 
@@ -1589,7 +1595,10 @@ fn t0_6_multi_validator_downtime_slash_is_deterministic() {
     let a3 = v3.sanov_slash_downtime(target_validator, MISSED, WINDOW);
     let a4 = v4.sanov_slash_downtime(target_validator, MISSED, WINDOW);
 
-    assert!(a1 > 0, "missed=25/window=100 well exceeds tolerance → positive slash");
+    assert!(
+        a1 > 0,
+        "missed=25/window=100 well exceeds tolerance → positive slash"
+    );
     assert_eq!(a1, a2);
     assert_eq!(a2, a3);
     assert_eq!(a3, a4);
@@ -1762,7 +1771,10 @@ fn t0_7_v5_fork_spam_ordering_independence() {
     // Path-independence: both validators agree on every substrate
     // state queryable from a single instance.
     assert_eq!(v1.candidate_heads(), v2.candidate_heads());
-    assert_eq!(v1.enumerate_candidate_heads(), v2.enumerate_candidate_heads());
+    assert_eq!(
+        v1.enumerate_candidate_heads(),
+        v2.enumerate_candidate_heads()
+    );
     assert_eq!(
         v1.update_authoritative_head(),
         v2.update_authoritative_head()

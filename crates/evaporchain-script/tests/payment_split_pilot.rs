@@ -44,10 +44,9 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("PaymentSplit failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("PaymentSplit failed to compile: {e:?}"))
+    let ast =
+        parser::parse(SOURCE).unwrap_or_else(|e| panic!("PaymentSplit failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("PaymentSplit failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -98,14 +97,8 @@ fn deploy_and_seal_three(
     )
     .expect("add C");
     s = r.state_changes;
-    let r = EvaporVM::execute(
-        bc,
-        "seal",
-        vec![],
-        s,
-        &ctx(deployer, deployer, 103, 10_000),
-    )
-    .expect("seal");
+    let r = EvaporVM::execute(bc, "seal", vec![], s, &ctx(deployer, deployer, 103, 10_000))
+        .expect("seal");
     r.state_changes
 }
 

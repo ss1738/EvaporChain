@@ -357,7 +357,10 @@ mod tests {
     fn test_to_csv_empty_history_has_only_header() {
         let h = TxHistory::new();
         let csv = h.to_csv();
-        assert_eq!(csv.trim(), "timestamp,type,from,to,amount,status,tx_hash,error");
+        assert_eq!(
+            csv.trim(),
+            "timestamp,type,from,to,amount,status,tx_hash,error"
+        );
     }
 
     #[test]
@@ -373,7 +376,10 @@ mod tests {
 
     #[test]
     fn test_save_creates_nested_parent_dirs() {
-        let base = std::env::temp_dir().join("ev_hist_nested_test").join("a").join("b");
+        let base = std::env::temp_dir()
+            .join("ev_hist_nested_test")
+            .join("a")
+            .join("b");
         let path = base.join("history.json");
         let mut h = TxHistory::new();
         h.record_success("Transfer", "0xaaa", None, None, "0xh1");

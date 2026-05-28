@@ -57,9 +57,15 @@ contract Burner {
 }
 "#;
 
-fn creator() -> [u8; 32] { [0xAA; 32] }
-fn rafael()  -> [u8; 32] { [0xBB; 32] }
-fn igor()    -> [u8; 32] { [0xFF; 32] }
+fn creator() -> [u8; 32] {
+    [0xAA; 32]
+}
+fn rafael() -> [u8; 32] {
+    [0xBB; 32]
+}
+fn igor() -> [u8; 32] {
+    [0xFF; 32]
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -80,11 +86,15 @@ fn increment_and_get_round_trip() {
     let r = engine.call(id, "get", vec![], rafael(), 0).unwrap();
     assert_eq!(r.return_value, Value::U64(0), "initial count must be 0");
 
-    engine.call(id, "increment", vec![Value::U64(5)], rafael(), 0).unwrap();
+    engine
+        .call(id, "increment", vec![Value::U64(5)], rafael(), 0)
+        .unwrap();
     let r = engine.call(id, "get", vec![], rafael(), 0).unwrap();
     assert_eq!(r.return_value, Value::U64(5));
 
-    engine.call(id, "increment", vec![Value::U64(3)], rafael(), 0).unwrap();
+    engine
+        .call(id, "increment", vec![Value::U64(3)], rafael(), 0)
+        .unwrap();
     let r = engine.call(id, "get", vec![], rafael(), 0).unwrap();
     assert_eq!(r.return_value, Value::U64(8));
 }
@@ -93,8 +103,12 @@ fn increment_and_get_round_trip() {
 fn decrement_reduces_count() {
     let mut engine = ScriptEngine::new();
     let id = engine.deploy(COUNTER, creator(), 10_000, 100, 0).unwrap();
-    engine.call(id, "increment", vec![Value::U64(10)], creator(), 0).unwrap();
-    engine.call(id, "decrement", vec![Value::U64(4)],  creator(), 0).unwrap();
+    engine
+        .call(id, "increment", vec![Value::U64(10)], creator(), 0)
+        .unwrap();
+    engine
+        .call(id, "decrement", vec![Value::U64(4)], creator(), 0)
+        .unwrap();
     let r = engine.call(id, "get", vec![], creator(), 0).unwrap();
     assert_eq!(r.return_value, Value::U64(6));
 }
@@ -104,7 +118,9 @@ fn decrement_underflow_fires_require_failed() {
     let mut engine = ScriptEngine::new();
     let id = engine.deploy(COUNTER, creator(), 10_000, 100, 0).unwrap();
     // count is 0; decrement by 1 must hit require(0 >= 1) → false.
-    let err = engine.call(id, "decrement", vec![Value::U64(1)], igor(), 0).unwrap_err();
+    let err = engine
+        .call(id, "decrement", vec![Value::U64(1)], igor(), 0)
+        .unwrap_err();
     assert!(
         matches!(err, ScriptError::RequireFailed(_)),
         "underflow must produce RequireFailed, got {err:?}"
@@ -115,8 +131,10 @@ fn decrement_underflow_fires_require_failed() {
 fn reset_zeroes_the_counter() {
     let mut engine = ScriptEngine::new();
     let id = engine.deploy(COUNTER, creator(), 10_000, 100, 0).unwrap();
-    engine.call(id, "increment", vec![Value::U64(99)], creator(), 0).unwrap();
-    engine.call(id, "reset",     vec![],               creator(), 0).unwrap();
+    engine
+        .call(id, "increment", vec![Value::U64(99)], creator(), 0)
+        .unwrap();
+    engine.call(id, "reset", vec![], creator(), 0).unwrap();
     let r = engine.call(id, "get", vec![], creator(), 0).unwrap();
     assert_eq!(r.return_value, Value::U64(0), "reset must zero the counter");
 }
@@ -127,8 +145,12 @@ fn two_contracts_have_isolated_state() {
     let id_a = engine.deploy(COUNTER, creator(), 10_000, 100, 0).unwrap();
     let id_b = engine.deploy(COUNTER, creator(), 10_000, 100, 0).unwrap();
 
-    engine.call(id_a, "increment", vec![Value::U64(7)], creator(), 0).unwrap();
-    engine.call(id_b, "increment", vec![Value::U64(3)], creator(), 0).unwrap();
+    engine
+        .call(id_a, "increment", vec![Value::U64(7)], creator(), 0)
+        .unwrap();
+    engine
+        .call(id_b, "increment", vec![Value::U64(3)], creator(), 0)
+        .unwrap();
 
     let ra = engine.call(id_a, "get", vec![], creator(), 0).unwrap();
     let rb = engine.call(id_b, "get", vec![], creator(), 0).unwrap();
@@ -141,7 +163,9 @@ fn two_contracts_have_isolated_state() {
 fn call_tracks_gas_used() {
     let mut engine = ScriptEngine::new();
     let id = engine.deploy(COUNTER, creator(), 10_000, 100, 0).unwrap();
-    let r = engine.call(id, "increment", vec![Value::U64(1)], creator(), 0).unwrap();
+    let r = engine
+        .call(id, "increment", vec![Value::U64(1)], creator(), 0)
+        .unwrap();
     assert!(r.gas_used > 0, "gas_used must be positive after a call");
 }
 
@@ -183,8 +207,18 @@ fn malformed_source_is_parse_error() {
 #[test]
 fn failed_deploy_does_not_persist_contract() {
     let mut engine = ScriptEngine::new();
-    let _ = engine.deploy("not valid evaporscript source !!", creator(), 10_000, 100, 0);
-    assert_eq!(engine.list().len(), 0, "failed deploy must not persist a contract");
+    let _ = engine.deploy(
+        "not valid evaporscript source !!",
+        creator(),
+        10_000,
+        100,
+        0,
+    );
+    assert_eq!(
+        engine.list().len(),
+        0,
+        "failed deploy must not persist a contract"
+    );
 }
 
 #[test]
@@ -205,8 +239,8 @@ fn get_abi_returns_method_names() {
     let names: Vec<&str> = abi.methods.iter().map(|m| m.name.as_str()).collect();
     assert!(names.contains(&"increment"), "ABI must list 'increment'");
     assert!(names.contains(&"decrement"), "ABI must list 'decrement'");
-    assert!(names.contains(&"get"),       "ABI must list 'get'");
-    assert!(names.contains(&"reset"),     "ABI must list 'reset'");
+    assert!(names.contains(&"get"), "ABI must list 'get'");
+    assert!(names.contains(&"reset"), "ABI must list 'reset'");
 }
 
 #[test]
@@ -227,7 +261,9 @@ fn tick_evaporates_zero_energy_contract() {
     let id = engine.deploy(COUNTER, creator(), 64, 1, 0).unwrap();
 
     // Callable before evaporation at epoch 0 (elapsed = 0).
-    engine.call(id, "increment", vec![Value::U64(1)], creator(), 0).unwrap();
+    engine
+        .call(id, "increment", vec![Value::U64(1)], creator(), 0)
+        .unwrap();
 
     let tick = engine.tick(7);
     assert!(
@@ -262,13 +298,19 @@ fn priya_runtime_full_arc() {
     let id_b = engine.deploy(COUNTER, creator(), 64, 1, 0).unwrap();
 
     // RAFAEL increments contract A repeatedly.
-    engine.call(id_a, "increment", vec![Value::U64(100)], rafael(), 0).unwrap();
-    engine.call(id_a, "increment", vec![Value::U64(50)],  rafael(), 0).unwrap();
+    engine
+        .call(id_a, "increment", vec![Value::U64(100)], rafael(), 0)
+        .unwrap();
+    engine
+        .call(id_a, "increment", vec![Value::U64(50)], rafael(), 0)
+        .unwrap();
     let r = engine.call(id_a, "get", vec![], rafael(), 0).unwrap();
     assert_eq!(r.return_value, Value::U64(150));
 
     // IGOR tries to underflow contract A — require() blocks it.
-    let err = engine.call(id_a, "decrement", vec![Value::U64(999)], igor(), 0).unwrap_err();
+    let err = engine
+        .call(id_a, "decrement", vec![Value::U64(999)], igor(), 0)
+        .unwrap_err();
     assert!(matches!(err, ScriptError::RequireFailed(_)));
 
     // Contract A state is unaffected by IGOR's failed attempt.
@@ -281,7 +323,9 @@ fn priya_runtime_full_arc() {
 
     // Gas metering: tight budget rejects a loop on contract A.
     let id_burn = engine.deploy(BURNER, creator(), 10_000, 100, 0).unwrap();
-    let gas_err = engine.call_with_vm_gas(id_burn, "run", vec![], creator(), 0, 50).unwrap_err();
+    let gas_err = engine
+        .call_with_vm_gas(id_burn, "run", vec![], creator(), 0, 50)
+        .unwrap_err();
     assert!(matches!(gas_err, ScriptError::GasLimitExceeded { .. }));
 
     // RAFAEL resets contract A.
@@ -291,12 +335,17 @@ fn priya_runtime_full_arc() {
 
     // Tick: contract B evaporates; A survives.
     let tick = engine.tick(7);
-    assert!(tick.contracts_evaporated.contains(&id_b),  "B must evaporate at epoch 7");
+    assert!(
+        tick.contracts_evaporated.contains(&id_b),
+        "B must evaporate at epoch 7"
+    );
     assert!(!tick.contracts_evaporated.contains(&id_a), "A must survive");
 
     // Contract B is dead — subsequent call rejected.
     assert!(engine.call(id_b, "get", vec![], creator(), 7).is_err());
 
     // Contract A still accepts calls.
-    engine.call(id_a, "increment", vec![Value::U64(1)], rafael(), 7).unwrap();
+    engine
+        .call(id_a, "increment", vec![Value::U64(1)], rafael(), 7)
+        .unwrap();
 }

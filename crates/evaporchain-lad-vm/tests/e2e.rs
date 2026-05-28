@@ -46,13 +46,13 @@ fn decaying_pass(created_at: u64, window: u64) -> Resource<&'static str> {
 fn full_lifecycle_three_resource_types() {
     // ── Issue epoch 0 ────────────────────────────────────────────────────
 
-    let ticket  = linear_ticket(0);
-    let coupon  = affine_coupon(0);
+    let ticket = linear_ticket(0);
+    let coupon = affine_coupon(0);
     let mut pass = decaying_pass(0, 100);
 
-    assert_eq!(ticket.mode,  Mode::Linear);
-    assert_eq!(coupon.mode,  Mode::Affine);
-    assert_eq!(pass.mode,    Mode::Decaying);
+    assert_eq!(ticket.mode, Mode::Linear);
+    assert_eq!(coupon.mode, Mode::Affine);
+    assert_eq!(pass.mode, Mode::Decaying);
     assert!(!ticket.consumed);
     assert!(!coupon.consumed);
     assert!(!pass.consumed);
@@ -71,18 +71,27 @@ fn full_lifecycle_three_resource_types() {
 
     // tick_decay within window → no change.
     pass = tick_decay(pass, 90);
-    assert!(!pass.consumed, "pass must still be live at epoch 90 (window=100)");
+    assert!(
+        !pass.consumed,
+        "pass must still be live at epoch 90 (window=100)"
+    );
 
     // ── Epoch 100: pass has naturally expired — no TX sent ────────────────
     // is_evaporated uses >=, so created_at(0) + window(100) = 100 is first expired.
 
     pass = tick_decay(pass, 100);
-    assert!(pass.consumed, "pass must be auto-consumed at epoch 100 (created_at+window)");
+    assert!(
+        pass.consumed,
+        "pass must be auto-consumed at epoch 100 (created_at+window)"
+    );
 
     // ── Epoch 200: idempotent — tick again changes nothing ────────────────
 
     pass = tick_decay(pass, 200);
-    assert!(pass.consumed, "consumed state is idempotent across further ticks");
+    assert!(
+        pass.consumed,
+        "consumed state is idempotent across further ticks"
+    );
 }
 
 // ── Adversarial: Linear exactly-once semantics ───────────────────────────
@@ -99,8 +108,11 @@ fn linear_double_redeem_rejected() {
 fn linear_drop_rejected_substructural_invariant() {
     let ticket = linear_ticket(0);
     let err = drop_resource(ticket).unwrap_err();
-    assert_eq!(err, OpError::LinearCannotDrop,
-        "Linear resources must be consumed — the runtime enforces liveness");
+    assert_eq!(
+        err,
+        OpError::LinearCannotDrop,
+        "Linear resources must be consumed — the runtime enforces liveness"
+    );
 }
 
 // ── Adversarial: Decaying expiry ─────────────────────────────────────────
@@ -109,8 +121,11 @@ fn linear_drop_rejected_substructural_invariant() {
 fn decaying_use_after_window_evaporated() {
     let pass = decaying_pass(0, 100);
     let err = use_resource(pass, 200).unwrap_err();
-    assert_eq!(err, OpError::Evaporated,
-        "use_resource must reject a resource whose epoch window has closed");
+    assert_eq!(
+        err,
+        OpError::Evaporated,
+        "use_resource must reject a resource whose epoch window has closed"
+    );
 }
 
 #[test]
@@ -156,8 +171,10 @@ fn linear_tick_at_max_epoch_does_not_evaporate() {
     // Linear resources have no decay window — they survive any epoch tick.
     let ticket = linear_ticket(0);
     let after = tick_decay(ticket, u64::MAX);
-    assert!(!after.consumed,
-        "Linear resources never auto-expire — they require explicit consumption");
+    assert!(
+        !after.consumed,
+        "Linear resources never auto-expire — they require explicit consumption"
+    );
 }
 
 // ── Invariant: resource mode is immutable ────────────────────────────────

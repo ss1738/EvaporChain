@@ -86,12 +86,14 @@ fn main() {
     type S1 = RelaxedR1CSSNARK<E1, EvaluationEngine<E1>>;
     type S2 = RelaxedR1CSSNARK<E2, IpaEE<E2>>;
     let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
-        &circuit, &*S1::ck_floor(), &*S2::ck_floor(),
-    ).expect("pp setup");
+        &circuit,
+        &*S1::ck_floor(),
+        &*S2::ck_floor(),
+    )
+    .expect("pp setup");
     let z0_nova: Vec<Scalar1> = vec![Scalar1::ZERO];
-    let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
-        &pp, &circuit, &z0_nova,
-    ).expect("rs new");
+    let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(&pp, &circuit, &z0_nova)
+        .expect("rs new");
     for _ in 0..2 {
         rs.prove_step(&pp, &circuit).expect("prove_step");
     }
@@ -99,11 +101,9 @@ fn main() {
 
     // ── 2. Off-chain adapter ────────────────────────────────────────
     let z0_ark = vec![Bn254Fr::from(0u64)];
-    let bundle = assemble_section_b_pi_bundle(&pp, &rs, 2, &z0_ark)
-        .expect("assemble bundle (verify gate)");
-    eprintln!(
-        "recursion-decider-b-fixture-emit: bundle verified; pi_count=9+|z0|+|zn|=11"
-    );
+    let bundle =
+        assemble_section_b_pi_bundle(&pp, &rs, 2, &z0_ark).expect("assemble bundle (verify gate)");
+    eprintln!("recursion-decider-b-fixture-emit: bundle verified; pi_count=9+|z0|+|zn|=11");
 
     // ── 3. Convert to in-circuit PIs ────────────────────────────────
     let section_b_pis = bundle.into_section_b_pis();
@@ -123,9 +123,9 @@ fn main() {
     let h_aff = h.into_affine();
 
     eprintln!("recursion-decider-b-fixture-emit: Groth16 setup …");
-    let (pk, vk) = setup_recursion_decider_with_b_interface(
-        bases.clone(), h_aff, pi_arity, &mut rng,
-    ).expect("setup");
+    let (pk, vk) =
+        setup_recursion_decider_with_b_interface(bases.clone(), h_aff, pi_arity, &mut rng)
+            .expect("setup");
     eprintln!(
         "recursion-decider-b-fixture-emit: ic.len()={} (1 + {} PIs)",
         vk.gamma_abc_g1.len(),
@@ -140,20 +140,16 @@ fn main() {
         Bn254Fq::from(7u64),
     ];
     let blind = Bn254Fq::from(11u64);
-    let claimed = g * scalars[0]
-        + g2_pt * scalars[1]
-        + g3 * scalars[2]
-        + g5 * scalars[3]
-        + h * blind;
-    let circuit_ab =
-        RecursionDeciderCircuit::section_a_with_b_interface(
-            scalars,
-            bases,
-            blind,
-            h_aff,
-            claimed,
-            section_b_pis.clone(),
-        );
+    let claimed =
+        g * scalars[0] + g2_pt * scalars[1] + g3 * scalars[2] + g5 * scalars[3] + h * blind;
+    let circuit_ab = RecursionDeciderCircuit::section_a_with_b_interface(
+        scalars,
+        bases,
+        blind,
+        h_aff,
+        claimed,
+        section_b_pis.clone(),
+    );
 
     eprintln!("recursion-decider-b-fixture-emit: prove …");
     let proof = prove_recursion_decider(&pk, circuit_ab, &mut rng).expect("prove");
@@ -164,11 +160,7 @@ fn main() {
     assert_eq!(pis.len(), 11, "PI slice must be 11 elements");
 
     let pi_arr: Vec<String> = pis.iter().map(|f| hex(&fr_be32(f))).collect();
-    let ic_arr: Vec<String> = vk
-        .gamma_abc_g1
-        .iter()
-        .map(|p| hex(&g1_bytes(p)))
-        .collect();
+    let ic_arr: Vec<String> = vk.gamma_abc_g1.iter().map(|p| hex(&g1_bytes(p))).collect();
 
     let json = serde_json::json!({
         "proof": hex(&proof_bytes),
@@ -183,8 +175,7 @@ fn main() {
     });
 
     let out_path = "ethereum-bridge/contracts/fixtures/recursion_decider_b_smoke.json";
-    std::fs::write(out_path, serde_json::to_string_pretty(&json).unwrap())
-        .expect("write fixture");
+    std::fs::write(out_path, serde_json::to_string_pretty(&json).unwrap()).expect("write fixture");
     eprintln!(
         "recursion-decider-b-fixture-emit: wrote {out_path} \
          (proof={}, pis={}, ic={})",

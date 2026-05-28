@@ -115,7 +115,10 @@ fn double_spend_error_carries_offending_nullifier() {
 fn is_spent_in_window_false_for_unknown_nullifier() {
     let mut t = PhasedNullifierTree::new(2).unwrap();
     t.insert_nullifier(n(1)).unwrap();
-    assert!(!t.is_spent_in_window(&n(99)), "unknown nullifier reads as unspent");
+    assert!(
+        !t.is_spent_in_window(&n(99)),
+        "unknown nullifier reads as unspent"
+    );
 }
 
 #[test]
@@ -171,8 +174,14 @@ fn tree_serde_round_trips_preserves_state() {
 fn pnt_error_displays_both_variants() {
     let zd = PntError::ZeroDepth.to_string();
     let ds = PntError::DoubleSpend { n: n(7) }.to_string();
-    assert!(zd.contains("window_depth") || zd.contains("depth"), "got: {zd}");
-    assert!(ds.contains("double-spend") || ds.contains("nullifier"), "got: {ds}");
+    assert!(
+        zd.contains("window_depth") || zd.contains("depth"),
+        "got: {zd}"
+    );
+    assert!(
+        ds.contains("double-spend") || ds.contains("nullifier"),
+        "got: {ds}"
+    );
 }
 
 #[test]
@@ -207,7 +216,11 @@ fn live_count_matches_sum_of_unique_inserts_across_window() {
             t.advance_phase();
         }
     }
-    assert_eq!(t.live_count(), total, "all 4 phases of 10 entries still live");
+    assert_eq!(
+        t.live_count(),
+        total,
+        "all 4 phases of 10 entries still live"
+    );
     assert_eq!(t.window.len(), 4);
     assert_eq!(t.current_phase, 3, "advanced 3 times → current_phase = 3");
 }
@@ -221,9 +234,13 @@ fn oldest_phase_drops_when_window_saturates_on_advance() {
     // Phase 0's 3 entries dropped. Phase 1's 3 still live.
     let mut t = PhasedNullifierTree::new(2).unwrap();
     // Phase 0: nullifiers 0..3 (template `phase * 10 + i` with phase=0).
-    for i in 0..3u8 { t.insert_nullifier(n(i)).unwrap(); }
+    for i in 0..3u8 {
+        t.insert_nullifier(n(i)).unwrap();
+    }
     t.advance_phase();
-    for i in 0..3u8 { t.insert_nullifier(n(10 + i)).unwrap(); }
+    for i in 0..3u8 {
+        t.insert_nullifier(n(10 + i)).unwrap();
+    }
     t.advance_phase(); // saturates: pops phase 0
 
     assert_eq!(t.live_count(), 3, "only phase 1's 3 entries still live");

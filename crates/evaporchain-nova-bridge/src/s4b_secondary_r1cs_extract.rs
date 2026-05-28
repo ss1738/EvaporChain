@@ -18,12 +18,12 @@
 //! B.3b) — NOT this module.
 
 use crate::l_u_secondary_extract::ExtractError;
+use crate::recursive_snark_fixture::{TrivialIncrementCircuit, E1, E2};
 use crate::s4b_secondary_r1cs_gadget::SparseRow;
 use crate::section3_witness::{MAX_R1CS_NUM_CONS, MAX_R1CS_NUM_IO, MAX_R1CS_NUM_VARS};
 use ark_bn254::Fq as ArkFq;
 use ark_ff::PrimeField;
 use nova_snark::nova::{PublicParams, RecursiveSNARK};
-use crate::recursive_snark_fixture::{TrivialIncrementCircuit, E1, E2};
 
 /// Secondary RelaxedR1CS shape + witness, in `ark_bn254::Fq`,
 /// A/B/C bucketed by row for `enforce_secondary_relaxed_r1cs_sat_nn`.
@@ -54,7 +54,11 @@ fn parse_usize_vec(v: &serde_json::Value) -> Result<Vec<usize>, String> {
     v.as_array()
         .ok_or("expected JSON array (usize vec)")?
         .iter()
-        .map(|e| e.as_u64().map(|n| n as usize).ok_or_else(|| "non-u64".into()))
+        .map(|e| {
+            e.as_u64()
+                .map(|n| n as usize)
+                .ok_or_else(|| "non-u64".into())
+        })
         .collect()
 }
 
@@ -62,7 +66,9 @@ fn parse_usize_vec(v: &serde_json::Value) -> Result<Vec<usize>, String> {
 /// Exact (value < q). Mirrors `section3_witness::parse_le_hex_scalar`,
 /// target Fq.
 fn parse_fq_hex(v: &serde_json::Value) -> Result<ArkFq, String> {
-    let s = v.as_str().ok_or_else(|| format!("expected string, got {v:?}"))?;
+    let s = v
+        .as_str()
+        .ok_or_else(|| format!("expected string, got {v:?}"))?;
     let clean = s.trim_start_matches("0x");
     if clean.len() != 64 {
         return Err(format!("expected 64 hex chars, got {}", clean.len()));
@@ -85,10 +91,7 @@ fn parse_fq_vec(v: &serde_json::Value) -> Result<Vec<ArkFq>, String> {
 
 /// CSR `{indptr, indices, data}` → rows bucketed as `SparseRow`
 /// (`Vec<(col, Fq)>` per row). Mirrors `parse_csr`, Fq + bucketed.
-fn parse_csr_rows_fq(
-    v: &serde_json::Value,
-    num_rows: usize,
-) -> Result<Vec<SparseRow>, String> {
+fn parse_csr_rows_fq(v: &serde_json::Value, num_rows: usize) -> Result<Vec<SparseRow>, String> {
     let indptr = parse_usize_vec(&v["indptr"])?;
     let indices = parse_usize_vec(&v["indices"])?;
     let data = parse_fq_vec(&v["data"])?;
@@ -119,34 +122,69 @@ pub fn extract_secondary_r1cs_witness(
     let pp_val = serde_json::to_value(pp).map_err(|e| ExtractError::Serialize(e.to_string()))?;
 
     let rw = &rs_val["r_W_secondary"];
-    let w = parse_fq_vec(&rw["W"]).map_err(|e| ExtractError::MissingField(format!("r_W_secondary.W: {e}")))?;
-    let e = parse_fq_vec(&rw["E"]).map_err(|e| ExtractError::MissingField(format!("r_W_secondary.E: {e}")))?;
+    let w = parse_fq_vec(&rw["W"])
+        .map_err(|e| ExtractError::MissingField(format!("r_W_secondary.W: {e}")))?;
+    let e = parse_fq_vec(&rw["E"])
+        .map_err(|e| ExtractError::MissingField(format!("r_W_secondary.E: {e}")))?;
 
     let ru = &rs_val["r_U_secondary"];
-    let u = parse_fq_hex(&ru["u"]).map_err(|e| ExtractError::MissingField(format!("r_U_secondary.u: {e}")))?;
-    let x0 = parse_fq_hex(&ru["X"][0]).map_err(|e| ExtractError::MissingField(format!("r_U_secondary.X[0]: {e}")))?;
-    let x1 = parse_fq_hex(&ru["X"][1]).map_err(|e| ExtractError::MissingField(format!("r_U_secondary.X[1]: {e}")))?;
+    let u = parse_fq_hex(&ru["u"])
+        .map_err(|e| ExtractError::MissingField(format!("r_U_secondary.u: {e}")))?;
+    let x0 = parse_fq_hex(&ru["X"][0])
+        .map_err(|e| ExtractError::MissingField(format!("r_U_secondary.X[0]: {e}")))?;
+    let x1 = parse_fq_hex(&ru["X"][1])
+        .map_err(|e| ExtractError::MissingField(format!("r_U_secondary.X[1]: {e}")))?;
 
     let shape = &pp_val["r1cs_shape_secondary"];
-    let num_cons = shape["num_cons"].as_u64().ok_or_else(|| ExtractError::MissingField("num_cons".into()))? as usize;
-    let num_vars = shape["num_vars"].as_u64().ok_or_else(|| ExtractError::MissingField("num_vars".into()))? as usize;
-    let num_io = shape["num_io"].as_u64().ok_or_else(|| ExtractError::MissingField("num_io".into()))? as usize;
+    let num_cons = shape["num_cons"]
+        .as_u64()
+        .ok_or_else(|| ExtractError::MissingField("num_cons".into()))? as usize;
+    let num_vars = shape["num_vars"]
+        .as_u64()
+        .ok_or_else(|| ExtractError::MissingField("num_vars".into()))? as usize;
+    let num_io = shape["num_io"]
+        .as_u64()
+        .ok_or_else(|| ExtractError::MissingField("num_io".into()))? as usize;
     if num_cons > MAX_R1CS_NUM_CONS {
-        return Err(ExtractError::ShapeTooLarge { name: "num_cons", value: num_cons, cap: MAX_R1CS_NUM_CONS });
+        return Err(ExtractError::ShapeTooLarge {
+            name: "num_cons",
+            value: num_cons,
+            cap: MAX_R1CS_NUM_CONS,
+        });
     }
     if num_vars > MAX_R1CS_NUM_VARS {
-        return Err(ExtractError::ShapeTooLarge { name: "num_vars", value: num_vars, cap: MAX_R1CS_NUM_VARS });
+        return Err(ExtractError::ShapeTooLarge {
+            name: "num_vars",
+            value: num_vars,
+            cap: MAX_R1CS_NUM_VARS,
+        });
     }
     if num_io > MAX_R1CS_NUM_IO {
-        return Err(ExtractError::ShapeTooLarge { name: "num_io", value: num_io, cap: MAX_R1CS_NUM_IO });
+        return Err(ExtractError::ShapeTooLarge {
+            name: "num_io",
+            value: num_io,
+            cap: MAX_R1CS_NUM_IO,
+        });
     }
 
-    let a_rows = parse_csr_rows_fq(&shape["A"], num_cons).map_err(|e| ExtractError::MissingField(format!("A: {e}")))?;
-    let b_rows = parse_csr_rows_fq(&shape["B"], num_cons).map_err(|e| ExtractError::MissingField(format!("B: {e}")))?;
-    let c_rows = parse_csr_rows_fq(&shape["C"], num_cons).map_err(|e| ExtractError::MissingField(format!("C: {e}")))?;
+    let a_rows = parse_csr_rows_fq(&shape["A"], num_cons)
+        .map_err(|e| ExtractError::MissingField(format!("A: {e}")))?;
+    let b_rows = parse_csr_rows_fq(&shape["B"], num_cons)
+        .map_err(|e| ExtractError::MissingField(format!("B: {e}")))?;
+    let c_rows = parse_csr_rows_fq(&shape["C"], num_cons)
+        .map_err(|e| ExtractError::MissingField(format!("C: {e}")))?;
 
     Ok(SecondaryR1csWitness {
-        w, e, u, x: [x0, x1], a_rows, b_rows, c_rows, num_cons, num_vars, num_io,
+        w,
+        e,
+        u,
+        x: [x0, x1],
+        a_rows,
+        b_rows,
+        c_rows,
+        num_cons,
+        num_vars,
+        num_io,
     })
 }
 
@@ -204,9 +242,7 @@ mod tests {
         use crate::recursive_snark_fixture::{
             canonical_public_params, generate_fixture_with_digest,
         };
-        use crate::s4b_secondary_r1cs_gadget::{
-            enforce_secondary_relaxed_r1cs_sat_nn, NnFq,
-        };
+        use crate::s4b_secondary_r1cs_gadget::{enforce_secondary_relaxed_r1cs_sat_nn, NnFq};
         use ark_r1cs_std::alloc::AllocVar;
         use ark_relations::gr1cs::ConstraintSystem;
 
@@ -225,7 +261,14 @@ mod tests {
         let u = mk(sw.u);
         let x = [mk(sw.x[0]), mk(sw.x[1])];
         enforce_secondary_relaxed_r1cs_sat_nn(
-            &w, &e, &u, &x, &sw.a_rows, &sw.b_rows, &sw.c_rows, sw.num_cons,
+            &w,
+            &e,
+            &u,
+            &x,
+            &sw.a_rows,
+            &sw.b_rows,
+            &sw.c_rows,
+            sw.num_cons,
         )
         .expect("synthesize full secondary R1CS");
         assert!(
@@ -243,7 +286,14 @@ mod tests {
         let u2 = mk2(sw.u);
         let x2 = [mk2(sw.x[0]), mk2(sw.x[1])];
         enforce_secondary_relaxed_r1cs_sat_nn(
-            &w2, &e2, &u2, &x2, &sw.a_rows, &sw.b_rows, &sw.c_rows, sw.num_cons,
+            &w2,
+            &e2,
+            &u2,
+            &x2,
+            &sw.a_rows,
+            &sw.b_rows,
+            &sw.c_rows,
+            sw.num_cons,
         )
         .expect("synthesize adv");
         assert!(
@@ -277,9 +327,7 @@ mod tests {
         // repeating col-0 entries to scale nnz independently of rows).
         let measure = |s: usize, d: usize| -> usize {
             let cs = ConstraintSystem::<ark_bn254::Fr>::new_ref();
-            let mk = |v: u64| {
-                NnFq::new_witness(cs.clone(), || Ok(ArkFq::from(v))).unwrap()
-            };
+            let mk = |v: u64| NnFq::new_witness(cs.clone(), || Ok(ArkFq::from(v))).unwrap();
             let w: Vec<NnFq> = (0..s).map(|i| mk(if i == 0 { 1 } else { 0 })).collect();
             let e: Vec<NnFq> = (0..s).map(|_| mk(0)).collect();
             let u = mk(1);
@@ -303,8 +351,10 @@ mod tests {
             cs.num_constraints()
         };
 
-        let pts: Vec<(usize, usize)> =
-            [8usize, 16, 32, 64].iter().map(|&s| (s, measure(s, 3))).collect();
+        let pts: Vec<(usize, usize)> = [8usize, 16, 32, 64]
+            .iter()
+            .map(|&s| (s, measure(s, 3)))
+            .collect();
         eprintln!("SYNTHETIC SWEEP (s, num_constraints, d=3 nnz/row):");
         for (s, c) in &pts {
             eprintln!("  s={s:>3}  constraints={c}");

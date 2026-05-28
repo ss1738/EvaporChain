@@ -131,13 +131,17 @@ impl Auctioneer {
             .get_mut(&req.contract_id)
             .ok_or(AuctioneerError::NotListed(req.contract_id))?;
 
-        let bidder = hex_to_addr(&req.bidder_hex)
-            .ok_or_else(|| {
-                let raw = req.bidder_hex.trim_start_matches("0x");
-                let byte_len = raw.len() / 2;
-                AuctioneerError::InvalidBidderHex(byte_len)
-            })?;
-        match Bid::new(bidder, req.max_price, req.lambda_tolerance, req.submitted_at) {
+        let bidder = hex_to_addr(&req.bidder_hex).ok_or_else(|| {
+            let raw = req.bidder_hex.trim_start_matches("0x");
+            let byte_len = raw.len() / 2;
+            AuctioneerError::InvalidBidderHex(byte_len)
+        })?;
+        match Bid::new(
+            bidder,
+            req.max_price,
+            req.lambda_tolerance,
+            req.submitted_at,
+        ) {
             Ok(bid) => {
                 info!(
                     contract_id = req.contract_id,

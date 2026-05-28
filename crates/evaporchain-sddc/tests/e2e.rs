@@ -28,7 +28,9 @@
 //!
 //! INVENTION_STACK §A5.2: Singh Decay-Dutch Continuous Auction.
 
-use evaporchain_sddc::{try_clear, Auction, AuctionStatus, Bid, BidError, ClearError, LifecycleError};
+use evaporchain_sddc::{
+    try_clear, Auction, AuctionStatus, Bid, BidError, ClearError, LifecycleError,
+};
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -65,17 +67,20 @@ fn carol_wins_at_epoch_80_joint_clear() {
     // Carol clears at 6_400, Dave's later bid is moot.
     let mut auction = carbon_auction();
 
-    let alice = Bid::new(id(0xD1), 9_000, 30, 20).unwrap();  // REJECTED — price
-    let bob   = Bid::new(id(0xD2), 9_000, 15, 50).unwrap();  // REJECTED — λ axis
-    let carol = Bid::new(id(0xD3), 7_000, 50, 80).unwrap();  // CLEARS
-    let dave  = Bid::new(id(0xD4), 5_000, 50, 120).unwrap(); // would clear, but Carol first
+    let alice = Bid::new(id(0xD1), 9_000, 30, 20).unwrap(); // REJECTED — price
+    let bob = Bid::new(id(0xD2), 9_000, 15, 50).unwrap(); // REJECTED — λ axis
+    let carol = Bid::new(id(0xD3), 7_000, 50, 80).unwrap(); // CLEARS
+    let dave = Bid::new(id(0xD4), 5_000, 50, 120).unwrap(); // would clear, but Carol first
 
     let cleared = try_clear(&mut auction, &[alice, bob, carol, dave], 130)
         .unwrap()
         .expect("Carol must clear");
 
     assert_eq!(cleared.winner, id(0xD3), "Carol must win");
-    assert_eq!(cleared.price_paid, 6_400, "price locked at Carol's submission epoch (80)");
+    assert_eq!(
+        cleared.price_paid, 6_400,
+        "price locked at Carol's submission epoch (80)"
+    );
     assert_eq!(cleared.cleared_at, 80);
 }
 
@@ -87,8 +92,14 @@ fn alice_excluded_on_price_axis() {
     let alice = Bid::new(id(0xD1), 9_000, 30, 20).unwrap();
 
     let result = try_clear(&mut auction, &[alice], 50).unwrap();
-    assert!(result.is_none(), "Alice must not clear: price 9_100 > max_price 9_000");
-    assert!(auction.is_open(), "auction must stay open after Alice's rejected bid");
+    assert!(
+        result.is_none(),
+        "Alice must not clear: price 9_100 > max_price 9_000"
+    );
+    assert!(
+        auction.is_open(),
+        "auction must stay open after Alice's rejected bid"
+    );
 }
 
 #[test]
@@ -113,13 +124,17 @@ fn carol_wins_not_dave_earliest_satisfier_rule() {
     // so she wins — clearing is deterministic by submission epoch.
     let mut auction = carbon_auction();
     let carol = Bid::new(id(0xD3), 7_000, 50, 80).unwrap();
-    let dave  = Bid::new(id(0xD4), 5_000, 50, 120).unwrap();
+    let dave = Bid::new(id(0xD4), 5_000, 50, 120).unwrap();
 
     let cleared = try_clear(&mut auction, &[dave.clone(), carol.clone()], 130)
         .unwrap()
         .expect("must clear");
 
-    assert_eq!(cleared.winner, id(0xD3), "Carol (epoch=80) wins over Dave (epoch=120)");
+    assert_eq!(
+        cleared.winner,
+        id(0xD3),
+        "Carol (epoch=80) wins over Dave (epoch=120)"
+    );
     assert_eq!(cleared.price_paid, 6_400); // price_at(80), not price_at(120)
 }
 
@@ -155,8 +170,8 @@ fn doctrine_high_lambda_tolerance_wins_at_lower_price() {
     //
     // Quantified: Carol's price (6_400) < what Bob would have paid (7_750)
     // if he had matched Carol's λ tolerance.
-    let carol_price = expected_price(80);  // 6_400 — Carol's actual clearing price
-    let bob_price   = expected_price(50);  // 7_750 — price where Bob had money but not λ
+    let carol_price = expected_price(80); // 6_400 — Carol's actual clearing price
+    let bob_price = expected_price(50); // 7_750 — price where Bob had money but not λ
 
     assert!(
         carol_price < bob_price,
@@ -183,22 +198,37 @@ fn clearing_deterministic_regardless_of_bid_slice_order() {
     // Validators receive bids via gossip in arbitrary order; clearing
     // must produce the same winner regardless of slice ordering.
     // Carol wins in both permutations.
-    let alice = Bid::new(id(0xD1), 9_000, 30,  20).unwrap();
-    let bob   = Bid::new(id(0xD2), 9_000, 15,  50).unwrap();
-    let carol = Bid::new(id(0xD3), 7_000, 50,  80).unwrap();
-    let dave  = Bid::new(id(0xD4), 5_000, 50, 120).unwrap();
+    let alice = Bid::new(id(0xD1), 9_000, 30, 20).unwrap();
+    let bob = Bid::new(id(0xD2), 9_000, 15, 50).unwrap();
+    let carol = Bid::new(id(0xD3), 7_000, 50, 80).unwrap();
+    let dave = Bid::new(id(0xD4), 5_000, 50, 120).unwrap();
 
     let mut a1 = carbon_auction();
     let mut a2 = carbon_auction();
 
-    let c1 = try_clear(&mut a1, &[alice.clone(), bob.clone(), carol.clone(), dave.clone()], 130)
-        .unwrap().unwrap();
+    let c1 = try_clear(
+        &mut a1,
+        &[alice.clone(), bob.clone(), carol.clone(), dave.clone()],
+        130,
+    )
+    .unwrap()
+    .unwrap();
     let c2 = try_clear(&mut a2, &[dave, carol, bob, alice], 130)
-        .unwrap().unwrap();
+        .unwrap()
+        .unwrap();
 
-    assert_eq!(c1.winner, c2.winner, "winner must be identical across orderings");
-    assert_eq!(c1.price_paid, c2.price_paid, "price must be identical across orderings");
-    assert_eq!(c1.cleared_at, c2.cleared_at, "clearing epoch must be identical");
+    assert_eq!(
+        c1.winner, c2.winner,
+        "winner must be identical across orderings"
+    );
+    assert_eq!(
+        c1.price_paid, c2.price_paid,
+        "price must be identical across orderings"
+    );
+    assert_eq!(
+        c1.cleared_at, c2.cleared_at,
+        "clearing epoch must be identical"
+    );
 }
 
 #[test]
@@ -264,7 +294,9 @@ fn adversarial_double_clear_rejected() {
     // re-entrancy / double-settlement is impossible.
     let mut auction = carbon_auction();
     let carol = Bid::new(id(0xD3), 7_000, 50, 80).unwrap();
-    try_clear(&mut auction, std::slice::from_ref(&carol), 100).unwrap().unwrap(); // first clear OK
+    try_clear(&mut auction, std::slice::from_ref(&carol), 100)
+        .unwrap()
+        .unwrap(); // first clear OK
 
     let err = try_clear(&mut auction, std::slice::from_ref(&carol), 110).unwrap_err();
     assert!(

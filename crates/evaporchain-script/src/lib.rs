@@ -75,8 +75,14 @@ impl Value {
             Value::Str(s) => format!("s:{s}"),
             Value::Address(a) => format!("a:{}", hex::encode(a)),
             Value::Null => "n:null".to_string(),
-            Value::Map(_) => format!("m:{}", hex::encode(blake3::hash(self.to_string().as_bytes()).as_bytes())),
-            Value::Array(_) => format!("r:{}", hex::encode(blake3::hash(self.to_string().as_bytes()).as_bytes())),
+            Value::Map(_) => format!(
+                "m:{}",
+                hex::encode(blake3::hash(self.to_string().as_bytes()).as_bytes())
+            ),
+            Value::Array(_) => format!(
+                "r:{}",
+                hex::encode(blake3::hash(self.to_string().as_bytes()).as_bytes())
+            ),
         }
     }
 }
@@ -1263,12 +1269,8 @@ contract Proxy {
         let creator: AccountAddress = [0xCC; 32];
         let eoa: AccountAddress = [0xEE; 32]; // some random EOA
 
-        let target_id = engine
-            .deploy(target_src, creator, 1, 1000, 100)
-            .unwrap();
-        let proxy_id = engine
-            .deploy(proxy_src, creator, 1, 1000, 100)
-            .unwrap();
+        let target_id = engine.deploy(target_src, creator, 1, 1000, 100).unwrap();
+        let proxy_id = engine.deploy(proxy_src, creator, 1, 1000, 100).unwrap();
 
         // EOA calls Proxy.pass_through(target_id) → Proxy calls
         // Target.record(). Target.last_caller must be the proxy's
@@ -1290,7 +1292,8 @@ contract Proxy {
         };
         let expected_proxy_address = contract_address(proxy_id);
         assert_eq!(
-            last_caller, expected_proxy_address,
+            last_caller,
+            expected_proxy_address,
             "SCR-N1: callee must see calling contract's identity \
              ({:x?}…), not the EOA ({:x?}…)",
             &expected_proxy_address[..4],
@@ -1587,7 +1590,11 @@ contract Tiny {
         let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
 
         let result = engine.call(id, "ping", vec![], creator, 10);
-        assert!(result.is_ok(), "default call must succeed; got {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "default call must succeed; got {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap().return_value, Value::U64(42));
     }
 

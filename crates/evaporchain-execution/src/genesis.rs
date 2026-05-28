@@ -505,13 +505,23 @@ mod tests {
         assert_eq!(total_balance, config.tokenomics.total_supply);
 
         // 7 of 8 buckets vested (Community Airdrop is the only liquid one).
-        let vested_count = config.accounts.iter().filter(|a| a.vesting.is_some()).count();
-        let liquid_count = config.accounts.iter().filter(|a| a.vesting.is_none()).count();
+        let vested_count = config
+            .accounts
+            .iter()
+            .filter(|a| a.vesting.is_some())
+            .count();
+        let liquid_count = config
+            .accounts
+            .iter()
+            .filter(|a| a.vesting.is_none())
+            .count();
         assert_eq!(vested_count, 7, "expected 7 vested accounts");
         assert_eq!(liquid_count, 1, "expected 1 liquid account (Airdrop)");
 
         // Day-one liquid = total − sum(total_locked).
-        let total_locked: u64 = config.accounts.iter()
+        let total_locked: u64 = config
+            .accounts
+            .iter()
             .filter_map(|a| a.vesting.as_ref().map(|v| v.total_locked))
             .sum();
         assert_eq!(total_locked, 900_000_000, "90% of supply must be locked");
@@ -521,22 +531,38 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         initialize_genesis(&mut db, &config).expect("initialize_genesis");
         for ga in &config.accounts {
-            let acc = db.get_account(&ga.address)
+            let acc = db
+                .get_account(&ga.address)
                 .unwrap_or_else(|| panic!("account {} not in db", ga.label));
             assert_eq!(acc.balance, ga.balance);
-            assert_eq!(acc.vesting, ga.vesting,
-                "vesting on {} did not survive genesis init", ga.label);
+            assert_eq!(
+                acc.vesting, ga.vesting,
+                "vesting on {} did not survive genesis init",
+                ga.label
+            );
 
             // Pre-cliff: locked balance equals total_locked.
             if let Some(v) = &acc.vesting {
-                assert_eq!(acc.transferable_balance(0), 0,
-                    "{} pre-cliff transferable must be 0", ga.label);
-                assert_eq!(acc.transferable_balance(v.cliff_epoch), 0,
-                    "{} at cliff_epoch transferable must still be 0", ga.label);
+                assert_eq!(
+                    acc.transferable_balance(0),
+                    0,
+                    "{} pre-cliff transferable must be 0",
+                    ga.label
+                );
+                assert_eq!(
+                    acc.transferable_balance(v.cliff_epoch),
+                    0,
+                    "{} at cliff_epoch transferable must still be 0",
+                    ga.label
+                );
                 // Post full release: transferable = balance.
                 let post_release = v.cliff_epoch + v.linear_release_epochs + 1;
-                assert_eq!(acc.transferable_balance(post_release), acc.balance,
-                    "{} post-release transferable must equal balance", ga.label);
+                assert_eq!(
+                    acc.transferable_balance(post_release),
+                    acc.balance,
+                    "{} post-release transferable must equal balance",
+                    ga.label
+                );
             }
         }
     }

@@ -28,8 +28,7 @@ use std::path::PathBuf;
 fn contract_source() -> String {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push("../../contracts/evaporscript/future_self_vault.es");
-    fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("could not read {}: {}", p.display(), e))
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("could not read {}: {}", p.display(), e))
 }
 
 /// Balanced-brace, comment-tolerant `fn <name>(...) { ... }` body
@@ -86,7 +85,10 @@ fn extract_fn_body(src: &str, fn_name: &str) -> String {
             }
         }
     }
-    assert!(close > open, "function `{fn_name}` brace-walk did not close");
+    assert!(
+        close > open,
+        "function `{fn_name}` brace-walk did not close"
+    );
     src[open + 1..close].to_string()
 }
 

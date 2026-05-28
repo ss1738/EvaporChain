@@ -430,12 +430,14 @@ mod tests {
         // concurrent pairs -> n_per_bucket=0 < 5 -> InputError branch
         // (lines 199-214) in recompute_now.
         let mut alarm = CartelAlarm::new(200, 50, 1); // 1-second window
-        // Feed 60 records; at record 50 (records_seen=50, multiple of 50,
-        // buffer.len()=50>=50) the periodic gate fires.
+                                                      // Feed 60 records; at record 50 (records_seen=50, multiple of 50,
+                                                      // buffer.len()=50>=50) the periodic gate fires.
         for h in 0..60 {
             alarm.record_block(synth_block(h), h);
         }
-        let st = alarm.status().expect("periodic run should have fired at record 50");
+        let st = alarm
+            .status()
+            .expect("periodic run should have fired at record 50");
         assert!(
             st.verdict.starts_with("InputError"),
             "expected InputError with 1-second window, got: {}",

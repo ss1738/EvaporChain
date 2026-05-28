@@ -34,7 +34,9 @@ pub enum LightClientError {
     /// returned value differs from the expected one. This
     /// indicates the prover gave a non-membership proof when
     /// membership was expected, or vice versa.
-    #[error("state value mismatch at key {key_hex}: expected {expected_hex:?}, got {actual_hex:?}")]
+    #[error(
+        "state value mismatch at key {key_hex}: expected {expected_hex:?}, got {actual_hex:?}"
+    )]
     StateValueMismatch {
         key_hex: String,
         expected_hex: Option<String>,
@@ -51,9 +53,7 @@ pub enum LightClientError {
     /// trusted block. Light clients track monotone height; older
     /// blocks should be ignored or treated as a separate audit
     /// query.
-    #[error(
-        "block height {provided} is not greater than current trusted height {trusted}"
-    )]
+    #[error("block height {provided} is not greater than current trusted height {trusted}")]
     NonMonotoneHeight { provided: u64, trusted: u64 },
 
     /// The block's parent hash doesn't match the trusted block's

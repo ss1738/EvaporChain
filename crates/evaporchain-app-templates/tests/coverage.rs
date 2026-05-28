@@ -2,8 +2,8 @@
 
 use evaporchain_app_templates::catalogue::{catalogue, find, CatalogueError};
 use evaporchain_app_templates::class::{
-    SDDC_AUCTION, SFSV_VAULT, SHLM_BOUNTY, TemplateClass, APP_TEMPLATE_RANGE_END,
-    APP_TEMPLATE_RANGE_START,
+    TemplateClass, APP_TEMPLATE_RANGE_END, APP_TEMPLATE_RANGE_START, SDDC_AUCTION, SFSV_VAULT,
+    SHLM_BOUNTY,
 };
 use evaporchain_app_templates::descriptor::{DescriptorError, TemplateDescriptor};
 
@@ -136,7 +136,10 @@ fn descriptor_new_accepts_valid_inputs() {
 #[test]
 fn catalogue_is_non_empty() {
     let entries = catalogue();
-    assert!(entries.len() >= 21, "catalogue must register ≥ 21 templates");
+    assert!(
+        entries.len() >= 21,
+        "catalogue must register ≥ 21 templates"
+    );
 }
 
 #[test]
@@ -157,7 +160,11 @@ fn catalogue_class_ids_are_unique() {
     ids.sort();
     let before = ids.len();
     ids.dedup();
-    assert_eq!(ids.len(), before, "duplicate template class ids in catalogue");
+    assert_eq!(
+        ids.len(),
+        before,
+        "duplicate template class ids in catalogue"
+    );
 }
 
 #[test]

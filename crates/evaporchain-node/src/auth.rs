@@ -7,11 +7,11 @@ use chacha20poly1305::{
 };
 use evaporchain_crypto::signatures::MlDsaKeypair;
 use rand::Rng;
-use subtle::ConstantTimeEq;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use subtle::ConstantTimeEq;
 
 use crate::user_db::UserDb;
 
@@ -268,9 +268,7 @@ pub fn authenticate(headers: &HeaderMap, sessions: &Sessions) -> Result<i64, Str
         let b = token.as_bytes();
         a.len() == b.len() && bool::from(a.ct_eq(b))
     });
-    let (user_id, created) = found
-        .map(|(_, v)| v)
-        .ok_or("Invalid or expired token")?;
+    let (user_id, created) = found.map(|(_, v)| v).ok_or("Invalid or expired token")?;
 
     if created.elapsed().as_secs() > SESSION_TTL_SECS {
         return Err("Token expired".into());
@@ -563,7 +561,9 @@ pub async fn get_me(
         Ok(Some(user)) => Json(serde_json::json!({"success": true, "user": user})),
         Ok(None) => Json(serde_json::json!({"success": false, "message": "User not found"})),
         // R14 (audit 2026-05-15): don't reflect raw DB error to client.
-        Err(_e) => Json(serde_json::json!({"success": false, "message": "Lookup failed. Try again."})),
+        Err(_e) => {
+            Json(serde_json::json!({"success": false, "message": "Lookup failed. Try again."}))
+        }
     }
 }
 
@@ -653,7 +653,9 @@ pub async fn list_wallets(
     match state.user_db.list_wallets(user_id) {
         Ok(wallets) => Json(serde_json::json!({"success": true, "wallets": wallets})),
         // R14 (audit 2026-05-15): don't reflect raw DB error.
-        Err(_e) => Json(serde_json::json!({"success": false, "message": "Wallet list failed. Try again."})),
+        Err(_e) => {
+            Json(serde_json::json!({"success": false, "message": "Wallet list failed. Try again."}))
+        }
     }
 }
 
@@ -669,7 +671,9 @@ pub async fn get_activity(
     match state.user_db.get_activity(user_id, 50) {
         Ok(entries) => Json(serde_json::json!({"success": true, "activity": entries})),
         // R14 (audit 2026-05-15): don't reflect raw DB error.
-        Err(_e) => Json(serde_json::json!({"success": false, "message": "Activity lookup failed. Try again."})),
+        Err(_e) => Json(
+            serde_json::json!({"success": false, "message": "Activity lookup failed. Try again."}),
+        ),
     }
 }
 
@@ -713,9 +717,15 @@ mod tests {
     #[test]
     fn test_master_seed_fails_closed_api001() {
         // unset
-        assert!(master_seed_from_env(None).is_err(), "unset must fail closed");
+        assert!(
+            master_seed_from_env(None).is_err(),
+            "unset must fail closed"
+        );
         // empty
-        assert!(master_seed_from_env(Some("")).is_err(), "empty must fail closed");
+        assert!(
+            master_seed_from_env(Some("")).is_err(),
+            "empty must fail closed"
+        );
         // the insecure dev default
         assert!(
             master_seed_from_env(Some(DEV_MASTER_KEY)).is_err(),
@@ -852,7 +862,10 @@ mod tests {
         let plaintext = "fixed_plaintext";
         let c1 = encrypt_secret_key(plaintext).unwrap();
         let c2 = encrypt_secret_key(plaintext).unwrap();
-        assert_ne!(c1, c2, "two encrypts of same plaintext must differ (nonce reuse)");
+        assert_ne!(
+            c1, c2,
+            "two encrypts of same plaintext must differ (nonce reuse)"
+        );
         // But both decrypt back to the same plaintext.
         assert_eq!(decrypt_secret_key(&c1).unwrap(), plaintext);
         assert_eq!(decrypt_secret_key(&c2).unwrap(), plaintext);
@@ -911,7 +924,10 @@ mod tests {
         // A 127-char guess (length mismatch) must be rejected.
         let short_guess = "a".repeat(127);
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", format!("Bearer {short_guess}").parse().unwrap());
+        headers.insert(
+            "authorization",
+            format!("Bearer {short_guess}").parse().unwrap(),
+        );
         assert!(authenticate(&headers, &sessions).is_err());
     }
 }

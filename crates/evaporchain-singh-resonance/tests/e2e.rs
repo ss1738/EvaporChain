@@ -53,8 +53,12 @@ use evaporchain_singh_resonance::{
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-fn tid(b: u8) -> TokenId { [b; 32] }
-fn addr(b: u8) -> [u8; 32] { [b; 32] }
+fn tid(b: u8) -> TokenId {
+    [b; 32]
+}
+fn addr(b: u8) -> [u8; 32] {
+    [b; 32]
+}
 
 fn doctrine_coupling() -> CouplingParams {
     CouplingParams::default_attention_curve(1_000).unwrap()
@@ -77,17 +81,23 @@ fn gallery_token(creator: u8) -> ResonanceToken {
 
 #[test]
 fn fixture_beloved_vs_abandoned_at_epoch100() {
-    let mut beloved   = gallery_token(0xA0);
+    let mut beloved = gallery_token(0xA0);
     let abandoned = gallery_token(0xB0);
 
     // Beloved receives engagement at saturation at epoch 0.
     beloved.register_engagement(1_000, 0).unwrap();
 
-    let e_beloved   = beloved.energy_at(100).unwrap();
+    let e_beloved = beloved.energy_at(100).unwrap();
     let e_abandoned = abandoned.energy_at(100).unwrap();
 
-    assert_eq!(e_abandoned, 2_500, "ignored: energy_at_epoch(10_000,50,100)=2_500");
-    assert_eq!(e_beloved,   4_167, "loved: energy_at_epoch(10_000,75,100)=4_167");
+    assert_eq!(
+        e_abandoned, 2_500,
+        "ignored: energy_at_epoch(10_000,50,100)=2_500"
+    );
+    assert_eq!(
+        e_beloved, 4_167,
+        "loved: energy_at_epoch(10_000,75,100)=4_167"
+    );
     assert!(
         e_beloved > e_abandoned,
         "beloved ({e_beloved}) must outlive abandoned ({e_abandoned})"
@@ -117,21 +127,24 @@ fn fixture_yesterdays_likes_evaporate() {
     // back toward min (token becomes mortal again).
     let mut t = gallery_token(0xC2);
     t.register_engagement(10_000, 0).unwrap();
-    let h_now   = t.effective_half_life_at(0).unwrap();
+    let h_now = t.effective_half_life_at(0).unwrap();
     let h_later = t.effective_half_life_at(100_000).unwrap();
     assert!(
         h_later < h_now,
         "far-future h_eff ({h_later}) must be less than post-burst ({h_now})"
     );
     // Eventually collapses toward min (50).
-    assert!(h_later <= 100, "after 100_000 epochs of silence, attention should be near 0");
+    assert!(
+        h_later <= 100,
+        "after 100_000 epochs of silence, attention should be near 0"
+    );
 }
 
 #[test]
 fn fixture_sustained_engagement_beats_silent_across_lifecycle() {
     // Beloved gets periodic engagement; abandoned gets none. Track at 500 epochs.
     let mut sustained = gallery_token(0xD0);
-    let abandoned     = gallery_token(0xD1);
+    let abandoned = gallery_token(0xD1);
 
     // Register every 50 epochs: epochs 0, 50, 100, ..., 450.
     for ep in (0u64..500).step_by(50) {
@@ -170,7 +183,10 @@ fn doctrine_effective_half_life_is_monotone_in_attention() {
     let mut prev_h = 0u64;
     for &attn in &attention_levels {
         let h = effective_half_life(100, attn, &p).unwrap();
-        assert!(h >= prev_h, "h_eff not monotone at attention={attn}: {h} < {prev_h}");
+        assert!(
+            h >= prev_h,
+            "h_eff not monotone at attention={attn}: {h} < {prev_h}"
+        );
         prev_h = h;
     }
 }
@@ -185,23 +201,28 @@ fn doctrine_engagement_reanchor_never_inflates_energy() {
     t.register_engagement(1_000, 0).unwrap();
     let energy_after = t.cached_energy;
     // Re-anchor uses energy_at(0) which is computed BEFORE the engagement boost.
-    assert_eq!(energy_before, energy_after,
-        "re-anchor must not inflate energy — it captures energy as-of-now");
+    assert_eq!(
+        energy_before, energy_after,
+        "re-anchor must not inflate energy — it captures energy as-of-now"
+    );
 }
 
 #[test]
 fn doctrine_scale_at_zero_attention_is_exactly_min() {
     let p = doctrine_coupling();
     let h = effective_half_life(200, 0, &p).unwrap();
-    assert_eq!(h, 100, "zero attention: base=200, min_scale=50bp → h_eff=100");
+    assert_eq!(
+        h, 100,
+        "zero attention: base=200, min_scale=50bp → h_eff=100"
+    );
 }
 
 // ── Adversarial fixture ───────────────────────────────────────────────────
 
 #[test]
 fn adversarial_zero_initial_energy_rejected() {
-    let err = ResonanceToken::mint(tid(1), addr(0xAA), 0, 100, doctrine_coupling(), 100, 0)
-        .unwrap_err();
+    let err =
+        ResonanceToken::mint(tid(1), addr(0xAA), 0, 100, doctrine_coupling(), 100, 0).unwrap_err();
     assert_eq!(err, TokenError::ZeroInitial);
 }
 
@@ -241,7 +262,10 @@ fn adversarial_self_transfer_rejected() {
 fn adversarial_evaporated_token_blocks_transfer() {
     // Tiny initial + small base half-life + min scale → dies fast.
     let t = ResonanceToken::mint(tid(0xEE), addr(0xAA), 4, 1, doctrine_coupling(), 100, 0).unwrap();
-    assert!(t.is_evaporated(10_000), "token should be dead at epoch 10_000");
+    assert!(
+        t.is_evaporated(10_000),
+        "token should be dead at epoch 10_000"
+    );
     let mut t2 = t;
     assert_eq!(
         t2.transfer(addr(0xAA), addr(0xBB), 10_000).unwrap_err(),

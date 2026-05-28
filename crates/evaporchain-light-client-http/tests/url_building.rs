@@ -16,8 +16,8 @@
 //!     base URL with trailing slash
 
 use evaporchain_light_client_http::{
-    HttpTransport, DEFAULT_HEADER_PATH, DEFAULT_LATEST_HEADER_PATH,
-    DEFAULT_NOVA_ATTESTATION_PATH, DEFAULT_NOVA_VK_BYTES_PATH, DEFAULT_STATE_PROOF_PATH,
+    HttpTransport, DEFAULT_HEADER_PATH, DEFAULT_LATEST_HEADER_PATH, DEFAULT_NOVA_ATTESTATION_PATH,
+    DEFAULT_NOVA_VK_BYTES_PATH, DEFAULT_STATE_PROOF_PATH,
 };
 
 // =================================================================
@@ -59,10 +59,7 @@ fn header_url_handles_u64_max_height() {
 #[test]
 fn header_url_height_zero_is_valid() {
     let t = HttpTransport::new("http://localhost:8080");
-    assert_eq!(
-        t.header_url(0),
-        "http://localhost:8080/api/light_header/0"
-    );
+    assert_eq!(t.header_url(0), "http://localhost:8080/api/light_header/0");
 }
 
 #[test]
@@ -157,7 +154,10 @@ fn with_paths_overrides_all_five_templates() {
     );
     assert_eq!(t.header_url(7), "http://h/h/7");
     assert_eq!(t.latest_header_url(), "http://h/l");
-    assert_eq!(t.state_proof_url(&[0u8; 32]), format!("http://h/sp/{}", "0".repeat(64)));
+    assert_eq!(
+        t.state_proof_url(&[0u8; 32]),
+        format!("http://h/sp/{}", "0".repeat(64))
+    );
     assert_eq!(t.nova_attestation_url(), "http://h/na");
     assert_eq!(t.nova_vk_bytes_url(), "http://h/vk");
 }

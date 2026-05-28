@@ -386,10 +386,9 @@ mod tests {
     #[test]
     fn test_estimate_gas_constant_variants() {
         use evaporchain_types::{
-            CallContractTx, CallScriptTx, ClaimDelegationTx, DelegateTx,
-            DeployContractTx, DeployScriptTx, GovernanceAction, GovernanceTx,
-            RefundTx, RotateValidatorKeyTx, UndelegateTx, ValidatorClaimStakeTx,
-            ValidatorExitTx, ValidatorStakeTx,
+            CallContractTx, CallScriptTx, ClaimDelegationTx, DelegateTx, DeployContractTx,
+            DeployScriptTx, GovernanceAction, GovernanceTx, RefundTx, RotateValidatorKeyTx,
+            UndelegateTx, ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
         };
         let e = estimator();
 
@@ -561,8 +560,8 @@ mod tests {
     #[test]
     fn test_estimate_gas_size_dependent_variants() {
         use evaporchain_types::{
-            BlobTx, DeferredTx, DeployTemplateTx, MultiSigTx, PrivateTransferTx,
-            ShieldTx, UnshieldTx, UpgradeContractTx, UserOpTx,
+            BlobTx, DeferredTx, DeployTemplateTx, MultiSigTx, PrivateTransferTx, ShieldTx,
+            UnshieldTx, UpgradeContractTx, UserOpTx,
         };
         let e = estimator();
 
@@ -662,10 +661,7 @@ mod tests {
                 threshold: 2,
                 signers: vec![],
                 inner_tx_bytes: vec![],
-                signatures: vec![
-                    ([0u8; 32], vec![]),
-                    ([1u8; 32], vec![]),
-                ],
+                signatures: vec![([0u8; 32], vec![]), ([1u8; 32], vec![]),],
                 public_keys: vec![],
                 nonce: 0,
             })),

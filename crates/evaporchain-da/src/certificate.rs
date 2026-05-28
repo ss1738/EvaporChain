@@ -688,7 +688,10 @@ mod tests {
             attested_stake: 2_000,
             total_stake: 3_000, // 2000/3000 >= 2/3 — would pass supermajority
         };
-        assert!(!cert.verify_signatures(), "duplicate validator_id must be rejected");
+        assert!(
+            !cert.verify_signatures(),
+            "duplicate validator_id must be rejected"
+        );
     }
 
     /// Q3: tampering the `stake` field post-signing must break BLS verification
@@ -709,7 +712,10 @@ mod tests {
             attested_stake: 999_999_999,
             total_stake: 999_999_999,
         };
-        assert!(!cert.verify_signatures(), "inflated stake must fail BLS verification");
+        assert!(
+            !cert.verify_signatures(),
+            "inflated stake must fail BLS verification"
+        );
     }
 
     /// Q3: zero-stake attestation with matching sig still round-trips cleanly

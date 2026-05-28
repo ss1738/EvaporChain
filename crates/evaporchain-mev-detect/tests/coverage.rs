@@ -130,22 +130,39 @@ fn scan_block_stamps_block_height() {
 #[test]
 fn compute_observation_refund_zero_beta_returns_none() {
     let o = obs(1);
-    let stat = AttackerStat { sandwich_count: 10, first_seen_height: 0, last_seen_height: 10 };
+    let stat = AttackerStat {
+        sandwich_count: 10,
+        first_seen_height: 0,
+        last_seen_height: 10,
+    };
     assert!(compute_observation_refund(&o, &stat, 0, 256).is_none());
 }
 
 #[test]
 fn compute_observation_refund_zero_window_returns_none() {
     let o = obs(1);
-    let stat = AttackerStat { sandwich_count: 10, first_seen_height: 0, last_seen_height: 10 };
+    let stat = AttackerStat {
+        sandwich_count: 10,
+        first_seen_height: 0,
+        last_seen_height: 10,
+    };
     assert!(compute_observation_refund(&o, &stat, 1000, 0).is_none());
 }
 
 #[test]
 fn compute_observation_refund_returns_some_on_valid_inputs() {
     let o = obs(1);
-    let stat = AttackerStat { sandwich_count: 10, first_seen_height: 0, last_seen_height: 10 };
-    let r = compute_observation_refund(&o, &stat, CROOKS_MEV_DEFAULT_BETA_MB, CROOKS_MEV_DEFAULT_WINDOW_BLOCKS);
+    let stat = AttackerStat {
+        sandwich_count: 10,
+        first_seen_height: 0,
+        last_seen_height: 10,
+    };
+    let r = compute_observation_refund(
+        &o,
+        &stat,
+        CROOKS_MEV_DEFAULT_BETA_MB,
+        CROOKS_MEV_DEFAULT_WINDOW_BLOCKS,
+    );
     // Result may be Some(0) (negative refund clamped) or Some(>0); both are valid.
     assert!(r.is_some());
 }
@@ -156,9 +173,21 @@ fn compute_observation_refund_returns_some_on_valid_inputs() {
 
 #[test]
 fn attacker_stat_struct_constructs_and_eq() {
-    let a = AttackerStat { sandwich_count: 0, first_seen_height: 0, last_seen_height: 0 };
-    let b = AttackerStat { sandwich_count: 0, first_seen_height: 0, last_seen_height: 0 };
-    let c = AttackerStat { sandwich_count: 1, first_seen_height: 0, last_seen_height: 0 };
+    let a = AttackerStat {
+        sandwich_count: 0,
+        first_seen_height: 0,
+        last_seen_height: 0,
+    };
+    let b = AttackerStat {
+        sandwich_count: 0,
+        first_seen_height: 0,
+        last_seen_height: 0,
+    };
+    let c = AttackerStat {
+        sandwich_count: 1,
+        first_seen_height: 0,
+        last_seen_height: 0,
+    };
     assert_eq!(a, b);
     assert_ne!(a, c);
 }
@@ -190,8 +219,22 @@ fn mev_state_digest_differs_when_observation_height_changes() {
 fn mev_state_digest_differs_when_attacker_stat_changes() {
     let q: VecDeque<MevObservation> = VecDeque::new();
     let mut s1 = HashMap::new();
-    s1.insert(addr(3), AttackerStat { sandwich_count: 1, first_seen_height: 0, last_seen_height: 1 });
+    s1.insert(
+        addr(3),
+        AttackerStat {
+            sandwich_count: 1,
+            first_seen_height: 0,
+            last_seen_height: 1,
+        },
+    );
     let mut s2 = HashMap::new();
-    s2.insert(addr(3), AttackerStat { sandwich_count: 2, first_seen_height: 0, last_seen_height: 1 });
+    s2.insert(
+        addr(3),
+        AttackerStat {
+            sandwich_count: 2,
+            first_seen_height: 0,
+            last_seen_height: 1,
+        },
+    );
     assert_ne!(mev_state_digest(&q, &s1), mev_state_digest(&q, &s2));
 }

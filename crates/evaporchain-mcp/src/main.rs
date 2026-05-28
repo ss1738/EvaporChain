@@ -132,9 +132,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => {
                 // Node not reachable yet — non-fatal, warn and continue.
-                eprintln!(
-                    "evaporchain-mcp: node-side auth probe failed (node not ready?): {e}"
-                );
+                eprintln!("evaporchain-mcp: node-side auth probe failed (node not ready?): {e}");
             }
         }
     }

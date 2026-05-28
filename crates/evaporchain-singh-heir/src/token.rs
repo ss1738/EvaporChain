@@ -512,10 +512,7 @@ mod tests {
             t.mark_heir_state(bob(), HeirState::Refused).unwrap_err(),
             HeirloomError::Escheated
         );
-        assert_eq!(
-            t.tick_to(100, 500).unwrap_err(),
-            HeirloomError::Escheated
-        );
+        assert_eq!(t.tick_to(100, 500).unwrap_err(), HeirloomError::Escheated);
     }
 
     /// T1.20 — tick_to rejects non-monotone time (lines 120-123).

@@ -46,8 +46,7 @@ use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr, G1Affine};
 use ark_ff::{BigInteger, PrimeField};
 
 use ark_r1cs_std::{
-    boolean::Boolean, convert::ToBitsGadget, fields::emulated_fp::EmulatedFpVar,
-    fields::fp::FpVar,
+    boolean::Boolean, convert::ToBitsGadget, fields::emulated_fp::EmulatedFpVar, fields::fp::FpVar,
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
@@ -106,8 +105,7 @@ pub fn enforce_cf_x_digest(
         q_y_hi,
     ];
 
-    let raw =
-        crate::section2_gadget::enforce_neptune_sponge_primary(cs, params, &inputs)?;
+    let raw = crate::section2_gadget::enforce_neptune_sponge_primary(cs, params, &inputs)?;
 
     // 250-bit LE truncation (matches NUM_HASH_BITS=250 native
     // squeeze). Bits 250..254 forced to 0 by repacking the first 250.
@@ -141,11 +139,7 @@ pub fn enforce_cf_x_digest_pair(
 ) -> Result<FpVar<Bn254Fr>, SynthesisError> {
     let d1 = enforce_cf_x_digest(cs.clone(), p1_x, p1_y, s1, q1_x, q1_y, params)?;
     let d2 = enforce_cf_x_digest(cs.clone(), p2_x, p2_y, s2, q2_x, q2_y, params)?;
-    let raw = crate::section2_gadget::enforce_neptune_sponge_primary(
-        cs,
-        params,
-        &[d1, d2],
-    )?;
+    let raw = crate::section2_gadget::enforce_neptune_sponge_primary(cs, params, &[d1, d2])?;
     let raw_bits = raw.to_bits_le()?;
     let trunc_bits = &raw_bits[..250usize.min(raw_bits.len())];
     Boolean::le_bits_to_fp(trunc_bits)
@@ -163,9 +157,9 @@ pub fn compute_cf_x_digest_pair_native(
     let d1 = compute_cf_x_digest_native(p1, s1, q1);
     let d2 = compute_cf_x_digest_native(p2, s2, q2);
     let absorbed = [d1, d2].map(crate::scalar_adapter::ark_fr_to_primary);
-    crate::scalar_adapter::primary_to_ark_fr(
-        crate::neptune_reference::neptune_hash_primary(&absorbed),
-    )
+    crate::scalar_adapter::primary_to_ark_fr(crate::neptune_reference::neptune_hash_primary(
+        &absorbed,
+    ))
 }
 
 /// Split a `Bn254Fq` into `(lo, hi)` 127-bit halves represented as
@@ -202,11 +196,7 @@ fn limb_decompose_fq_to_fr(f: Bn254Fq) -> (Bn254Fr, Bn254Fr) {
 /// Neptune sponge and must produce the same digest. Any divergence
 /// = bug in the in-circuit gadget (caught by a future cross-check
 /// test that calls both paths on the same inputs).
-pub fn compute_cf_x_digest_native(
-    p: G1Affine,
-    s: Bn254Fr,
-    q: G1Affine,
-) -> Bn254Fr {
+pub fn compute_cf_x_digest_native(p: G1Affine, s: Bn254Fr, q: G1Affine) -> Bn254Fr {
     let (p_x_lo, p_x_hi) = limb_decompose_fq_to_fr(p.x);
     let (p_y_lo, p_y_hi) = limb_decompose_fq_to_fr(p.y);
     let (q_x_lo, q_x_hi) = limb_decompose_fq_to_fr(q.x);
@@ -215,8 +205,11 @@ pub fn compute_cf_x_digest_native(
     let absorbed_ark: [Bn254Fr; 9] = [
         p_x_lo, p_x_hi, p_y_lo, p_y_hi, s, q_x_lo, q_x_hi, q_y_lo, q_y_hi,
     ];
-    let absorbed_nova: Vec<PrimaryScalar> =
-        absorbed_ark.iter().copied().map(ark_fr_to_primary).collect();
+    let absorbed_nova: Vec<PrimaryScalar> = absorbed_ark
+        .iter()
+        .copied()
+        .map(ark_fr_to_primary)
+        .collect();
 
     primary_to_ark_fr(neptune_hash_primary(&absorbed_nova))
 }
@@ -338,31 +331,20 @@ mod tests {
 
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         // Allocate (P, s, Q) as witnesses.
-        let p_x_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(p.x),
-        )
-        .unwrap();
-        let p_y_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(p.y),
-        )
-        .unwrap();
+        let p_x_var =
+            EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(p.x)).unwrap();
+        let p_y_var =
+            EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(p.y)).unwrap();
         let s_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(s)).unwrap();
-        let q_x_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(q.x),
-        )
-        .unwrap();
-        let q_y_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(q.y),
-        )
-        .unwrap();
+        let q_x_var =
+            EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(q.x)).unwrap();
+        let q_y_var =
+            EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(q.y)).unwrap();
 
-        let params = crate::neptune_permutation_gadget::params_from_dump_path(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
-        )
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/neptune-bn256-standard.json"
+        ))
         .expect("load neptune params from crate-relative dump");
 
         let gadget_digest = enforce_cf_x_digest(
@@ -377,8 +359,7 @@ mod tests {
         .expect("gadget synth");
 
         // Allocate the native digest as a witness and enforce equality.
-        let native_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(native_digest)).unwrap();
+        let native_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(native_digest)).unwrap();
         gadget_digest
             .enforce_equal(&native_var)
             .expect("enforce_equal");
@@ -404,10 +385,8 @@ mod tests {
         let native = compute_cf_x_digest_pair_native(p1, s1, q1, p2, s2, q2);
 
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
-        let mkfq = |v| {
-            EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(v))
-                .unwrap()
-        };
+        let mkfq =
+            |v| EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(v)).unwrap();
         let mkfr = |v| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(v)).unwrap();
         let p1_x = mkfq(p1.x);
         let p1_y = mkfq(p1.y);
@@ -420,20 +399,28 @@ mod tests {
         let q2_x = mkfq(q2.x);
         let q2_y = mkfq(q2.y);
 
-        let params = crate::neptune_permutation_gadget::params_from_dump_path(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
-        )
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/neptune-bn256-standard.json"
+        ))
         .expect("load neptune params");
 
         let gadget = enforce_cf_x_digest_pair(
             cs.clone(),
-            &p1_x, &p1_y, &s1_v, &q1_x, &q1_y,
-            &p2_x, &p2_y, &s2_v, &q2_x, &q2_y,
+            &p1_x,
+            &p1_y,
+            &s1_v,
+            &q1_x,
+            &q1_y,
+            &p2_x,
+            &p2_y,
+            &s2_v,
+            &q2_x,
+            &q2_y,
             &params,
         )
         .expect("gadget synth");
-        let native_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(native)).unwrap();
+        let native_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(native)).unwrap();
         gadget.enforce_equal(&native_var).unwrap();
         assert!(
             cs.is_satisfied().unwrap(),

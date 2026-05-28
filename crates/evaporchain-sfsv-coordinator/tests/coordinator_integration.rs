@@ -93,7 +93,10 @@ fn two_listings_one_clears_one_stays_open() {
 
     // No clear at epoch 50 (price_at(50)=775 > max_price=700).
     let clears = ae.try_clear_all(50);
-    assert!(clears.is_empty(), "bid at epoch 50 must not clear (price 775 > max 700)");
+    assert!(
+        clears.is_empty(),
+        "bid at epoch 50 must not clear (price 775 > max 700)"
+    );
     assert!(ae.is_tracked(1), "vault A still open");
 
     // Submit a second bid at epoch 100: price_at(100)=550. max_price=700 ≥ 550 → clears.
@@ -131,7 +134,10 @@ fn bid_for_unknown_contract_rejected() {
         })
         .unwrap_err();
     assert!(
-        matches!(err, evaporchain_sfsv_coordinator::auctioneer::AuctioneerError::NotListed(999)),
+        matches!(
+            err,
+            evaporchain_sfsv_coordinator::auctioneer::AuctioneerError::NotListed(999)
+        ),
         "got {err:?}"
     );
 }
@@ -182,7 +188,10 @@ fn expired_listing_gives_no_clear() {
     // Clear at epoch 11 — past the duration. SDDC should expire the auction.
     // After expiry the listing is dropped from the auctioneer.
     let clears = ae.try_clear_all(11);
-    assert!(clears.is_empty(), "expired listing must not produce a clear");
+    assert!(
+        clears.is_empty(),
+        "expired listing must not produce a clear"
+    );
     // Auctioneer drops the expired listing.
     assert!(!ae.is_tracked(1), "expired listing must be dropped");
 }

@@ -32,7 +32,9 @@ fn make_clock() -> LamportClock {
 // ── Fixture helpers ───────────────────────────────────────────────────────
 
 fn spend(clock: LamportClock, energy: u64) -> LamportClock {
-    clock.tick(energy).expect("tick should not overflow in test")
+    clock
+        .tick(energy)
+        .expect("tick should not overflow in test")
 }
 
 // ── Happy-path causal ordering ────────────────────────────────────────────
@@ -53,7 +55,10 @@ fn three_node_causality_chain() {
 
     // A merges B-after-C — transitivity: A now knows C's causal past.
     let a_after_bc = a.merge(b_after_c);
-    assert_eq!(a_after_bc.current_tick, 2, "transitivity: A observes C's causal past");
+    assert_eq!(
+        a_after_bc.current_tick, 2,
+        "transitivity: A observes C's causal past"
+    );
 }
 
 #[test]

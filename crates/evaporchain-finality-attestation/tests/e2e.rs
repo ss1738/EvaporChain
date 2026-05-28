@@ -48,21 +48,21 @@ fn fwr(root_byte: u8, witness_byte: u8) -> EvaporatedForkWitnessRef {
 }
 
 struct BlockInputs {
-    block_hash:         [u8; 32],
+    block_hash: [u8; 32],
     finalised_at_epoch: u64,
-    causal_root:        [u8; 32],
-    bell_seed:          [u8; 32],
-    evaporated_forks:   Vec<EvaporatedForkWitnessRef>,
+    causal_root: [u8; 32],
+    bell_seed: [u8; 32],
+    evaporated_forks: Vec<EvaporatedForkWitnessRef>,
 }
 
 impl BlockInputs {
     fn attestation(&self) -> FinalityAttestation {
         FinalityAttestation {
-            block_hash:         self.block_hash,
+            block_hash: self.block_hash,
             finalised_at_epoch: self.finalised_at_epoch,
-            causal_root:        self.causal_root,
-            bell_seed:          self.bell_seed,
-            evaporated_forks:   self.evaporated_forks.clone(),
+            causal_root: self.causal_root,
+            bell_seed: self.bell_seed,
+            evaporated_forks: self.evaporated_forks.clone(),
         }
     }
 }
@@ -79,31 +79,43 @@ fn five_block_chain() -> Vec<BlockInputs> {
 
     vec![
         BlockInputs {
-            block_hash: mk_hash(0x01), finalised_at_epoch: 0,
-            causal_root: mk_hash(0x11), bell_seed: seed_v1,
+            block_hash: mk_hash(0x01),
+            finalised_at_epoch: 0,
+            causal_root: mk_hash(0x11),
+            bell_seed: seed_v1,
             evaporated_forks: vec![],
         },
         BlockInputs {
-            block_hash: mk_hash(0x02), finalised_at_epoch: 1,
-            causal_root: mk_hash(0x12), bell_seed: seed_v1,
+            block_hash: mk_hash(0x02),
+            finalised_at_epoch: 1,
+            causal_root: mk_hash(0x12),
+            bell_seed: seed_v1,
             evaporated_forks: vec![fwr(0x10, 0xAA)],
         },
         BlockInputs {
-            block_hash: mk_hash(0x03), finalised_at_epoch: 2,
-            causal_root: mk_hash(0x13), bell_seed: seed_v1,
+            block_hash: mk_hash(0x03),
+            finalised_at_epoch: 2,
+            causal_root: mk_hash(0x13),
+            bell_seed: seed_v1,
             evaporated_forks: vec![fwr(0x10, 0xAA), fwr(0x20, 0xBB)],
         },
         BlockInputs {
-            block_hash: mk_hash(0x04), finalised_at_epoch: 3,
-            causal_root: mk_hash(0x14), bell_seed: seed_v2,
+            block_hash: mk_hash(0x04),
+            finalised_at_epoch: 3,
+            causal_root: mk_hash(0x14),
+            bell_seed: seed_v2,
             evaporated_forks: vec![fwr(0x10, 0xAA), fwr(0x20, 0xBB), fwr(0x30, 0xCC)],
         },
         BlockInputs {
-            block_hash: mk_hash(0x05), finalised_at_epoch: 4,
-            causal_root: mk_hash(0x15), bell_seed: seed_v2,
+            block_hash: mk_hash(0x05),
+            finalised_at_epoch: 4,
+            causal_root: mk_hash(0x15),
+            bell_seed: seed_v2,
             evaporated_forks: vec![
-                fwr(0x10, 0xAA), fwr(0x20, 0xBB),
-                fwr(0x30, 0xCC), fwr(0x40, 0xDD),
+                fwr(0x10, 0xAA),
+                fwr(0x20, 0xBB),
+                fwr(0x30, 0xCC),
+                fwr(0x40, 0xDD),
             ],
         },
     ]
@@ -133,8 +145,10 @@ fn attestation_roots_are_strictly_unique_across_blocks() {
 
     for i in 0..roots.len() {
         for j in (i + 1)..roots.len() {
-            assert_ne!(roots[i], roots[j],
-                "blocks {i} and {j} produced identical attestation roots");
+            assert_ne!(
+                roots[i], roots[j],
+                "blocks {i} and {j} produced identical attestation roots"
+            );
         }
     }
 }
@@ -148,7 +162,10 @@ fn adding_each_fork_changes_attestation_root() {
     base.evaporated_forks.pop();
     let root_3 = build_attestation(&base).unwrap();
     let root_4 = build_attestation(&chain[4].attestation()).unwrap();
-    assert_ne!(root_3, root_4, "adding fork_D must change the attestation root");
+    assert_ne!(
+        root_3, root_4,
+        "adding fork_D must change the attestation root"
+    );
 }
 
 // ── Light-client scenario ─────────────────────────────────────────────────────
@@ -170,8 +187,10 @@ fn adversarial_causal_root_from_earlier_block_rejected() {
     let root = build_attestation(&att).unwrap();
     let mut forged = att.clone();
     forged.causal_root = chain[2].causal_root;
-    assert!(verify_attestation(&forged, &root).is_err(),
-        "substituting an older causal_root must invalidate the attestation");
+    assert!(
+        verify_attestation(&forged, &root).is_err(),
+        "substituting an older causal_root must invalidate the attestation"
+    );
 }
 
 #[test]
@@ -181,8 +200,10 @@ fn adversarial_bell_seed_rollback_rejected() {
     let root = build_attestation(&att).unwrap();
     let mut forged = att.clone();
     forged.bell_seed = chain[1].bell_seed;
-    assert!(verify_attestation(&forged, &root).is_err(),
-        "rolling back the bell_seed must invalidate the attestation");
+    assert!(
+        verify_attestation(&forged, &root).is_err(),
+        "rolling back the bell_seed must invalidate the attestation"
+    );
 }
 
 #[test]
@@ -204,8 +225,10 @@ fn adversarial_extra_fork_witness_injection_diverges_root() {
     let root = build_attestation(&att).unwrap();
     let mut forged = att.clone();
     forged.evaporated_forks.push(fwr(0x50, 0xEE));
-    assert!(verify_attestation(&forged, &root).is_err(),
-        "injecting a nonexistent fork must diverge the root");
+    assert!(
+        verify_attestation(&forged, &root).is_err(),
+        "injecting a nonexistent fork must diverge the root"
+    );
 }
 
 #[test]
@@ -214,8 +237,11 @@ fn adversarial_unsorted_fork_list_rejected_at_build() {
     let mut att = chain[4].attestation();
     att.evaporated_forks.reverse();
     let err = build_attestation(&att).unwrap_err();
-    assert_eq!(err, AttestationError::UnsortedForks,
-        "reversed fork list must be caught at build time");
+    assert_eq!(
+        err,
+        AttestationError::UnsortedForks,
+        "reversed fork list must be caught at build time"
+    );
 }
 
 #[test]
@@ -225,8 +251,10 @@ fn adversarial_single_witness_bit_flip_rejected() {
     let root = build_attestation(&att).unwrap();
     let mut forged = att.clone();
     forged.evaporated_forks[2].witness[0] ^= 0x01;
-    assert!(verify_attestation(&forged, &root).is_err(),
-        "a 1-bit witness mutation must invalidate the attestation");
+    assert!(
+        verify_attestation(&forged, &root).is_err(),
+        "a 1-bit witness mutation must invalidate the attestation"
+    );
 }
 
 // ── Idempotency ──────────────────────────────────────────────────────────────

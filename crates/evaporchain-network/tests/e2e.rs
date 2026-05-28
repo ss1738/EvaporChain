@@ -15,7 +15,7 @@
 //! save + load round-trip preserves active bans; malformed on-disk file
 //! does not crash the node.
 
-use evaporchain_network::banlist::{BanList, now_ms};
+use evaporchain_network::banlist::{now_ms, BanList};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 fn ipv4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
@@ -23,7 +23,9 @@ fn ipv4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
 }
 
 fn ipv6(suffix: u128) -> IpAddr {
-    IpAddr::V6(Ipv6Addr::from(0x2001_0db8_0000_0000_0000_0000_0000_0000u128 | suffix))
+    IpAddr::V6(Ipv6Addr::from(
+        0x2001_0db8_0000_0000_0000_0000_0000_0000u128 | suffix,
+    ))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -57,7 +59,8 @@ fn shorter_expiry_does_not_shorten_ban() {
     assert_eq!(active.len(), 1);
     assert!(
         active[0].until_ms >= long,
-        "shorter expiry must not shrink the ban: got {} < {long}", active[0].until_ms
+        "shorter expiry must not shrink the ban: got {} < {long}",
+        active[0].until_ms
     );
 }
 
@@ -65,11 +68,13 @@ fn shorter_expiry_does_not_shorten_ban() {
 fn longer_expiry_extends_ban() {
     let mut bl = BanList::new();
     let ip = ipv4(198, 51, 100, 4);
-    bl.add_ban(ip, now_ms() + 60_000,  "first");
+    bl.add_ban(ip, now_ms() + 60_000, "first");
     bl.add_ban(ip, now_ms() + 600_000, "extended");
     let active = bl.active_bans();
-    assert!(active[0].until_ms >= now_ms() + 300_000,
-        "longer expiry must extend the ban");
+    assert!(
+        active[0].until_ms >= now_ms() + 300_000,
+        "longer expiry must extend the ban"
+    );
 }
 
 #[test]
@@ -144,8 +149,7 @@ fn load_missing_file_returns_empty() {
 
 #[test]
 fn load_malformed_file_returns_empty() {
-    let path = std::env::temp_dir()
-        .join(format!("evap_net_malformed_{}.json", now_ms()));
+    let path = std::env::temp_dir().join(format!("evap_net_malformed_{}.json", now_ms()));
     std::fs::write(&path, b"not valid json!!").unwrap();
     let bl = BanList::load(&path);
     assert!(bl.is_empty(), "malformed file must never crash the node");
@@ -177,7 +181,10 @@ fn omar_sybil_ejection_full_arc() {
     bl.add_ban(sybil_c, now_ms() + 600_000, "score_breach");
 
     // Sybil A: expired — auto-pruned on lookup.
-    assert!(!bl.is_banned(&sybil_a), "expired sybil must already be gone");
+    assert!(
+        !bl.is_banned(&sybil_a),
+        "expired sybil must already be gone"
+    );
 
     // Sybil B: false positive — manual unban.
     assert!(bl.remove_ban(&sybil_b));

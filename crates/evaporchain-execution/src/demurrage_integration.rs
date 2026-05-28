@@ -277,8 +277,13 @@ mod tests {
         // running a small additional window (+5 epochs) — the loss
         // should be roughly 5× the per-epoch rate, NOT current_epoch×.
         let bal1_after_first = bal1;
-        let _collected2 =
-            collect_demurrage(&mut db, &mut pool, &params, current_epoch, current_epoch + 5);
+        let _collected2 = collect_demurrage(
+            &mut db,
+            &mut pool,
+            &params,
+            current_epoch,
+            current_epoch + 5,
+        );
         let bal1_after_second = db.get_account(&addr(1)).unwrap().balance;
         let lost1_second_window = bal1_after_first - bal1_after_second;
         // Sanity bound: 5-epoch loss should be much smaller than account 2's
@@ -314,9 +319,15 @@ mod tests {
         // Above-threshold accounts must appear with positive amounts.
         let c1 = outcome.charges.get(&addr(1)).copied().unwrap_or(0);
         let c2 = outcome.charges.get(&addr(2)).copied().unwrap_or(0);
-        assert!(c1 > 0 && c2 > 0, "both charged accounts present, c1={c1} c2={c2}");
+        assert!(
+            c1 > 0 && c2 > 0,
+            "both charged accounts present, c1={c1} c2={c2}"
+        );
         // Map sum must equal the outcome total.
         let sum: u64 = outcome.charges.values().sum();
-        assert_eq!(sum, outcome.total, "per-account charges must sum to outcome.total");
+        assert_eq!(
+            sum, outcome.total,
+            "per-account charges must sum to outcome.total"
+        );
     }
 }

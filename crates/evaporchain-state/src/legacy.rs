@@ -75,8 +75,7 @@ pub(crate) fn deserialize_account_with_legacy_fallback(
 ) -> Result<Account, Box<bincode::ErrorKind>> {
     match bincode::deserialize::<Account>(data) {
         Ok(acct) => Ok(acct),
-        Err(_) => bincode::deserialize::<LegacyAccount>(data)
-            .map(Account::from),
+        Err(_) => bincode::deserialize::<LegacyAccount>(data).map(Account::from),
     }
 }
 
@@ -116,8 +115,8 @@ mod tests {
         let direct = bincode::deserialize::<Account>(&bytes);
 
         // The fallback path MUST succeed regardless.
-        let acct = deserialize_account_with_legacy_fallback(&bytes)
-            .expect("legacy fallback must succeed");
+        let acct =
+            deserialize_account_with_legacy_fallback(&bytes).expect("legacy fallback must succeed");
         assert_eq!(acct.address, [0x42; 32]);
         assert_eq!(acct.balance, 1_000_000);
         assert_eq!(acct.nonce, 7);
@@ -144,14 +143,14 @@ mod tests {
             storage_bytes: 0,
             last_touched_epoch: 0,
             vesting: Some(VestingLock {
-                cliff_epoch: 1_576_800,        // ~1y at 8s/block
+                cliff_epoch: 1_576_800,           // ~1y at 8s/block
                 linear_release_epochs: 5_256_000, // ~3y linear thereafter
                 total_locked: 350_000_000,
             }),
         };
         let bytes = bincode::serialize(&acct).expect("serialize current");
-        let loaded = deserialize_account_with_legacy_fallback(&bytes)
-            .expect("current must round-trip");
+        let loaded =
+            deserialize_account_with_legacy_fallback(&bytes).expect("current must round-trip");
         assert_eq!(acct, loaded);
     }
 

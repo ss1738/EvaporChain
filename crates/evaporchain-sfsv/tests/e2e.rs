@@ -68,12 +68,14 @@ fn listing_price_at(epoch: u64) -> u64 {
 /// Life-insurance vault locked until epoch 500.
 fn life_vault() -> Vault {
     Vault::create(
-        id(0x01),    // vault id
-        id(0xC0),    // creator
-        id(0xF0),    // future_self (initial holder)
+        id(0x01), // vault id
+        id(0xC0), // creator
+        id(0xF0), // future_self (initial holder)
         DEPOSIT,
-        Predicate::EpochReached { release_epoch: RELEASE_EPOCH },
-        0,           // created_at
+        Predicate::EpochReached {
+            release_epoch: RELEASE_EPOCH,
+        },
+        0, // created_at
     )
     .unwrap()
 }
@@ -83,8 +85,8 @@ fn listed_vault() -> (Vault, Auction) {
     let mut vault = life_vault();
     let auction = list_for_sale(
         &mut vault,
-        id(0xF0),          // caller = holder
-        id(0xAC),          // auction id
+        id(0xF0), // caller = holder
+        id(0xAC), // auction id
         LIST_CEILING,
         LIST_FLOOR,
         LOT_LAMBDA,
@@ -103,7 +105,7 @@ fn patient_buyer_acquires_claim_at_discount() {
     let (mut vault, mut auction) = listed_vault();
 
     let impatient = Bid::new(id(0xA1), 35_000, 10, 100).unwrap(); // REJECTED on λ
-    let patient   = Bid::new(id(0xB1), 26_000, 50, 150).unwrap(); // CLEARS at 25_000
+    let patient = Bid::new(id(0xB1), 26_000, 50, 150).unwrap(); // CLEARS at 25_000
 
     let cleared = settle_secondary(&mut vault, &mut auction, &[impatient, patient], 200)
         .unwrap()
@@ -114,7 +116,11 @@ fn patient_buyer_acquires_claim_at_discount() {
         cleared.price_paid, 25_000,
         "price locked at Patient Buyer's submission epoch (150)"
     );
-    assert_eq!(vault.current_holder(), Some(id(0xB1)), "claim transferred to Patient Buyer");
+    assert_eq!(
+        vault.current_holder(),
+        Some(id(0xB1)),
+        "claim transferred to Patient Buyer"
+    );
     assert!(!vault.is_listed(), "listing cleared after sale");
 }
 
@@ -147,7 +153,11 @@ fn payout_goes_to_secondary_buyer_not_original_creator() {
     // Patient Buyer now holds the claim. Predicate trips at epoch 500.
     let res = payout(&mut vault, RELEASE_EPOCH, DEPOSIT).unwrap();
 
-    assert_eq!(res.paid_to, id(0xB1), "payout must go to Patient Buyer, not original creator");
+    assert_eq!(
+        res.paid_to,
+        id(0xB1),
+        "payout must go to Patient Buyer, not original creator"
+    );
     assert_eq!(res.amount, DEPOSIT);
     assert_eq!(res.payout_at, RELEASE_EPOCH);
     assert!(!vault.is_locked(), "vault must be Released after payout");
@@ -164,7 +174,10 @@ fn predicate_blocks_payout_before_epoch_trip() {
         matches!(err, PayoutError::PredicateNotSatisfied { .. }),
         "payout must be blocked at epoch 499, got {err:?}"
     );
-    assert!(vault.is_locked(), "vault stays Locked when predicate not satisfied");
+    assert!(
+        vault.is_locked(),
+        "vault stays Locked when predicate not satisfied"
+    );
 
     // At exactly release_epoch, predicate trips.
     payout(&mut vault, RELEASE_EPOCH, DEPOSIT).unwrap();
@@ -179,21 +192,20 @@ fn three_party_resale_chain_final_holder_receives_payout() {
 
     // First sale: F0 → B1.
     let bid1 = Bid::new(id(0xB1), 26_000, 50, 150).unwrap();
-    settle_secondary(&mut vault, &mut a1, &[bid1], 200).unwrap().unwrap();
+    settle_secondary(&mut vault, &mut a1, &[bid1], 200)
+        .unwrap()
+        .unwrap();
     assert_eq!(vault.current_holder(), Some(id(0xB1)));
 
     // Second listing by B1: ceiling=35_000, floor=5_000, lot_lambda=20.
-    let mut a2 = list_for_sale(
-        &mut vault,
-        id(0xB1),
-        id(0xAD),
-        35_000, 5_000, 20, 300, 150,
-    )
-    .unwrap();
+    let mut a2 =
+        list_for_sale(&mut vault, id(0xB1), id(0xAD), 35_000, 5_000, 20, 300, 150).unwrap();
 
     // T1 bids at epoch 350: price_at(350) = 35_000 − 30_000×50/150 = 25_000
     let bid2 = Bid::new(id(0xD1), 27_000, 30, 350).unwrap();
-    settle_secondary(&mut vault, &mut a2, &[bid2], 400).unwrap().unwrap();
+    settle_secondary(&mut vault, &mut a2, &[bid2], 400)
+        .unwrap()
+        .unwrap();
     assert_eq!(vault.current_holder(), Some(id(0xD1)));
 
     // B1 can no longer claim — the right transferred to T1.
@@ -202,7 +214,11 @@ fn three_party_resale_chain_final_holder_receives_payout() {
         let res = payout(&mut vault, RELEASE_EPOCH, DEPOSIT).unwrap();
         res.paid_to
     };
-    assert_eq!(err_b1_payout, id(0xD1), "T1 must receive payout after resale chain");
+    assert_eq!(
+        err_b1_payout,
+        id(0xD1),
+        "T1 must receive payout after resale chain"
+    );
 }
 
 #[test]
@@ -215,7 +231,11 @@ fn listing_cancelled_preserves_holder_and_clears_listing() {
     vault.cancel_listing(id(0xF0)).unwrap();
 
     assert!(!vault.is_listed(), "listing must be cleared after cancel");
-    assert_eq!(vault.current_holder(), Some(id(0xF0)), "holder unchanged after cancel");
+    assert_eq!(
+        vault.current_holder(),
+        Some(id(0xF0)),
+        "holder unchanged after cancel"
+    );
 }
 
 #[test]
@@ -239,10 +259,16 @@ fn doctrine_patient_capital_wins_at_lower_price_than_impatient() {
     // Confirm the λ axis was the differentiator — same submission epoch,
     // only λ_tol differs:
     let (mut vault, mut auction) = listed_vault();
-    let impatient_low_tol  = Bid::new(id(0xA1), 35_000, 10, 100).unwrap(); // blocked
-    let patient_high_tol   = Bid::new(id(0xB1), 26_000, 50, 150).unwrap(); // wins
-    let cleared = settle_secondary(&mut vault, &mut auction, &[impatient_low_tol, patient_high_tol], 200)
-        .unwrap().unwrap();
+    let impatient_low_tol = Bid::new(id(0xA1), 35_000, 10, 100).unwrap(); // blocked
+    let patient_high_tol = Bid::new(id(0xB1), 26_000, 50, 150).unwrap(); // wins
+    let cleared = settle_secondary(
+        &mut vault,
+        &mut auction,
+        &[impatient_low_tol, patient_high_tol],
+        200,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(cleared.winner, id(0xB1));
     assert_eq!(cleared.price_paid, patient_price);
 }
@@ -258,11 +284,18 @@ fn adversarial_non_holder_cannot_list() {
         &mut vault,
         id(0xC0), // creator, not holder
         id(0xAC),
-        LIST_CEILING, LIST_FLOOR, LOT_LAMBDA, LIST_OPENED_AT, LIST_DURATION,
+        LIST_CEILING,
+        LIST_FLOOR,
+        LOT_LAMBDA,
+        LIST_OPENED_AT,
+        LIST_DURATION,
     )
     .unwrap_err();
     assert_eq!(err, MarketError::NotCurrentHolder);
-    assert!(!vault.is_listed(), "vault must remain unlisted after rejected list attempt");
+    assert!(
+        !vault.is_listed(),
+        "vault must remain unlisted after rejected list attempt"
+    );
 }
 
 #[test]
@@ -275,10 +308,11 @@ fn adversarial_settle_after_auction_expires_gives_no_winner() {
         &mut vault,
         id(0xF0),
         id(0xAC),
-        LIST_CEILING, LIST_FLOOR,
+        LIST_CEILING,
+        LIST_FLOOR,
         LOT_LAMBDA, // lot_lambda=30
-        0,    // opened_at=0
-        50,   // duration=50 → closes at epoch 50
+        0,          // opened_at=0
+        50,         // duration=50 → closes at epoch 50
     )
     .unwrap();
 
@@ -286,9 +320,20 @@ fn adversarial_settle_after_auction_expires_gives_no_winner() {
     let no_tol_bid = Bid::new(id(0xA1), LIST_CEILING, 5, 10).unwrap();
     let result = settle_secondary(&mut vault, &mut auction, &[no_tol_bid], 200).unwrap();
 
-    assert!(result.is_none(), "expired auction with no qualifying bid must yield no winner");
-    assert_eq!(auction.status, AuctionStatus::Expired, "SDDC auction must be Expired");
-    assert_eq!(vault.current_holder(), Some(id(0xF0)), "holder unchanged when auction expires");
+    assert!(
+        result.is_none(),
+        "expired auction with no qualifying bid must yield no winner"
+    );
+    assert_eq!(
+        auction.status,
+        AuctionStatus::Expired,
+        "SDDC auction must be Expired"
+    );
+    assert_eq!(
+        vault.current_holder(),
+        Some(id(0xF0)),
+        "holder unchanged when auction expires"
+    );
 }
 
 #[test]
@@ -317,7 +362,11 @@ fn adversarial_listing_on_released_vault_rejected() {
         &mut vault,
         id(0xF0),
         id(0xAC),
-        LIST_CEILING, LIST_FLOOR, LOT_LAMBDA, LIST_OPENED_AT, LIST_DURATION,
+        LIST_CEILING,
+        LIST_FLOOR,
+        LOT_LAMBDA,
+        LIST_OPENED_AT,
+        LIST_DURATION,
     )
     .unwrap_err();
     assert_eq!(
@@ -333,16 +382,25 @@ fn energy_decay_predicate_releases_when_engine_reports_below_threshold() {
     // engine-supplied live energy, not a recomputed formula.
     // Vault releases only when the caller passes contract_energy < threshold.
     let mut vault = Vault::create(
-        id(0x02), id(0xC0), id(0xF0), DEPOSIT,
+        id(0x02),
+        id(0xC0),
+        id(0xF0),
+        DEPOSIT,
         Predicate::EnergyDecaysBelow { threshold: 500 },
         0,
     )
     .unwrap();
 
     // Engine still reports 800 energy — blocked.
-    assert!(payout(&mut vault, 100, 800).is_err(), "must block when live energy=800 ≥ 500");
+    assert!(
+        payout(&mut vault, 100, 800).is_err(),
+        "must block when live energy=800 ≥ 500"
+    );
     // Engine refresh lifted it back to 600 — still blocked.
-    assert!(payout(&mut vault, 500, 600).is_err(), "must block when live energy=600 ≥ 500");
+    assert!(
+        payout(&mut vault, 500, 600).is_err(),
+        "must block when live energy=600 ≥ 500"
+    );
     // Engine decayed to 499 < 500 — releases.
     let res = payout(&mut vault, 1_000, 499).unwrap();
     assert_eq!(res.paid_to, id(0xF0));

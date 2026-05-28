@@ -121,7 +121,12 @@ fn portable_pop_rejects_wrong_dst() {
     // Native rejects: trying to verify a regular sig as a PoP fails.
     assert!(!BlsVerifier::verify_proof_of_possession(&pk, &regular_sig));
     // Portable: same reasoning, called directly with BLS_POP_DST over pk bytes.
-    assert!(!bls_portable::verify(&pk.0, &regular_sig.0, &pk.0, BLS_POP_DST));
+    assert!(!bls_portable::verify(
+        &pk.0,
+        &regular_sig.0,
+        &pk.0,
+        BLS_POP_DST
+    ));
 }
 
 #[test]
@@ -153,10 +158,13 @@ fn portable_aggregate_verify_three_signers_native() {
     let msg = b"precommit bytes for block N";
     let kps: Vec<BlsKeypair> = (0..3).map(|_| BlsKeypair::generate()).collect();
     let sigs = kps.iter().map(|kp| kp.sign(msg)).collect::<Vec<_>>();
-    let pks = kps.iter().map(|kp| kp.public_key_bytes()).collect::<Vec<_>>();
+    let pks = kps
+        .iter()
+        .map(|kp| kp.public_key_bytes())
+        .collect::<Vec<_>>();
 
-    let agg_sig = BlsVerifier::aggregate_signatures(&sigs)
-        .expect("native aggregation must succeed");
+    let agg_sig =
+        BlsVerifier::aggregate_signatures(&sigs).expect("native aggregation must succeed");
 
     // Native verifies its own aggregate.
     assert!(BlsVerifier::aggregate_verify(msg, &agg_sig, &pks));
@@ -177,13 +185,20 @@ fn portable_aggregate_verify_rejects_missing_signer() {
     let msg = b"4-signer aggregate, omit 1 pk";
     let kps: Vec<BlsKeypair> = (0..4).map(|_| BlsKeypair::generate()).collect();
     let sigs = kps.iter().map(|kp| kp.sign(msg)).collect::<Vec<_>>();
-    let pks = kps.iter().map(|kp| kp.public_key_bytes()).collect::<Vec<_>>();
+    let pks = kps
+        .iter()
+        .map(|kp| kp.public_key_bytes())
+        .collect::<Vec<_>>();
 
     let agg_sig = BlsVerifier::aggregate_signatures(&sigs).unwrap();
 
     // Drop the last pk.
     let truncated_pks: Vec<_> = pks[..3].to_vec();
-    assert!(!BlsVerifier::aggregate_verify(msg, &agg_sig, &truncated_pks));
+    assert!(!BlsVerifier::aggregate_verify(
+        msg,
+        &agg_sig,
+        &truncated_pks
+    ));
 
     let truncated_byte_slices: Vec<&[u8]> = truncated_pks.iter().map(|p| p.0.as_slice()).collect();
     assert!(!bls_portable::aggregate_verify(
@@ -199,8 +214,14 @@ fn portable_aggregate_verify_rejects_wrong_message() {
     let original_msg = b"signed bytes";
     let wrong_msg = b"different bytes";
     let kps: Vec<BlsKeypair> = (0..2).map(|_| BlsKeypair::generate()).collect();
-    let sigs = kps.iter().map(|kp| kp.sign(original_msg)).collect::<Vec<_>>();
-    let pks = kps.iter().map(|kp| kp.public_key_bytes()).collect::<Vec<_>>();
+    let sigs = kps
+        .iter()
+        .map(|kp| kp.sign(original_msg))
+        .collect::<Vec<_>>();
+    let pks = kps
+        .iter()
+        .map(|kp| kp.public_key_bytes())
+        .collect::<Vec<_>>();
     let agg_sig = BlsVerifier::aggregate_signatures(&sigs).unwrap();
 
     assert!(!BlsVerifier::aggregate_verify(wrong_msg, &agg_sig, &pks));

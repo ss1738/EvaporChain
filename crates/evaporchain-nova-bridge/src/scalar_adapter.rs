@@ -130,13 +130,12 @@ pub fn ark_fr_to_secondary_lossy(f: ArkFr) -> SecondaryScalar {
     let len = bigint_le.len().min(32);
     bytes[..len].copy_from_slice(&bigint_le[..len]);
     let repr = <SecondaryScalar as FfPrimeField>::Repr::from(bytes);
-    SecondaryScalar::from_repr_vartime(repr)
-        .expect(
-            "ark Fr value must canonicalise to a valid grumpkin::Scalar via byte read; \
+    SecondaryScalar::from_repr_vartime(repr).expect(
+        "ark Fr value must canonicalise to a valid grumpkin::Scalar via byte read; \
              every byte sequence ≤ 254 bits maps to *some* grumpkin::Scalar via the \
              halo2curves reduction. If this fires the BN254 Fr value somehow \
              exceeds 32 LE bytes after canonical reduction, which is impossible.",
-        )
+    )
 }
 
 /// Same-field conversion: `ark_bn254::Fq` → nova `grumpkin::Scalar`.
@@ -159,12 +158,11 @@ pub fn ark_fq_to_secondary(f: ArkFq) -> SecondaryScalar {
     let len = bigint_le.len().min(32);
     bytes[..len].copy_from_slice(&bigint_le[..len]);
     let repr = <SecondaryScalar as FfPrimeField>::Repr::from(bytes);
-    SecondaryScalar::from_repr_vartime(repr)
-        .expect(
-            "ark Fq value must canonicalise to a valid grumpkin::Scalar (same field); \
+    SecondaryScalar::from_repr_vartime(repr).expect(
+        "ark Fq value must canonicalise to a valid grumpkin::Scalar (same field); \
              if this fires the modulus alignment between ark_bn254::Fq and \
              halo2curves::grumpkin::Fr has drifted.",
-        )
+    )
 }
 
 #[cfg(test)]
@@ -212,11 +210,17 @@ mod tests {
         let mut ark_le_32 = [0u8; 32];
         ark_le_32[..ark_le.len().min(32)].copy_from_slice(&ark_le[..ark_le.len().min(32)]);
 
-        assert_eq!(nova_le, ark_le_32, "primary LE bytes must agree at value 42");
+        assert_eq!(
+            nova_le, ark_le_32,
+            "primary LE bytes must agree at value 42"
+        );
         // Pin the actual bytes: 42 LE = [0x2a, 0, 0, ..., 0]
         let mut expected = [0u8; 32];
         expected[0] = 42;
-        assert_eq!(nova_le, expected, "value 42 must serialize as [0x2a, 0, …, 0]");
+        assert_eq!(
+            nova_le, expected,
+            "value 42 must serialize as [0x2a, 0, …, 0]"
+        );
     }
 
     /// Secondary "small value" lossy bridge round-trips for values
@@ -327,15 +331,13 @@ mod tests {
             let a = ArkFq::rand(&mut rng);
             let b = ArkFq::rand(&mut rng);
             let sum_then_bridge = ark_fq_to_secondary(a + b);
-            let bridge_then_sum =
-                ark_fq_to_secondary(a) + ark_fq_to_secondary(b);
+            let bridge_then_sum = ark_fq_to_secondary(a) + ark_fq_to_secondary(b);
             assert_eq!(
                 sum_then_bridge, bridge_then_sum,
                 "bridge must commute with addition"
             );
             let prod_then_bridge = ark_fq_to_secondary(a * b);
-            let bridge_then_prod =
-                ark_fq_to_secondary(a) * ark_fq_to_secondary(b);
+            let bridge_then_prod = ark_fq_to_secondary(a) * ark_fq_to_secondary(b);
             assert_eq!(
                 prod_then_bridge, bridge_then_prod,
                 "bridge must commute with multiplication"

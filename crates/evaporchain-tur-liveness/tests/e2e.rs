@@ -11,15 +11,22 @@
 //! traffic passes; the bound is monotone-decreasing in Σ.
 
 use evaporchain_tur_liveness::{
-    mean, relative_variance_fixed, variance, tur_bound_fixed,
-    tur_check, Verdict, FIXED_POINT_SCALE,
+    mean, relative_variance_fixed, tur_bound_fixed, tur_check, variance, Verdict, FIXED_POINT_SCALE,
 };
 
 // ── Cartel and honest sample windows ─────────────────────────────────────
 /// All three cartel validators block-produce in lockstep: constant 10.
-fn cartel_window() -> Vec<u64> { vec![10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10] }
+fn cartel_window() -> Vec<u64> {
+    vec![
+        10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+    ]
+}
 /// Honest validator varies naturally around ~50 blocks/epoch.
-fn honest_window() -> Vec<u64> { vec![40, 55, 48, 63, 50, 44, 58, 51, 47, 62, 53, 46, 57, 49, 52, 60] }
+fn honest_window() -> Vec<u64> {
+    vec![
+        40, 55, 48, 63, 50, 44, 58, 51, 47, 62, 53, 46, 57, 49, 52, 60,
+    ]
+}
 
 const SIGMA: u64 = 200; // typical entropy production over 16-epoch window
 
@@ -30,16 +37,22 @@ fn cartel_constant_production_flagged_as_violation() {
     // Constant window → relative_variance = 0 → below any finite bound
     // → TUR violation. This is the formal cartel proof.
     let verdict = tur_check(&cartel_window(), SIGMA);
-    assert!(matches!(verdict, Verdict::Violation { .. }),
-        "constant block production must be flagged: {:?}", verdict);
+    assert!(
+        matches!(verdict, Verdict::Violation { .. }),
+        "constant block production must be flagged: {:?}",
+        verdict
+    );
 }
 
 #[test]
 fn honest_variable_production_passes() {
     // Naturally varying production satisfies TUR at typical sigma.
     let verdict = tur_check(&honest_window(), SIGMA);
-    assert!(matches!(verdict, Verdict::Ok { .. }),
-        "honest variable production must pass: {:?}", verdict);
+    assert!(
+        matches!(verdict, Verdict::Ok { .. }),
+        "honest variable production must pass: {:?}",
+        verdict
+    );
 }
 
 #[test]
@@ -74,8 +87,10 @@ fn bound_monotone_decreasing_in_sigma() {
     // harder for a cartel to hide as "natural noise").
     let loose = tur_bound_fixed(50);
     let tight = tur_bound_fixed(200);
-    assert!(loose > tight,
-        "bound must shrink as Σ grows: {loose} should be > {tight}");
+    assert!(
+        loose > tight,
+        "bound must shrink as Σ grows: {loose} should be > {tight}"
+    );
 }
 
 #[test]
@@ -127,16 +142,30 @@ fn cartel_detection_full_arc() {
     let cartel_a = tur_check(&cartel_window(), SIGMA);
     let cartel_b = tur_check(&cartel_window(), SIGMA);
     let cartel_c = tur_check(&cartel_window(), SIGMA);
-    let honest   = tur_check(&honest_window(), SIGMA);
+    let honest = tur_check(&honest_window(), SIGMA);
 
-    assert!(matches!(cartel_a, Verdict::Violation { .. }), "cartel A must be flagged");
-    assert!(matches!(cartel_b, Verdict::Violation { .. }), "cartel B must be flagged");
-    assert!(matches!(cartel_c, Verdict::Violation { .. }), "cartel C must be flagged");
-    assert!(matches!(honest,   Verdict::Ok { .. }),        "honest must be cleared");
+    assert!(
+        matches!(cartel_a, Verdict::Violation { .. }),
+        "cartel A must be flagged"
+    );
+    assert!(
+        matches!(cartel_b, Verdict::Violation { .. }),
+        "cartel B must be flagged"
+    );
+    assert!(
+        matches!(cartel_c, Verdict::Violation { .. }),
+        "cartel C must be flagged"
+    );
+    assert!(
+        matches!(honest, Verdict::Ok { .. }),
+        "honest must be cleared"
+    );
 
     // Structured check: all three cartel violations carry observed=0.
     for v in [cartel_a, cartel_b, cartel_c] {
-        assert!(matches!(v, Verdict::Violation { observed: 0, .. }),
-            "cartel violation must report zero relative variance");
+        assert!(
+            matches!(v, Verdict::Violation { observed: 0, .. }),
+            "cartel violation must report zero relative variance"
+        );
     }
 }

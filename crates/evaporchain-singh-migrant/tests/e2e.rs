@@ -58,14 +58,18 @@
 //! INVENTION_STACK §A5.3: Singh-Migrant (Wanderwrits).
 
 use evaporchain_singh_migrant::{
-    current_energy, effective_half_life, refund_amount,
-    DecayError, MigrantToken, TokenError, TokenId, TransferOutcome,
+    current_energy, effective_half_life, refund_amount, DecayError, MigrantToken, TokenError,
+    TokenId, TransferOutcome,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-fn tid(b: u8) -> TokenId { [b; 32] }
-fn addr(b: u8) -> [u8; 32] { [b; 32] }
+fn tid(b: u8) -> TokenId {
+    [b; 32]
+}
+fn addr(b: u8) -> [u8; 32] {
+    [b; 32]
+}
 
 /// Kula-ring params: initial=1_000, h=20, threshold=30, minted at 0.
 fn kula_mint(owner: u8) -> MigrantToken {
@@ -103,13 +107,17 @@ fn fixture_kula_ring_3_hops_vs_stillness() {
 
     // Still holder (same params, no transfer): energy at epoch 30.
     let still_energy = kula_mint(0xB0).energy_at(30).unwrap();
-    assert_eq!(still_energy, 125, "tier-2 at rest=30: energy_at_epoch(1_000,10,30)=125");
+    assert_eq!(
+        still_energy, 125,
+        "tier-2 at rest=30: energy_at_epoch(1_000,10,30)=125"
+    );
 
     // Kula ring preserves ~6.6× more energy.
     assert!(
         ring.cached_energy > still_energy * 5,
         "kula ring ({}) must vastly outperform stillness ({})",
-        ring.cached_energy, still_energy
+        ring.cached_energy,
+        still_energy
     );
 }
 
@@ -142,8 +150,15 @@ fn fixture_revisit_no_refund_no_rest_reset() {
         matches!(out, TransferOutcome::Revisit { post_energy: 925 }),
         "expected Revisit{{925}}, got {out:?}"
     );
-    assert_eq!(t.rested_at_epoch, 5, "rest counter must NOT reset on revisit");
-    assert_eq!(t.visited_wallets.len(), 2, "visited set must NOT grow on revisit");
+    assert_eq!(
+        t.rested_at_epoch, 5,
+        "rest counter must NOT reset on revisit"
+    );
+    assert_eq!(
+        t.visited_wallets.len(),
+        2,
+        "visited set must NOT grow on revisit"
+    );
     assert_eq!(t.owner, addr(0xAA));
 }
 
@@ -197,11 +212,14 @@ fn doctrine_circulating_novel_wallets_beats_stillness() {
 fn doctrine_farm_relay_attack_gets_diminishing_refunds() {
     // Near-dead token (current≈10) gets tiny refund; fresh gets full.
     let post_fresh = refund_amount(1_000, 1_000).unwrap();
-    let post_dead  = refund_amount(1_000, 10).unwrap();
+    let post_dead = refund_amount(1_000, 10).unwrap();
 
     assert_eq!(post_fresh, 1_000, "fresh token capped at initial");
-    assert_eq!(post_dead,  12,    "near-dead: 10 + 25% = 12");
-    assert!(post_fresh > post_dead * 50, "farm-relay attack yields 80× less refund");
+    assert_eq!(post_dead, 12, "near-dead: 10 + 25% = 12");
+    assert!(
+        post_fresh > post_dead * 50,
+        "farm-relay attack yields 80× less refund"
+    );
 }
 
 #[test]
@@ -223,7 +241,11 @@ fn doctrine_novel_ring_grows_visited_set_correctly() {
     assert_eq!(t.visited_wallets.len(), 3);
     // Revisit: addr[E0] is already in visited — length stays at 3.
     t.transfer(addr(0xE2), addr(0xE0), 15).unwrap();
-    assert_eq!(t.visited_wallets.len(), 3, "revisit must not grow visited set");
+    assert_eq!(
+        t.visited_wallets.len(),
+        3,
+        "revisit must not grow visited set"
+    );
 }
 
 // ── Adversarial fixture ───────────────────────────────────────────────────
@@ -270,7 +292,10 @@ fn adversarial_non_owner_transfer_rejected() {
 #[test]
 fn adversarial_self_transfer_rejected() {
     let mut t = demo_mint(0xAA);
-    assert_eq!(t.transfer(addr(0xAA), addr(0xAA), 5).unwrap_err(), TokenError::SelfTransfer);
+    assert_eq!(
+        t.transfer(addr(0xAA), addr(0xAA), 5).unwrap_err(),
+        TokenError::SelfTransfer
+    );
 }
 
 #[test]

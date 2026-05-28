@@ -96,10 +96,7 @@ fn entries_returns_id_version_pairs_sorted() {
     let mut r = EpvRegistry::new();
     r.register(ProtocolVersion::new(2, 100, 0)).unwrap();
     r.register(ProtocolVersion::new(1, 200, 5)).unwrap();
-    let pairs: Vec<(u32, u64)> = r
-        .entries()
-        .map(|(id, v)| (*id, v.seed_energy))
-        .collect();
+    let pairs: Vec<(u32, u64)> = r.entries().map(|(id, v)| (*id, v.seed_energy)).collect();
     assert_eq!(pairs, vec![(1, 200), (2, 100)]);
 }
 
@@ -203,7 +200,9 @@ fn epv_registry_serde_round_trip_preserves_versions() {
 
 #[test]
 fn prune_outcome_serde_round_trips() {
-    let p = PruneOutcome { pruned: vec![1, 2, 3] };
+    let p = PruneOutcome {
+        pruned: vec![1, 2, 3],
+    };
     let json = serde_json::to_string(&p).unwrap();
     let back: PruneOutcome = serde_json::from_str(&json).unwrap();
     assert_eq!(back, p);

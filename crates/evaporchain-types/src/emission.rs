@@ -182,27 +182,37 @@ mod tests {
     fn new_halving_schedule_accepts_positive_period() {
         let p = EmissionParams::new(
             1000,
-            EmissionSchedule::Halving { epochs_per_halving: 100 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 100,
+            },
             Some(1_000_000),
         )
         .unwrap();
         assert_eq!(p.max_supply, Some(1_000_000));
-        assert!(
-            matches!(p.schedule, EmissionSchedule::Halving { epochs_per_halving: 100 })
-        );
+        assert!(matches!(
+            p.schedule,
+            EmissionSchedule::Halving {
+                epochs_per_halving: 100
+            }
+        ));
     }
 
     #[test]
     fn new_linear_decay_accepts_positive_window() {
         let p = EmissionParams::new(
             1000,
-            EmissionSchedule::LinearDecay { decay_epochs: 10_000 },
+            EmissionSchedule::LinearDecay {
+                decay_epochs: 10_000,
+            },
             None,
         )
         .unwrap();
-        assert!(
-            matches!(p.schedule, EmissionSchedule::LinearDecay { decay_epochs: 10_000 })
-        );
+        assert!(matches!(
+            p.schedule,
+            EmissionSchedule::LinearDecay {
+                decay_epochs: 10_000
+            }
+        ));
     }
 
     #[test]
@@ -215,7 +225,9 @@ mod tests {
     fn new_rejects_zero_halving_period() {
         let err = EmissionParams::new(
             1000,
-            EmissionSchedule::Halving { epochs_per_halving: 0 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 0,
+            },
             None,
         )
         .unwrap_err();
@@ -257,7 +269,9 @@ mod tests {
     fn block_reward_halving_halves_at_each_period() {
         let p = EmissionParams::new(
             1024,
-            EmissionSchedule::Halving { epochs_per_halving: 100 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 100,
+            },
             None,
         )
         .unwrap();
@@ -274,7 +288,9 @@ mod tests {
     fn block_reward_halving_returns_zero_after_64_halvings() {
         let p = EmissionParams::new(
             1_000_000,
-            EmissionSchedule::Halving { epochs_per_halving: 1 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 1,
+            },
             None,
         )
         .unwrap();
@@ -342,7 +358,9 @@ mod tests {
     fn block_reward_halving_with_cap_clips_correctly() {
         let p = EmissionParams::new(
             1000,
-            EmissionSchedule::Halving { epochs_per_halving: 100 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 100,
+            },
             Some(1_500),
         )
         .unwrap();

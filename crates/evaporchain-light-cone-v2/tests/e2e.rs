@@ -54,15 +54,23 @@ fn id(b: u8) -> BlockId {
 
 fn build_partition_dag() -> LightCone {
     let mut lc = LightCone::new();
-    lc.insert(Block::new(id(0x00), vec![],                        1_000, 0)).unwrap();
-    lc.insert(Block::new(id(0xA1), vec![id(0x00)],                  900, 1)).unwrap();
-    lc.insert(Block::new(id(0xA2), vec![id(0xA1)],                  800, 2)).unwrap();
-    lc.insert(Block::new(id(0xA3), vec![id(0xA2)],                  700, 3)).unwrap();
-    lc.insert(Block::new(id(0xB1), vec![id(0x00)],                  900, 1)).unwrap();
-    lc.insert(Block::new(id(0xB2), vec![id(0xB1)],                  800, 2)).unwrap();
-    lc.insert(Block::new(id(0xB3), vec![id(0xB2)],                  700, 3)).unwrap();
-    lc.insert(Block::new(id(0xCC), vec![id(0xA3), id(0xB3)],        600, 4)).unwrap();
-    lc.insert(Block::new(id(0xDD), vec![id(0xCC)],                  500, 5)).unwrap();
+    lc.insert(Block::new(id(0x00), vec![], 1_000, 0)).unwrap();
+    lc.insert(Block::new(id(0xA1), vec![id(0x00)], 900, 1))
+        .unwrap();
+    lc.insert(Block::new(id(0xA2), vec![id(0xA1)], 800, 2))
+        .unwrap();
+    lc.insert(Block::new(id(0xA3), vec![id(0xA2)], 700, 3))
+        .unwrap();
+    lc.insert(Block::new(id(0xB1), vec![id(0x00)], 900, 1))
+        .unwrap();
+    lc.insert(Block::new(id(0xB2), vec![id(0xB1)], 800, 2))
+        .unwrap();
+    lc.insert(Block::new(id(0xB3), vec![id(0xB2)], 700, 3))
+        .unwrap();
+    lc.insert(Block::new(id(0xCC), vec![id(0xA3), id(0xB3)], 600, 4))
+        .unwrap();
+    lc.insert(Block::new(id(0xDD), vec![id(0xCC)], 500, 5))
+        .unwrap();
     lc
 }
 
@@ -102,8 +110,11 @@ fn causal_roots_distinct_across_all_blocks() {
     // All deeper blocks must be distinct from G's root.
     let genesis_root = roots[0]; // G: empty causal past → empty sentinel
     for (i, &root) in roots.iter().enumerate().skip(3) {
-        assert_ne!(root, genesis_root,
-            "block 0x{:02X} must have different root from genesis", all_ids[i]);
+        assert_ne!(
+            root, genesis_root,
+            "block 0x{:02X} must have different root from genesis",
+            all_ids[i]
+        );
     }
     // D's root (deepest) must be unique among all.
     let d_root = *roots.last().unwrap();
@@ -121,8 +132,10 @@ fn genesis_causal_root_is_empty_sentinel() {
     let mut lc2 = LightCone::new();
     lc2.insert(Block::new(id(0xFE), vec![], 1_000, 0)).unwrap();
     let root_fe = causal_root(&lc2, id(0xFE));
-    assert_eq!(root_g, root_fe,
-        "all genesis blocks must share the same empty-causal-past root");
+    assert_eq!(
+        root_g, root_fe,
+        "all genesis blocks must share the same empty-causal-past root"
+    );
     // And neither genesis root equals any deeper block's root.
     let root_d = causal_root(&lc, id(0xDD));
     assert_ne!(root_g, root_d);
@@ -225,12 +238,18 @@ fn adversarial_tampered_direction_rejected() {
 #[test]
 fn adversarial_path_shape_mismatch_rejected() {
     let malformed = MerklePath {
-        siblings:   vec![[0u8; 32], [1u8; 32]], // 2 siblings
-        directions: vec![false],                   // 1 direction — mismatch
+        siblings: vec![[0u8; 32], [1u8; 32]], // 2 siblings
+        directions: vec![false],              // 1 direction — mismatch
     };
     let err = verify_ancestry(&[0u8; 32], &id(0x00), &malformed).unwrap_err();
     assert!(
-        matches!(err, AncestryError::PathShapeMismatch { siblings: 2, directions: 1 }),
+        matches!(
+            err,
+            AncestryError::PathShapeMismatch {
+                siblings: 2,
+                directions: 1
+            }
+        ),
         "path shape mismatch must be rejected, got {err:?}"
     );
 }
@@ -245,6 +264,8 @@ fn adversarial_empty_cone_root_rejects_all_ancestry() {
 
     // Ancestry proof for D, but verifier has genesis root — must reject.
     let valid = verify_ancestry(&genesis_root, &id(0x00), &proof).unwrap();
-    assert!(!valid,
-        "proof verified against genesis (empty-cone) root must be false");
+    assert!(
+        !valid,
+        "proof verified against genesis (empty-cone) root must be false"
+    );
 }

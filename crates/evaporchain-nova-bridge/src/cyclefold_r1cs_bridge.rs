@@ -133,9 +133,7 @@ where
         for (row_idx, row) in rows.iter().enumerate() {
             let mut remapped: Vec<(usize, SecondaryScalar)> = row
                 .iter()
-                .map(|(coeff, ark_col)| {
-                    (remap_col(*ark_col), ark_fq_to_secondary(*coeff))
-                })
+                .map(|(coeff, ark_col)| (remap_col(*ark_col), ark_fq_to_secondary(*coeff)))
                 .collect();
             remapped.sort_by_key(|(col, _)| *col);
             for (col, coeff) in remapped {
@@ -160,9 +158,8 @@ where
 }
 
 /// CommitmentKey alias to keep call sites readable.
-pub type CK = <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<
-    GrumpkinEngine,
->>::CommitmentKey;
+pub type CK =
+    <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<GrumpkinEngine>>::CommitmentKey;
 
 /// Result of building a real, satisfied `R1CSInstance` + witness +
 /// shape + commitment key for a CF-side arkworks circuit.
@@ -236,9 +233,7 @@ where
         for (row_idx, row) in rows.iter().enumerate() {
             let mut remapped: Vec<(usize, SecondaryScalar)> = row
                 .iter()
-                .map(|(coeff, ark_col)| {
-                    (remap_col(*ark_col), ark_fq_to_secondary(*coeff))
-                })
+                .map(|(coeff, ark_col)| (remap_col(*ark_col), ark_fq_to_secondary(*coeff)))
                 .collect();
             remapped.sort_by_key(|(col, _)| *col);
             for (col, coeff) in remapped {
@@ -251,9 +246,8 @@ where
     let a_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_a), num_cons, cols);
     let b_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_b), num_cons, cols);
     let c_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_c), num_cons, cols);
-    let shape =
-        R1CSShape::<GrumpkinEngine>::new(num_cons, num_vars, num_io, a_sm, b_sm, c_sm)
-            .map_err(BridgeError::NovaShapeRejected)?;
+    let shape = R1CSShape::<GrumpkinEngine>::new(num_cons, num_vars, num_io, a_sm, b_sm, c_sm)
+        .map_err(BridgeError::NovaShapeRejected)?;
 
     // Extract assignments. arkworks puts the implicit ONE at
     // instance_assignment[0]; nova-snark's X excludes it.
@@ -273,10 +267,10 @@ where
         .collect();
 
     // Setup CK sized for the witness, commit, build instance.
-    let ck = <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<
-        GrumpkinEngine,
-    >>::setup(ck_label, num_vars)
-        .map_err(BridgeError::NovaShapeRejected)?;
+    let ck = <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<GrumpkinEngine>>::setup(
+        ck_label, num_vars,
+    )
+    .map_err(BridgeError::NovaShapeRejected)?;
     let witness = R1CSWitness::<GrumpkinEngine>::new(&shape, &w_nova)
         .map_err(BridgeError::NovaShapeRejected)?;
     let comm_w = witness.commit(&ck);
@@ -401,10 +395,8 @@ mod tests {
             &art1.shape,
             &art1.instance,
         );
-        let w_running = RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(
-            &art1.shape,
-            &art1.witness,
-        );
+        let w_running =
+            RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(&art1.shape, &art1.witness);
 
         let ro_consts = ROConstants::<GrumpkinEngine>::default();
         let pp_digest = SecondaryScalar::from(0u64);

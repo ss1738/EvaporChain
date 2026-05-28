@@ -46,11 +46,7 @@ pub fn tensor_fold_ck_hat(
     r_inv: &[EmulatedFpVar<Bn254Fq, Bn254Fr>],
 ) -> Result<GrumpkinVar, SynthesisError> {
     assert_eq!(r.len(), r_inv.len(), "r / r_inv length mismatch");
-    assert_eq!(
-        ck.len(),
-        1usize << r.len(),
-        "ck.len() must be 2^rounds"
-    );
+    assert_eq!(ck.len(), 1usize << r.len(), "ck.len() must be 2^rounds");
 
     let mut cur: Vec<GrumpkinVar> = ck
         .iter()
@@ -82,9 +78,7 @@ pub fn tensor_fold_ck_hat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ec::{
-        short_weierstrass::SWCurveConfig, CurveGroup,
-    };
+    use ark_ec::{short_weierstrass::SWCurveConfig, CurveGroup};
     use ark_ff::Field;
     use ark_r1cs_std::{alloc::AllocVar, GR1CSVar};
     use ark_relations::gr1cs::ConstraintSystem;
@@ -101,27 +95,19 @@ mod tests {
         let ck: Vec<Affine<GrumpkinConfig>> = (0..n)
             .map(|i| (g * Bn254Fq::from((i + 1) as u64)).into_affine())
             .collect();
-        let r_val: Vec<Bn254Fq> =
-            (0..rounds).map(|i| Bn254Fq::from(i as u64 + 3)).collect();
+        let r_val: Vec<Bn254Fq> = (0..rounds).map(|i| Bn254Fq::from(i as u64 + 3)).collect();
 
         // Native truth via the verified tensor-s MSM.
         let s = ipa_s_vector(&r_val);
-        let expected = ck
-            .iter()
-            .zip(s.iter())
-            .fold(Projective::<GrumpkinConfig>::from(
-                GrumpkinConfig::GENERATOR,
-            ) * Bn254Fq::from(0u64), |acc, (c, si)| {
-                acc + Projective::from(*c) * *si
-            });
+        let expected = ck.iter().zip(s.iter()).fold(
+            Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR) * Bn254Fq::from(0u64),
+            |acc, (c, si)| acc + Projective::from(*c) * *si,
+        );
 
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         let rv: Vec<_> = r_val
             .iter()
-            .map(|x| {
-                EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(*x))
-                    .unwrap()
-            })
+            .map(|x| EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(*x)).unwrap())
             .collect();
         let riv: Vec<_> = r_val
             .iter()
@@ -176,8 +162,7 @@ mod tests {
             cs.num_constraints()
         };
 
-        let (c4, c8, c16, c32) =
-            (measure(2), measure(3), measure(4), measure(5));
+        let (c4, c8, c16, c32) = (measure(2), measure(3), measure(4), measure(5));
         // Fit on the extremes in n (n = 4 .. 32).
         let a = (c32 as f64 - c4 as f64) / (32.0 - 4.0);
         let b = c4 as f64 - a * 4.0;

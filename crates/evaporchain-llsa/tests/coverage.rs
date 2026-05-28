@@ -3,8 +3,8 @@
 
 use evaporchain_epv::registry::{EpvRegistry, ProtocolVersion};
 use evaporchain_llsa::{
-    AlwaysAcceptVerifier, AlwaysRejectVerifier, Amendment, AmendmentError, LlsaProof,
-    MultiAuditorVerifier, ProofError, ProofVerifier, apply_amendment,
+    apply_amendment, AlwaysAcceptVerifier, AlwaysRejectVerifier, Amendment, AmendmentError,
+    LlsaProof, MultiAuditorVerifier, ProofError, ProofVerifier,
 };
 
 fn fresh_registry() -> EpvRegistry {
@@ -189,8 +189,10 @@ fn multi_auditor_constructor_validates_threshold() {
     assert!(MultiAuditorVerifier::new(vec![], 1).is_none());
     let single: Vec<Box<dyn ProofVerifier + Send + Sync>> = vec![Box::new(AlwaysAcceptVerifier)];
     assert!(MultiAuditorVerifier::new(single, 0).is_none());
-    let pair: Vec<Box<dyn ProofVerifier + Send + Sync>> =
-        vec![Box::new(AlwaysAcceptVerifier), Box::new(AlwaysAcceptVerifier)];
+    let pair: Vec<Box<dyn ProofVerifier + Send + Sync>> = vec![
+        Box::new(AlwaysAcceptVerifier),
+        Box::new(AlwaysAcceptVerifier),
+    ];
     assert!(MultiAuditorVerifier::new(pair, 3).is_none());
 }
 

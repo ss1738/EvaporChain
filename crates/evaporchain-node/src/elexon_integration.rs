@@ -97,7 +97,6 @@ pub fn warn_feed_miss(bmu_id: &str, epoch: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     fn mock_feed() -> ElexonOracleFeed {
         // Point at a localhost URL that will never respond — ensures

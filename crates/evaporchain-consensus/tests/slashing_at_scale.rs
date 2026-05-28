@@ -47,7 +47,10 @@ fn make_tc_with_validators(validators: &[(u64, u64)]) -> TendermintConsensus {
 fn t06_scenario_1_prevote_equivocation_slashes_and_jails() {
     let mut tc = make_tc_with_validators(&[(1, 1000), (2, 5_000), (3, 1000), (4, 1000)]);
     let initial_stake = tc.validator_set().get(2).unwrap().stake;
-    assert_eq!(initial_stake, 5_000, "pre-condition: validator 2 has 5_000 stake");
+    assert_eq!(
+        initial_stake, 5_000,
+        "pre-condition: validator 2 has 5_000 stake"
+    );
 
     let hash_a = [0xAAu8; 32];
     let hash_b = [0xBBu8; 32];
@@ -80,7 +83,10 @@ fn t06_scenario_1_prevote_equivocation_slashes_and_jails() {
         .validator_set()
         .get(2)
         .expect("validator 2 must remain in set — removal is governance-only");
-    assert_eq!(v.stake, 0, "SanovSlash: stake must be zeroed after equivocation");
+    assert_eq!(
+        v.stake, 0,
+        "SanovSlash: stake must be zeroed after equivocation"
+    );
     assert!(v.jailed, "equivocating validator must be jailed");
     assert!(
         v.total_slashed >= initial_stake,
@@ -127,7 +133,10 @@ fn t06_scenario_2_precommit_equivocation_slashes_and_jails() {
         .validator_set()
         .get(3)
         .expect("validator 3 must remain in set");
-    assert_eq!(v.stake, 0, "SanovSlash: precommit equivocator stake must be 0");
+    assert_eq!(
+        v.stake, 0,
+        "SanovSlash: precommit equivocator stake must be 0"
+    );
     assert!(v.jailed, "precommit equivocator must be jailed");
 }
 
@@ -155,10 +164,7 @@ fn t06_scenario_3_mev_missing_refund_slash_fires_with_flag_enabled() {
         "stake must be unchanged when flag is off"
     );
     // Violation counter must still be present (was not consumed).
-    assert_eq!(
-        *tc.mev_missing_refund_violations.get(&2).unwrap_or(&0),
-        100
-    );
+    assert_eq!(*tc.mev_missing_refund_violations.get(&2).unwrap_or(&0), 100);
 
     // Enable the governance flag.
     tc.governance_set_param("crooks_mev_missing_refund_slash_enabled", "true")
@@ -174,7 +180,10 @@ fn t06_scenario_3_mev_missing_refund_slash_fires_with_flag_enabled() {
     );
     let (slashed_id, slash_amount) = slashed_pairs[0];
     assert_eq!(slashed_id, 2);
-    assert!(slash_amount > 0, "slash amount must be > 0 for 100 violations");
+    assert!(
+        slash_amount > 0,
+        "slash amount must be > 0 for 100 violations"
+    );
 
     let stake_after = tc.validator_set().get(2).unwrap().stake;
     assert_eq!(
@@ -216,8 +225,14 @@ fn t06_scenario_4_downtime_slash_proportional_to_missed_blocks() {
         let mut tc = make_tc_with_validators(&[(1, INITIAL_STAKE), (2, 1000)]);
         let slash_low = tc.sanov_slash_downtime(1, 2, WINDOW);
         let v = tc.validator_set().get(1).unwrap();
-        assert!(slash_low > 0 || v.stake == INITIAL_STAKE, "2 misses may produce 0 slash (KL too small)");
-        assert!(!v.jailed, "below jail threshold (2 misses): must not be jailed");
+        assert!(
+            slash_low > 0 || v.stake == INITIAL_STAKE,
+            "2 misses may produce 0 slash (KL too small)"
+        );
+        assert!(
+            !v.jailed,
+            "below jail threshold (2 misses): must not be jailed"
+        );
     }
 
     // Medium misses: above jail threshold — slash fires + jailed.
@@ -283,13 +298,16 @@ fn t06_scenario_5_multi_validator_downtime_cascade_conservation() {
     let mut tc = make_tc_with_validators(&initial_stakes);
 
     // Slash 3 validators for different miss counts.
-    let slash_v2 = tc.sanov_slash_downtime(2, 10, WINDOW);  // 5%
-    let slash_v3 = tc.sanov_slash_downtime(3, 80, WINDOW);  // 40%
+    let slash_v2 = tc.sanov_slash_downtime(2, 10, WINDOW); // 5%
+    let slash_v3 = tc.sanov_slash_downtime(3, 80, WINDOW); // 40%
     let slash_v4 = tc.sanov_slash_downtime(4, 190, WINDOW); // 95%
 
     // No stake goes negative.
     for &(id, _) in &initial_stakes {
-        let v = tc.validator_set().get(id).expect("validator must still be in set");
+        let v = tc
+            .validator_set()
+            .get(id)
+            .expect("validator must still be in set");
         // stake is u64 — type system prevents negative; but verify via conservation.
         let _ = v.stake;
     }
@@ -299,9 +317,18 @@ fn t06_scenario_5_multi_validator_downtime_cascade_conservation() {
     let v3_reduction = initial_stakes[2].1 - tc.validator_set().get(3).unwrap().stake;
     let v4_reduction = initial_stakes[3].1 - tc.validator_set().get(4).unwrap().stake;
 
-    assert_eq!(v2_reduction, slash_v2, "validator 2 stake delta must equal reported slash");
-    assert_eq!(v3_reduction, slash_v3, "validator 3 stake delta must equal reported slash");
-    assert_eq!(v4_reduction, slash_v4, "validator 4 stake delta must equal reported slash");
+    assert_eq!(
+        v2_reduction, slash_v2,
+        "validator 2 stake delta must equal reported slash"
+    );
+    assert_eq!(
+        v3_reduction, slash_v3,
+        "validator 3 stake delta must equal reported slash"
+    );
+    assert_eq!(
+        v4_reduction, slash_v4,
+        "validator 4 stake delta must equal reported slash"
+    );
 
     // Unslashed validators (1 and 5) are untouched.
     assert_eq!(

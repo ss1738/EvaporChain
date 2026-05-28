@@ -31,8 +31,9 @@
 use evaporchain_epv::{EpvRegistry, ProtocolVersion};
 use evaporchain_llsa::amendment::{Amendment, AmendmentError};
 use evaporchain_llsa::apply::apply_amendment;
-use evaporchain_llsa::proof::{AlwaysAcceptVerifier, AlwaysRejectVerifier, LlsaProof,
-                               MultiAuditorVerifier, ProofError};
+use evaporchain_llsa::proof::{
+    AlwaysAcceptVerifier, AlwaysRejectVerifier, LlsaProof, MultiAuditorVerifier, ProofError,
+};
 
 const V0: u32 = 0;
 const V1: u32 = 1;
@@ -93,7 +94,10 @@ fn three_auditor_threshold_met_applies_amendment() {
     apply_amendment(&mut reg, &amendment, INVARIANT, 500_000, 1, &verifier)
         .expect("2-of-3 threshold met — amendment must apply");
 
-    assert!(reg.contains(V1), "v1 must be registered after successful amendment");
+    assert!(
+        reg.contains(V1),
+        "v1 must be registered after successful amendment"
+    );
     assert!(reg.contains(V0), "v0 genesis entry preserved");
     assert_eq!(reg.len(), 2);
 }
@@ -122,7 +126,10 @@ fn three_auditor_threshold_missed_rejects_amendment() {
         matches!(err, AmendmentError::Proof(ProofError::VerifierRejected(_))),
         "expected Proof(VerifierRejected), got {err:?}"
     );
-    assert!(!reg.contains(V1), "v1 must NOT be registered after rejection");
+    assert!(
+        !reg.contains(V1),
+        "v1 must NOT be registered after rejection"
+    );
 }
 
 // ── Fixture 3: from_version absent ────────────────────────────────────────
@@ -179,8 +186,15 @@ fn duplicate_to_version_rejected() {
 fn sequential_amendments_build_version_chain() {
     let mut reg = genesis_registry();
 
-    apply_amendment(&mut reg, &v0_to_v1(), INVARIANT, 500_000, 1, &AlwaysAcceptVerifier)
-        .unwrap();
+    apply_amendment(
+        &mut reg,
+        &v0_to_v1(),
+        INVARIANT,
+        500_000,
+        1,
+        &AlwaysAcceptVerifier,
+    )
+    .unwrap();
 
     let descriptor = b"second-upgrade".to_vec();
     let mut v1v2 = Amendment {
@@ -196,8 +210,15 @@ fn sequential_amendments_build_version_chain() {
     };
     v1v2.proof.bound_amendment_hash = v1v2.hash();
 
-    apply_amendment(&mut reg, &v1v2, INVARIANT, 400_000, 2, &AlwaysAcceptVerifier)
-        .unwrap();
+    apply_amendment(
+        &mut reg,
+        &v1v2,
+        INVARIANT,
+        400_000,
+        2,
+        &AlwaysAcceptVerifier,
+    )
+    .unwrap();
 
     assert!(reg.contains(V0));
     assert!(reg.contains(V1));

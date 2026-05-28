@@ -15,13 +15,16 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use evaporchain_paymaster::{
-    generate_keypair_to_file, load_keypair_from_file, InnerVariant, Paymaster,
-    PaymasterConfig, PaymasterInfo, SponsorshipRequest, SponsorshipResponse,
+    generate_keypair_to_file, load_keypair_from_file, InnerVariant, Paymaster, PaymasterConfig,
+    PaymasterInfo, SponsorshipRequest, SponsorshipResponse,
 };
 use tracing::{error, info};
 
 #[derive(Parser, Debug)]
-#[command(name = "evaporchain-paymaster", about = "EvaporChain paymaster sponsorship service")]
+#[command(
+    name = "evaporchain-paymaster",
+    about = "EvaporChain paymaster sponsorship service"
+)]
 struct Args {
     /// Path to the hybrid keypair JSON file. Generated on first run if
     /// missing AND --generate-keypair-if-missing is set.
@@ -195,9 +198,7 @@ async fn main() -> anyhow::Result<()> {
         "per-line" | "per_line" => evaporchain_paymaster::AuditFsyncMode::PerLine,
         "none" => evaporchain_paymaster::AuditFsyncMode::None,
         other => {
-            anyhow::bail!(
-                "--audit-log-fsync: unknown mode '{other}' (valid: per-line, none)"
-            );
+            anyhow::bail!("--audit-log-fsync: unknown mode '{other}' (valid: per-line, none)");
         }
     };
     let config = PaymasterConfig {
@@ -317,11 +318,7 @@ async fn main() -> anyhow::Result<()> {
 /// drift, logs at `error!` so the operator's log alerting can fire.
 /// Metrics (`drift_detections_total`, `last_chain_nonce`,
 /// `last_reconcile_unix_ms`) are updated inside `run_one_cycle`.
-fn spawn_reconcile_poller(
-    paymaster: Arc<Paymaster>,
-    chain_rpc_url: String,
-    interval_secs: u64,
-) {
+fn spawn_reconcile_poller(paymaster: Arc<Paymaster>, chain_rpc_url: String, interval_secs: u64) {
     use evaporchain_paymaster::reconcile::{run_one_cycle, NonceAlignment};
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
@@ -369,9 +366,8 @@ fn spawn_reconcile_poller(
 #[cfg(unix)]
 fn spawn_sighup_listener(paymaster: Arc<Paymaster>) {
     tokio::spawn(async move {
-        let mut sighup = match tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::hangup(),
-        ) {
+        let mut sighup = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+        {
             Ok(s) => s,
             Err(e) => {
                 error!(error = %e, "failed to register SIGHUP handler — audit log rotation will require restart");
@@ -491,6 +487,11 @@ impl IntoResponse for AppError {
             AppError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             AppError::Io(_) => StatusCode::SERVICE_UNAVAILABLE,
         };
-        (status, [(axum::http::header::CONTENT_TYPE, "application/json")], body).into_response()
+        (
+            status,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body,
+        )
+            .into_response()
     }
 }

@@ -706,7 +706,8 @@ mod tests {
 
     #[test]
     fn test_from_json_error_covers_lines_31_33() {
-        let e: serde_json::Error = serde_json::from_str::<serde_json::Value>("{invalid").unwrap_err();
+        let e: serde_json::Error =
+            serde_json::from_str::<serde_json::Value>("{invalid").unwrap_err();
         let re: ReputationError = ReputationError::from(e);
         assert!(re.to_string().contains("json error"));
     }
@@ -773,7 +774,9 @@ mod tests {
     fn test_flag_with_note_on_existing_record_covers_line_263() {
         let mut store = ReputationStore::new();
         store.flag("0xaddr", RiskFlag::FreshWallet, None).unwrap();
-        store.flag("0xaddr", RiskFlag::DustAttack, Some("scanner alert")).unwrap();
+        store
+            .flag("0xaddr", RiskFlag::DustAttack, Some("scanner alert"))
+            .unwrap();
         let rec = store.get("0xaddr").unwrap();
         assert_eq!(rec.notes.len(), 1);
         assert_eq!(rec.notes[0], "scanner alert");
@@ -793,7 +796,9 @@ mod tests {
     #[test]
     fn test_score_to_trust_neutral_covers_line_436() {
         let mut store = ReputationStore::new();
-        store.flag("0xaddr", RiskFlag::CommunityReport, None).unwrap(); // severity 4
+        store
+            .flag("0xaddr", RiskFlag::CommunityReport, None)
+            .unwrap(); // severity 4
         let rec = store.get("0xaddr").unwrap();
         assert_eq!(rec.trust_level, TrustLevel::Neutral);
         assert_eq!(rec.risk_score, 4);

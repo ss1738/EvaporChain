@@ -159,7 +159,10 @@ fn over_transfer_rejected() {
     let err = book
         .transfer(&LOC_A.to_vec(), H1, addr(OCTOPUS), addr(BALANCE), 600)
         .unwrap_err();
-    assert!(matches!(err, BookError::Insufficient { available: 500, .. }));
+    assert!(matches!(
+        err,
+        BookError::Insufficient { available: 500, .. }
+    ));
 }
 
 #[test]
@@ -175,7 +178,10 @@ fn transfer_from_nonexistent_entry_rejected() {
 fn location_over_cap_cannot_enter_book() {
     let big = vec![b'X'; MAX_DELIVERY_LOCATION_LEN + 1];
     let err = HbctToken::new(big, 200, 50, addr(1), 0).unwrap_err();
-    assert!(matches!(err, evaporchain_hbct::TokenError::LocationTooLong { .. }));
+    assert!(matches!(
+        err,
+        evaporchain_hbct::TokenError::LocationTooLong { .. }
+    ));
 }
 
 #[test]

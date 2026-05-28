@@ -61,8 +61,8 @@ fn run(neptune_path: PathBuf) -> Result<(), String> {
         "check-neptune-parity: loading neptune dump from {} …",
         neptune_path.display()
     );
-    let m_inv = extract_mds_inverse_matrix(&neptune_path)
-        .map_err(|e| format!("extract m_inv: {e}"))?;
+    let m_inv =
+        extract_mds_inverse_matrix(&neptune_path).map_err(|e| format!("extract m_inv: {e}"))?;
     let neptune_crc = extract_compressed_round_constants(&neptune_path)
         .map_err(|e| format!("extract crc: {e}"))?;
 
@@ -100,7 +100,10 @@ fn run(neptune_path: PathBuf) -> Result<(), String> {
         let theirs_le = neptune_crc[i].into_bigint().to_bytes_le();
         eprintln!("  ours[{i}]    LE: {ours_le:?}");
         eprintln!("  theirs[{i}]  LE: {theirs_le:?}");
-        return Err(format!("byte parity FAILED on {} entries", mismatches.len()));
+        return Err(format!(
+            "byte parity FAILED on {} entries",
+            mismatches.len()
+        ));
     }
 
     println!(

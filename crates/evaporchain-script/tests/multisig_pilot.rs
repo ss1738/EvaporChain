@@ -43,10 +43,8 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("Multisig failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("Multisig failed to compile: {e:?}"))
+    let ast = parser::parse(SOURCE).unwrap_or_else(|e| panic!("Multisig failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("Multisig failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -511,9 +509,7 @@ fn on_evaporate_without_execute_marks_expired() {
         "is_pending must be false after expiration"
     );
     assert!(
-        evap.events
-            .iter()
-            .any(|e| e.contains("expired")),
+        evap.events.iter().any(|e| e.contains("expired")),
         "evaporate must emit expired event"
     );
 }

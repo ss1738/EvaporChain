@@ -22,7 +22,7 @@ pub fn g1_raw_to_eip2537(raw: &[u8]) -> Option<[u8; 128]> {
         return None;
     }
     let mut out = [0u8; 128];
-    out[16..64].copy_from_slice(&raw[0..48]);  // X
+    out[16..64].copy_from_slice(&raw[0..48]); // X
     out[80..128].copy_from_slice(&raw[48..96]); // Y
     Some(out)
 }
@@ -107,13 +107,13 @@ mod tests {
     #[test]
     fn g2_raw_to_eip2537_routes_coordinates_correctly() {
         let mut raw = [0u8; 192];
-        raw[0] = 0x11;   // X.c1 first byte → EIP2537 [80]
-        raw[48] = 0x22;  // X.c0 first byte → EIP2537 [16]
-        raw[96] = 0x33;  // Y.c1 first byte → EIP2537 [208]
+        raw[0] = 0x11; // X.c1 first byte → EIP2537 [80]
+        raw[48] = 0x22; // X.c0 first byte → EIP2537 [16]
+        raw[96] = 0x33; // Y.c1 first byte → EIP2537 [208]
         raw[144] = 0x44; // Y.c0 first byte → EIP2537 [144]
         let enc = g2_raw_to_eip2537(&raw).unwrap();
-        assert_eq!(enc[16], 0x22,  "X.c0 at [16]");
-        assert_eq!(enc[80], 0x11,  "X.c1 at [80]");
+        assert_eq!(enc[16], 0x22, "X.c0 at [16]");
+        assert_eq!(enc[80], 0x11, "X.c1 at [80]");
         assert_eq!(enc[144], 0x44, "Y.c0 at [144]");
         assert_eq!(enc[208], 0x33, "Y.c1 at [208]");
     }

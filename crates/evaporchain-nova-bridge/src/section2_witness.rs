@@ -38,15 +38,14 @@ use crate::l_u_secondary_extract::ExtractError;
 use crate::neptune_permutation_gadget::{
     params_from_dump_path, params_from_embedded, NeptuneParams,
 };
-use crate::recursive_snark_fixture::{TrivialIncrementCircuit, Scalar1, E1, E2};
+use crate::recursive_snark_fixture::{Scalar1, TrivialIncrementCircuit, E1, E2};
 use crate::scalar_adapter::{primary_to_ark_fr, secondary_to_ark_fr_lossy, SecondaryScalar};
 use ark_bn254::Fr as ArkFr;
 use ff::PrimeField;
-use nova_snark::{
-    nova::RecursiveSNARK,
-    provider::bn256_grumpkin::grumpkin::Affine as GrumpkinAffine,
-};
 use group::GroupEncoding;
+use nova_snark::{
+    nova::RecursiveSNARK, provider::bn256_grumpkin::grumpkin::Affine as GrumpkinAffine,
+};
 use serde_json::Value;
 
 /// All witness data required by the Section 2 in-circuit Neptune hash check.
@@ -267,11 +266,9 @@ fn extract_primary_hex(parent: &Value, field_name: &str) -> Result<ArkFr, Extrac
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes_le);
     let repr = <PrimaryScalar as PrimeField>::Repr::from(arr);
-    let s = PrimaryScalar::from_repr_vartime(repr).ok_or_else(|| {
-        ExtractError::HexParseFailed {
-            index: 0,
-            reason: format!("{field_name}: bytes not a canonical primary scalar"),
-        }
+    let s = PrimaryScalar::from_repr_vartime(repr).ok_or_else(|| ExtractError::HexParseFailed {
+        index: 0,
+        reason: format!("{field_name}: bytes not a canonical primary scalar"),
     })?;
     Ok(primary_to_ark_fr(s))
 }
@@ -292,11 +289,9 @@ fn parse_secondary_hex(hex: &str, index: usize) -> Result<SecondaryScalar, Extra
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes_le);
     let repr = <SecondaryScalar as PrimeField>::Repr::from(arr);
-    SecondaryScalar::from_repr_vartime(repr).ok_or_else(|| {
-        ExtractError::HexParseFailed {
-            index,
-            reason: "bytes not a canonical secondary scalar".to_string(),
-        }
+    SecondaryScalar::from_repr_vartime(repr).ok_or_else(|| ExtractError::HexParseFailed {
+        index,
+        reason: "bytes not a canonical secondary scalar".to_string(),
     })
 }
 
@@ -317,8 +312,8 @@ mod tests {
                 pre_sparse_mds: vec![vec![ArkFr::zero(); 3]; 3],
                 sparse_matrices: vec![
                     NeptuneSparseMatrix::new(
-                    vec![ArkFr::zero(); 3],
-                    vec![ArkFr::zero(); 2],
+                        vec![ArkFr::zero(); 3],
+                        vec![ArkFr::zero(); 2],
                     );
                     57
                 ],
@@ -353,7 +348,11 @@ mod tests {
         let seq = w.absorb_seq(2, &z0, &zi);
         // pp_digest + num_steps + z0[0] + zi[0] + W_x + W_y + E_x + E_y + u
         // + x0_limbs x 4 + x1_limbs x 4 + ri_primary = 18
-        assert_eq!(seq.len(), 18, "absorb sequence must be 18 elements for z_arity=1");
+        assert_eq!(
+            seq.len(),
+            18,
+            "absorb sequence must be 18 elements for z_arity=1"
+        );
     }
 
     #[test]
@@ -408,7 +407,11 @@ mod tests {
         // LE: first byte 0x01, rest 0x00 -> limb[0]=1, rest=0
         let one_hex = "0100000000000000000000000000000000000000000000000000000000000000";
         let limbs = secondary_hex_to_limbs(Some(one_hex), 0).expect("one limbs");
-        assert_eq!(limbs[0], ArkFr::from(1u64), "limb[0] must be 1 for scalar=1");
+        assert_eq!(
+            limbs[0],
+            ArkFr::from(1u64),
+            "limb[0] must be 1 for scalar=1"
+        );
         assert_eq!(limbs[1], ArkFr::from(0u64));
         assert_eq!(limbs[2], ArkFr::from(0u64));
         assert_eq!(limbs[3], ArkFr::from(0u64));
@@ -432,8 +435,8 @@ mod tests {
         // [01, 0, ..., 0, 02, 0, ..., 0, 03, 0, ..., 0, 04, 0, ..., 0]
         // ⇒ limb[0]=1, limb[1]=2, limb[2]=3, limb[3]=4
         let mut bytes = [0u8; 32];
-        bytes[0]  = 0x01;
-        bytes[8]  = 0x02;
+        bytes[0] = 0x01;
+        bytes[8] = 0x02;
         bytes[16] = 0x03;
         bytes[24] = 0x04;
         let hex = hex::encode(bytes);
@@ -451,8 +454,10 @@ mod tests {
         match err {
             ExtractError::HexParseFailed { index, reason } => {
                 assert_eq!(index, 4);
-                assert!(reason.contains("hex") || reason.contains("byte"),
-                    "reason should mention hex/byte: {reason}");
+                assert!(
+                    reason.contains("hex") || reason.contains("byte"),
+                    "reason should mention hex/byte: {reason}"
+                );
             }
             other => panic!("expected HexParseFailed, got {other:?}"),
         }
@@ -461,12 +466,14 @@ mod tests {
     #[test]
     fn parse_secondary_hex_wrong_length_errors() {
         // Valid hex but only 8 bytes (16 chars).
-        let err = parse_secondary_hex("deadbeefdeadbeef", 2)
-            .expect_err("wrong length must fail");
+        let err = parse_secondary_hex("deadbeefdeadbeef", 2).expect_err("wrong length must fail");
         match err {
             ExtractError::HexParseFailed { index, reason } => {
                 assert_eq!(index, 2);
-                assert!(reason.contains("32 bytes"), "reason should mention 32 bytes: {reason}");
+                assert!(
+                    reason.contains("32 bytes"),
+                    "reason should mention 32 bytes: {reason}"
+                );
             }
             other => panic!("expected HexParseFailed, got {other:?}"),
         }
@@ -477,7 +484,7 @@ mod tests {
         let zero_hex_prefixed = format!("0x{}", "00".repeat(32));
         let zero_hex_bare = "00".repeat(32);
         let p_prefixed = parse_secondary_hex(&zero_hex_prefixed, 0).expect("prefixed");
-        let p_bare     = parse_secondary_hex(&zero_hex_bare,     0).expect("bare");
+        let p_bare = parse_secondary_hex(&zero_hex_bare, 0).expect("bare");
         // Both must produce the same canonical scalar.
         assert_eq!(p_prefixed, p_bare);
     }
@@ -491,7 +498,11 @@ mod tests {
         assert_eq!(seq.len(), 2 + 4 + 1 + 4 + 4 + 1);
         assert_eq!(seq[0], ArkFr::from(1u64), "pp_digest");
         assert_eq!(seq[1], ArkFr::from(7u64), "num_steps=7");
-        assert_eq!(seq.last().copied().unwrap(), ArkFr::from(15u64), "ri_primary tail");
+        assert_eq!(
+            seq.last().copied().unwrap(),
+            ArkFr::from(15u64),
+            "ri_primary tail"
+        );
     }
 
     #[test]
@@ -515,7 +526,11 @@ mod tests {
         let w = zero_witness();
         let seq = w.absorb_seq(0, &[ArkFr::from(0u64)], &[ArkFr::from(0u64)]);
         assert_eq!(seq.len(), 18);
-        assert_eq!(seq[1], ArkFr::from(0u64), "num_steps=0 must be encoded as Fr::zero");
+        assert_eq!(
+            seq[1],
+            ArkFr::from(0u64),
+            "num_steps=0 must be encoded as Fr::zero"
+        );
     }
 
     /// Full end-to-end integration test. Requires neptune constants dump.
@@ -542,6 +557,10 @@ mod tests {
             w.comm_W_x != ArkFr::zero() || w.comm_W_y != ArkFr::zero(),
             "real fixture must produce a non-trivial comm_W point"
         );
-        assert_ne!(w.ri_primary, ArkFr::zero(), "ri_primary non-zero after folding");
+        assert_ne!(
+            w.ri_primary,
+            ArkFr::zero(),
+            "ri_primary non-zero after folding"
+        );
     }
 }

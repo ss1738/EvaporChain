@@ -512,7 +512,9 @@ mod tests {
         // and chain-filter paths, not the BLS attestation path.
         // Use the unsafe variant so the structurally-valid fixture
         // (no real BLS sigs) is admitted.
-        assert!(registry.register_unsafe_no_attestation(proof.clone()).is_ok());
+        assert!(registry
+            .register_unsafe_no_attestation(proof.clone())
+            .is_ok());
         assert_eq!(registry.bridge_count(), 1);
         assert!(registry.register_unsafe_no_attestation(proof).is_err());
     }
@@ -770,7 +772,10 @@ mod tests {
         // Second register with same nonce must be rejected
         let result = reg.register_unsafe_no_attestation(proof.clone());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "bridge nonce already processed (replay)");
+        assert_eq!(
+            result.unwrap_err(),
+            "bridge nonce already processed (replay)"
+        );
     }
 
     #[test]
@@ -783,7 +788,10 @@ mod tests {
         // attestation_valid will be false → overall_valid = false → Err
         let result = reg.register(proof);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "ghost bridge proof verification failed");
+        assert_eq!(
+            result.unwrap_err(),
+            "ghost bridge proof verification failed"
+        );
     }
 
     #[test]

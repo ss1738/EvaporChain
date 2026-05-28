@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn t1_20_shard_for_object_is_big_endian() {
         let config = ShardConfig::new(256); // mask = 0xFF → uses low byte after BE read
-        // id = 0x12 0x34 ... — BE reads as 0x1234; masked & 0xFF = 0x34 = 52.
+                                            // id = 0x12 0x34 ... — BE reads as 0x1234; masked & 0xFF = 0x34 = 52.
         let id = [
             0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ];

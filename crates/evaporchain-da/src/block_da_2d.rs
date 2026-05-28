@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn t1_20_availability_recovery_at_exact_k_threshold() {
         let extended_dim = 8; // k = 4
-        // Exactly k=4 unique rows (and 4 unique cols) — must be true.
+                              // Exactly k=4 unique rows (and 4 unique cols) — must be true.
         let at_k: Vec<CellSampleResult> = (0..4)
             .map(|i| CellSampleResult {
                 row: i,

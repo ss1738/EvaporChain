@@ -109,7 +109,11 @@ fn every_redirect_kind_has_distinct_flow_or_known_overlap() {
         if (*from, *to) == mev_flow {
             continue;
         }
-        assert_eq!(kinds.len(), 1, "flow {from:?}→{to:?} has overlapping kinds: {kinds:?}");
+        assert_eq!(
+            kinds.len(),
+            1,
+            "flow {from:?}→{to:?} has overlapping kinds: {kinds:?}"
+        );
     }
 }
 
@@ -148,10 +152,18 @@ fn redirect_serde_round_trips() {
 fn sequenced_redirects_remain_conservation_clean() {
     let mut acc = EnergyAccumulator::new(1_000, 1_000, 0, 0);
     let pre = acc.total();
-    EnergyRedirect::new(RedirectKind::Slash, 200).apply(&mut acc).unwrap();
-    EnergyRedirect::new(RedirectKind::SlashSettle, 200).apply(&mut acc).unwrap();
-    EnergyRedirect::new(RedirectKind::MevBurn, 50).apply(&mut acc).unwrap();
-    EnergyRedirect::new(RedirectKind::Demurrage, 25).apply(&mut acc).unwrap();
+    EnergyRedirect::new(RedirectKind::Slash, 200)
+        .apply(&mut acc)
+        .unwrap();
+    EnergyRedirect::new(RedirectKind::SlashSettle, 200)
+        .apply(&mut acc)
+        .unwrap();
+    EnergyRedirect::new(RedirectKind::MevBurn, 50)
+        .apply(&mut acc)
+        .unwrap();
+    EnergyRedirect::new(RedirectKind::Demurrage, 25)
+        .apply(&mut acc)
+        .unwrap();
     assert_eq!(acc.total(), pre);
 }
 
@@ -171,7 +183,11 @@ fn decay_violation_carries_diagnostic_fields() {
     let err = ConservationCheck::decay_step(&before, &after, 100, lambda).unwrap_err();
     match err {
         ConservationViolation::DecayExceededLambda {
-            before, after, epochs, half_life, ..
+            before,
+            after,
+            epochs,
+            half_life,
+            ..
         } => {
             assert_eq!(before, 1_000);
             assert_eq!(after, 100);
@@ -194,7 +210,10 @@ fn redirect_then_decay_audited_by_block_step() {
 
 #[test]
 fn conservation_violation_displays() {
-    let e = ConservationViolation::RedirectChangedTotal { before: 100, after: 50 };
+    let e = ConservationViolation::RedirectChangedTotal {
+        before: 100,
+        after: 50,
+    };
     let s = e.to_string();
     assert!(s.contains("100"));
     assert!(s.contains("50"));

@@ -112,7 +112,12 @@ impl RefreshEngine {
                 .original_data
                 .clone()
                 .ok_or_else(|| RefreshError::DataNotAvailable(hex::encode(object_id)))?;
-            (ghost.owner, ghost.evaporated_at, ghost.original_half_life, data)
+            (
+                ghost.owner,
+                ghost.evaporated_at,
+                ghost.original_half_life,
+                data,
+            )
         };
 
         // All validation passed — safe to destructively remove the ghost.

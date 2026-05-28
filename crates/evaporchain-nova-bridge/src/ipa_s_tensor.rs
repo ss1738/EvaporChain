@@ -79,10 +79,8 @@ mod tests {
         let n = 1usize << rounds;
 
         // Distinct, non-trivial bases ckᵢ = (i+1)·G.
-        let ck: Vec<GProj> =
-            (0..n).map(|i| g * Bn254Fq::from((i + 1) as u64)).collect();
-        let r: Vec<Bn254Fq> =
-            (0..rounds).map(|_| Bn254Fq::rand(&mut rng)).collect();
+        let ck: Vec<GProj> = (0..n).map(|i| g * Bn254Fq::from((i + 1) as u64)).collect();
+        let r: Vec<Bn254Fq> = (0..rounds).map(|_| Bn254Fq::rand(&mut rng)).collect();
 
         // Path 1: tensor MSM.
         let s = ipa_s_vector(&r);

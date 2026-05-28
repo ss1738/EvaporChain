@@ -84,7 +84,11 @@ fn output_for_unknown_state_returns_unknown_state_error() {
 #[test]
 fn machine_error_displays_all_variants() {
     let u = MachineError::UnknownState(7).to_string();
-    let t = MachineError::UnknownTransition { state: 1, symbol: 2 }.to_string();
+    let t = MachineError::UnknownTransition {
+        state: 1,
+        symbol: 2,
+    }
+    .to_string();
     let o = MachineError::OutOfAlphabet(99).to_string();
     assert!(u.contains("7"), "got: {u}");
     assert!(t.contains("1") && t.contains("2"), "got: {t}");
@@ -119,11 +123,7 @@ fn reconstruct_unconditional_multi_alphabet_pmf_length() {
 fn reconstruct_unconditional_creates_self_loops_for_every_symbol() {
     let m = reconstruct_unconditional(&[10, 20, 30]).unwrap();
     for sym in 0..3 {
-        assert_eq!(
-            m.next_state(0, sym),
-            Some(0),
-            "self-loop on symbol {sym}"
-        );
+        assert_eq!(m.next_state(0, sym), Some(0), "self-loop on symbol {sym}");
     }
     // Symbols past the alphabet have no transition.
     assert_eq!(m.next_state(0, 3), None);
@@ -208,7 +208,11 @@ fn doctrine_constants_pin_canonical_values() {
 fn reconstruct_error_displays_all_variants() {
     let e = ReconstructError::EmptyStream.to_string();
     let a = ReconstructError::EmptyAlphabet.to_string();
-    let s = ReconstructError::SymbolOutOfAlphabet { got: 7, alphabet_size: 3 }.to_string();
+    let s = ReconstructError::SymbolOutOfAlphabet {
+        got: 7,
+        alphabet_size: 3,
+    }
+    .to_string();
     let d = ReconstructError::DistributionFailed("oops".into()).to_string();
     assert!(e.contains("empty"), "got: {e}");
     assert!(a.contains("alphabet"), "got: {a}");
@@ -218,9 +222,18 @@ fn reconstruct_error_displays_all_variants() {
 
 #[test]
 fn reconstruct_error_eq_discriminates() {
-    let a = ReconstructError::SymbolOutOfAlphabet { got: 1, alphabet_size: 2 };
-    let b = ReconstructError::SymbolOutOfAlphabet { got: 1, alphabet_size: 2 };
-    let c = ReconstructError::SymbolOutOfAlphabet { got: 1, alphabet_size: 3 };
+    let a = ReconstructError::SymbolOutOfAlphabet {
+        got: 1,
+        alphabet_size: 2,
+    };
+    let b = ReconstructError::SymbolOutOfAlphabet {
+        got: 1,
+        alphabet_size: 2,
+    };
+    let c = ReconstructError::SymbolOutOfAlphabet {
+        got: 1,
+        alphabet_size: 3,
+    };
     assert_eq!(a, b);
     assert_ne!(a, c);
     assert_ne!(a, ReconstructError::EmptyStream);

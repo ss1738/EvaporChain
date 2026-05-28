@@ -38,7 +38,7 @@ use evaporchain_energy_kernel::{ChainLambda, Lambda};
 const INITIAL_STAKE: u64 = 1_000_000;
 const HALF_LIFE: u64 = 100;
 const BLOCK_INTERVAL: u64 = 10;
-const REFRESH_PER_BLOCK: u64 = 7;   // chosen so ~10 refreshes/half-life keep A alive
+const REFRESH_PER_BLOCK: u64 = 7; // chosen so ~10 refreshes/half-life keep A alive
 const BETA_MB: u64 = 2_000;
 
 fn cl() -> ChainLambda {
@@ -50,7 +50,12 @@ fn cl() -> ChainLambda {
 /// Simulate `n_blocks` block-production events at uniform interval,
 /// starting from `stake.last_touched_epoch`. Each event: decay to
 /// block epoch → refresh. Returns the final stake.
-fn active_session(mut stake: ValidatorStake, from_epoch: u64, to_epoch: u64, interval: u64) -> ValidatorStake {
+fn active_session(
+    mut stake: ValidatorStake,
+    from_epoch: u64,
+    to_epoch: u64,
+    interval: u64,
+) -> ValidatorStake {
     let mut epoch = from_epoch + interval;
     while epoch <= to_epoch {
         stake = decay_validator_stake(stake, cl(), epoch);
@@ -77,41 +82,60 @@ fn full_4_validator_session_across_1000_epochs() {
     let d_100 = decay_validator_stake(d0, cl(), 100); // passive holder in lease
 
     assert_eq!(b_100.active, 500_000, "B: one halving at epoch 100");
-    assert_eq!(d_100.active, 500_000, "D: same decay as B — leaseholder C cannot help D");
+    assert_eq!(
+        d_100.active, 500_000,
+        "D: same decay as B — leaseholder C cannot help D"
+    );
     assert!(a_100.active > b_100.active, "A must outrank B at epoch 100");
 
     // C (leaseholder) refreshes its OWN account — D is unchanged.
     let c_100 = active_session(c0, 0, 100, BLOCK_INTERVAL);
     // C and A should be close (both actively producing).
-    assert!(c_100.active > b_100.active,
-        "active leaseholder C must outrank passive holder D at epoch 100");
+    assert!(
+        c_100.active > b_100.active,
+        "active leaseholder C must outrank passive holder D at epoch 100"
+    );
     // D decays identically to B — C's activity helped no one but C.
-    assert_eq!(d_100.active, b_100.active,
-        "D must decay at the same rate as a fully passive validator");
+    assert_eq!(
+        d_100.active, b_100.active,
+        "D must decay at the same rate as a fully passive validator"
+    );
 
     // ── Epoch 300 ────────────────────────────────────────────────────
     let b_300 = decay_validator_stake(b0, cl(), 300); // passive all the way
     let d_300 = decay_validator_stake(d0, cl(), 300);
     assert_eq!(b_300.active, 125_000, "B: three halvings at epoch 300");
-    assert_eq!(d_300.active, 125_000, "D: same as B — lease gives D nothing");
+    assert_eq!(
+        d_300.active, 125_000,
+        "D: same as B — lease gives D nothing"
+    );
 
     // A is refreshed throughout.
     let a_300 = active_session(a0, 0, 300, BLOCK_INTERVAL);
-    assert!(a_300.active > b_300.active,
-        "A must substantially outrank B at epoch 300");
+    assert!(
+        a_300.active > b_300.active,
+        "A must substantially outrank B at epoch 300"
+    );
 
     // ── Epoch 1000 ───────────────────────────────────────────────────
     let b_1000 = decay_validator_stake(b0, cl(), 1000); // 10 halvings → ~1_000_000/1024 ≈ 976
     let d_1000 = decay_validator_stake(d0, cl(), 1000);
     // 10 halvings is <0.1% of initial — near dust but not integer zero.
-    assert!(b_1000.active < INITIAL_STAKE / 1000,
-        "B: 10 halvings must bring stake below 0.1% of initial (got {})", b_1000.active);
-    assert_eq!(d_1000.active, b_1000.active,
-        "D: same as B — passive holder evaporates despite active leaseholder");
+    assert!(
+        b_1000.active < INITIAL_STAKE / 1000,
+        "B: 10 halvings must bring stake below 0.1% of initial (got {})",
+        b_1000.active
+    );
+    assert_eq!(
+        d_1000.active, b_1000.active,
+        "D: same as B — passive holder evaporates despite active leaseholder"
+    );
 
     let a_1000 = active_session(a0, 0, 1000, BLOCK_INTERVAL);
-    assert!(a_1000.active > 0,
-        "A: active validator must still have positive stake at epoch 1000");
+    assert!(
+        a_1000.active > 0,
+        "A: active validator must still have positive stake at epoch 1000"
+    );
 }
 
 // ── Passive evaporation ───────────────────────────────────────────────────────
@@ -123,15 +147,20 @@ fn passive_validator_near_dust_after_ten_halvings() {
     // demonstrate "approaching zero" — the doctrine claim.
     let s = ValidatorStake::fresh(INITIAL_STAKE);
     let after = decay_validator_stake(s, cl(), HALF_LIFE * 10);
-    assert!(after.active < INITIAL_STAKE / 1000,
-        "10 halvings must reduce stake to < 0.1% of initial (got {})", after.active);
+    assert!(
+        after.active < INITIAL_STAKE / 1000,
+        "10 halvings must reduce stake to < 0.1% of initial (got {})",
+        after.active
+    );
     // 64+ halvings (half_life=10, 1000 epochs) genuinely floor to 0.
     use evaporchain_energy_kernel::Lambda;
     let cl_fast = ChainLambda::new(Lambda::from_epochs(10));
     let s2 = ValidatorStake::fresh(INITIAL_STAKE);
     let at_floor = decay_validator_stake(s2, cl_fast, 1_000); // 100 halvings
-    assert_eq!(at_floor.active, 0,
-        "100+ halvings must floor stake to 0 (fully evaporated)");
+    assert_eq!(
+        at_floor.active, 0,
+        "100+ halvings must floor stake to 0 (fully evaporated)"
+    );
 }
 
 #[test]
@@ -141,8 +170,12 @@ fn passive_decay_is_monotonically_decreasing() {
         .map(|i| decay_validator_stake(s, cl(), HALF_LIFE * i).active)
         .collect();
     for pair in snapshots.windows(2) {
-        assert!(pair[1] <= pair[0],
-            "stake must be non-increasing over epochs: {} > {}", pair[0], pair[1]);
+        assert!(
+            pair[1] <= pair[0],
+            "stake must be non-increasing over epochs: {} > {}",
+            pair[0],
+            pair[1]
+        );
     }
 }
 
@@ -158,8 +191,12 @@ fn steady_state_validator_does_not_lose_stake_over_time() {
     // which partially compensates decay; stake should still be well above the
     // fully-passive level (500_000 after one half-life).
     let passive_at_500 = decay_validator_stake(s0, cl(), HALF_LIFE * 5).active;
-    assert!(s_after.active > passive_at_500,
-        "active validator must substantially exceed passive decay: {} vs {}", s_after.active, passive_at_500);
+    assert!(
+        s_after.active > passive_at_500,
+        "active validator must substantially exceed passive decay: {} vs {}",
+        s_after.active,
+        passive_at_500
+    );
 }
 
 // ── Boltzmann ranking ─────────────────────────────────────────────────────────
@@ -171,9 +208,11 @@ fn proposer_weight_ranks_active_above_passive_at_equal_stake() {
     let stake = INITIAL_STAKE;
     let beta_mb = 1_000u64;
     let w_passive = proposer_weight(stake, 0, beta_mb);
-    let w_active  = proposer_weight(stake, 16, beta_mb);
-    assert!(w_active >= w_passive,
-        "block-producing validator must have at least equal proposer weight");
+    let w_active = proposer_weight(stake, 16, beta_mb);
+    assert!(
+        w_active >= w_passive,
+        "block-producing validator must have at least equal proposer weight"
+    );
 }
 
 #[test]
@@ -182,19 +221,22 @@ fn proposer_weight_ranking_matches_stake_ranking() {
     let activity = 5;
     let w_small = proposer_weight(500_000, activity, BETA_MB);
     let w_large = proposer_weight(INITIAL_STAKE, activity, BETA_MB);
-    assert!(w_large > w_small,
-        "higher stake must yield higher proposer weight at equal activity");
+    assert!(
+        w_large > w_small,
+        "higher stake must yield higher proposer weight at equal activity"
+    );
 }
 
 #[test]
 fn beta_zero_degenerates_to_pure_stake_weighting() {
     // With β=0, activity has no effect — pure PoS.
-    let w_lazy  = proposer_weight(1_000, 0, 0);
-    let w_busy  = proposer_weight(1_000, 999, 0);
-    assert_eq!(w_lazy, w_busy,
-        "β=0 must make proposer_weight activity-invariant");
-    assert_eq!(w_lazy as u64, 1_000u64,
-        "β=0 must return stake unchanged");
+    let w_lazy = proposer_weight(1_000, 0, 0);
+    let w_busy = proposer_weight(1_000, 999, 0);
+    assert_eq!(
+        w_lazy, w_busy,
+        "β=0 must make proposer_weight activity-invariant"
+    );
+    assert_eq!(w_lazy as u64, 1_000u64, "β=0 must return stake unchanged");
 }
 
 // ── Adversarial: MEV lease scenario ──────────────────────────────────────────
@@ -204,14 +246,16 @@ fn mev_lease_holder_decays_identically_to_fully_passive_validator() {
     // D = original holder (passive). C = active leaseholder.
     // After 5 half-lives, D and a hypothetical validator who was always
     // passive must be at the same stake level.
-    let holder   = ValidatorStake::fresh(INITIAL_STAKE);
+    let holder = ValidatorStake::fresh(INITIAL_STAKE);
     let passive2 = ValidatorStake::fresh(INITIAL_STAKE);
 
-    let holder_after  = decay_validator_stake(holder,   cl(), HALF_LIFE * 5);
+    let holder_after = decay_validator_stake(holder, cl(), HALF_LIFE * 5);
     let passive_after = decay_validator_stake(passive2, cl(), HALF_LIFE * 5);
 
-    assert_eq!(holder_after.active, passive_after.active,
-        "a holder whose key is leased decays identically to a fully passive validator");
+    assert_eq!(
+        holder_after.active, passive_after.active,
+        "a holder whose key is leased decays identically to a fully passive validator"
+    );
 }
 
 #[test]
@@ -232,16 +276,21 @@ fn leaseholder_cannot_credit_refresh_to_another_account() {
     // is on whatever value refresh_on_block is explicitly called with.
     // Here we show: without calling refresh_on_block on holder_decayed,
     // the holder's active stake stays at 500_000.
-    assert_eq!(holder_decayed.active, 500_000,
-        "passive holder stake must be 500_000 after one half-life — no leaseholder can change this");
+    assert_eq!(
+        holder_decayed.active, 500_000,
+        "passive holder stake must be 500_000 after one half-life — no leaseholder can change this"
+    );
 }
 
 // ── Adversarial: zero stake / saturation ─────────────────────────────────────
 
 #[test]
 fn zero_stake_proposer_weight_is_zero() {
-    assert_eq!(proposer_weight(0, 999, BETA_MB), 0,
-        "a validator with zero stake must have zero proposer weight");
+    assert_eq!(
+        proposer_weight(0, 999, BETA_MB),
+        0,
+        "a validator with zero stake must have zero proposer weight"
+    );
 }
 
 #[test]

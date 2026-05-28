@@ -93,7 +93,11 @@ fn parse_args() -> Result<Args, String> {
     while i < raw.len() {
         match raw[i].as_str() {
             "--target-addr" => {
-                target_addr = Some(raw.get(i + 1).cloned().ok_or("--target-addr needs a value")?);
+                target_addr = Some(
+                    raw.get(i + 1)
+                        .cloned()
+                        .ok_or("--target-addr needs a value")?,
+                );
                 i += 2;
             }
             "--chain-id" => {

@@ -47,8 +47,12 @@ use evaporchain_singh_sabi::{
 fn tid(b: u8) -> [u8; 32] {
     [b; 32]
 }
-fn alice() -> [u8; 32] { [0xAA; 32] }
-fn bob()   -> [u8; 32] { [0xBB; 32] }
+fn alice() -> [u8; 32] {
+    [0xAA; 32]
+}
+fn bob() -> [u8; 32] {
+    [0xBB; 32]
+}
 
 /// Pilgrim params: ruined_beautiful(10_000, 10) → floor=1_500, half_life=10.
 fn pilgrim_params() -> PatinaParams {
@@ -63,10 +67,10 @@ fn pilgrim_epoch0_score_equals_initial_entropy_pristine() {
     let score = patina_score(&p, 0, 0);
     assert_eq!(score, 10_000, "at mint score == initial");
     let st = derive_state(&p, score);
-    assert_eq!(st.cracks, 0,        "pristine: no cracks");
-    assert_eq!(st.desaturation, 0,  "pristine: no desaturation");
-    assert_eq!(st.foxing, 0,        "pristine: no foxing");
-    assert_eq!(st.edge_fray, 0,     "pristine: no edge fray");
+    assert_eq!(st.cracks, 0, "pristine: no cracks");
+    assert_eq!(st.desaturation, 0, "pristine: no desaturation");
+    assert_eq!(st.foxing, 0, "pristine: no foxing");
+    assert_eq!(st.edge_fray, 0, "pristine: no edge fray");
     assert_eq!(st.score, 10_000);
 }
 
@@ -80,10 +84,13 @@ fn pilgrim_epoch10_one_half_life_midpoint_entropy() {
 
     let st = derive_state(&p, score);
     assert_eq!(st.desaturation, 50, "linear axis at aged_pct=50");
-    assert_eq!(st.cracks,       25, "quadratic: 50^2/100 = 25");
-    assert_eq!(st.foxing,       25, "quadratic: 50^2/100 = 25");
-    assert_eq!(st.edge_fray,    12, "cubic: 50^3/10_000 = 12 (truncated from 12.5)");
-    assert_eq!(st.score,   5_750);
+    assert_eq!(st.cracks, 25, "quadratic: 50^2/100 = 25");
+    assert_eq!(st.foxing, 25, "quadratic: 50^2/100 = 25");
+    assert_eq!(
+        st.edge_fray, 12,
+        "cubic: 50^3/10_000 = 12 (truncated from 12.5)"
+    );
+    assert_eq!(st.score, 5_750);
 }
 
 #[test]
@@ -96,9 +103,12 @@ fn pilgrim_epoch20_two_half_lives_entropy() {
 
     let st = derive_state(&p, score);
     assert_eq!(st.desaturation, 75, "linear axis at aged_pct=75");
-    assert_eq!(st.cracks,       56, "75^2/100 = 56 (truncated from 56.25)");
-    assert_eq!(st.foxing,       56);
-    assert_eq!(st.edge_fray,    42, "75^3/10_000 = 42 (truncated from 42.1875)");
+    assert_eq!(st.cracks, 56, "75^2/100 = 56 (truncated from 56.25)");
+    assert_eq!(st.foxing, 56);
+    assert_eq!(
+        st.edge_fray, 42,
+        "75^3/10_000 = 42 (truncated from 42.1875)"
+    );
 }
 
 #[test]
@@ -110,10 +120,10 @@ fn pilgrim_far_future_reaches_floor_not_zero() {
     assert!(score > 0, "token NEVER evaporates");
 
     let st = derive_state(&p, score);
-    assert_eq!(st.cracks,       100, "fully aged");
+    assert_eq!(st.cracks, 100, "fully aged");
     assert_eq!(st.desaturation, 100);
-    assert_eq!(st.foxing,       100);
-    assert_eq!(st.edge_fray,    100);
+    assert_eq!(st.foxing, 100);
+    assert_eq!(st.edge_fray, 100);
 }
 
 #[test]
@@ -123,7 +133,10 @@ fn pilgrim_score_is_monotone_non_increasing() {
     let mut prev = u64::MAX;
     for &e in &epochs {
         let score = patina_score(&p, 0, e);
-        assert!(score <= prev, "score not monotone at epoch {e}: {score} > {prev}");
+        assert!(
+            score <= prev,
+            "score not monotone at epoch {e}: {score} > {prev}"
+        );
         prev = score;
     }
 }
@@ -150,9 +163,15 @@ fn hako_transfer_does_not_alter_decay_curve() {
     let score_before = hako.score_at(10);
     hako.transfer(alice(), bob()).unwrap();
     let score_after = hako.score_at(10);
-    assert_eq!(score_before, score_after, "transfer must not alter the decay curve");
+    assert_eq!(
+        score_before, score_after,
+        "transfer must not alter the decay curve"
+    );
     assert_eq!(hako.owner, bob());
-    assert_eq!(hako.minted_at_epoch, 0, "minted_at_epoch frozen after transfer");
+    assert_eq!(
+        hako.minted_at_epoch, 0,
+        "minted_at_epoch frozen after transfer"
+    );
 }
 
 #[test]
@@ -163,7 +182,10 @@ fn witness_is_pure_function_of_epoch_regardless_of_owner() {
     let st_before = t.witness(10);
     t.transfer(alice(), bob()).unwrap();
     let st_after = t.witness(10);
-    assert_eq!(st_before, st_after, "witness must be deterministic regardless of current owner");
+    assert_eq!(
+        st_before, st_after,
+        "witness must be deterministic regardless of current owner"
+    );
 }
 
 #[test]
@@ -180,7 +202,10 @@ fn doctrine_entropy_axes_have_different_rates_at_midpoint() {
         st.cracks > st.edge_fray,
         "cracks (quadratic=25) must exceed edge_fray (cubic=12) at 50% aged"
     );
-    assert_eq!(st.cracks, st.foxing, "cracks and foxing share the same quadratic curve");
+    assert_eq!(
+        st.cracks, st.foxing,
+        "cracks and foxing share the same quadratic curve"
+    );
 }
 
 #[test]
@@ -189,10 +214,19 @@ fn doctrine_degenerate_floor_equals_initial_never_decays() {
     let p = PatinaParams::new(500, 500, 50).unwrap();
     for epoch in [0u64, 100, 10_000, 1_000_000] {
         let score = patina_score(&p, 0, epoch);
-        assert_eq!(score, 500, "frozen token: score must stay at 500 at epoch {epoch}");
+        assert_eq!(
+            score, 500,
+            "frozen token: score must stay at 500 at epoch {epoch}"
+        );
         let st = derive_state(&p, score);
-        assert_eq!(st.cracks, 0,       "frozen token: always pristine at epoch {epoch}");
-        assert_eq!(st.desaturation, 0, "frozen token: always pristine at epoch {epoch}");
+        assert_eq!(
+            st.cracks, 0,
+            "frozen token: always pristine at epoch {epoch}"
+        );
+        assert_eq!(
+            st.desaturation, 0,
+            "frozen token: always pristine at epoch {epoch}"
+        );
     }
 }
 
@@ -226,7 +260,13 @@ fn adversarial_zero_half_life_rejected() {
 #[test]
 fn adversarial_floor_above_initial_rejected() {
     let err = PatinaParams::new(100, 200, 50).unwrap_err();
-    assert!(matches!(err, PatinaError::FloorAboveInitial { floor: 200, initial: 100 }));
+    assert!(matches!(
+        err,
+        PatinaError::FloorAboveInitial {
+            floor: 200,
+            initial: 100
+        }
+    ));
 }
 
 #[test]
@@ -252,8 +292,16 @@ fn adversarial_self_transfer_rejected() {
 fn adversarial_clock_skew_returns_initial() {
     // epoch_now < minted_at_epoch or epoch_now == minted_at_epoch → score=initial.
     let p = PatinaParams::new(1_000, 150, 100).unwrap();
-    assert_eq!(patina_score(&p, 50, 0),  1_000, "epoch_now < minted_at → initial");
-    assert_eq!(patina_score(&p, 50, 50), 1_000, "epoch_now == minted_at → initial (elapsed=0)");
+    assert_eq!(
+        patina_score(&p, 50, 0),
+        1_000,
+        "epoch_now < minted_at → initial"
+    );
+    assert_eq!(
+        patina_score(&p, 50, 50),
+        1_000,
+        "epoch_now == minted_at → initial (elapsed=0)"
+    );
 }
 
 // ── Cross-cuts ───────────────────────────────────────────────────────────

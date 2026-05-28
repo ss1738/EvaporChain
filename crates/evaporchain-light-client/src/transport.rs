@@ -86,9 +86,7 @@ pub trait RpcTransport {
     /// witness). Feature-gated because most consumers don't need
     /// the sublinear path.
     #[cfg(feature = "nova")]
-    fn fetch_nova_attestation(
-        &self,
-    ) -> Result<crate::nova::NovaAttestation, TransportError>;
+    fn fetch_nova_attestation(&self) -> Result<crate::nova::NovaAttestation, TransportError>;
 
     /// Fetch the chain's compiled `vk_bytes`. Typically called
     /// once at SDK initialization and cached. Feature-gated
@@ -175,9 +173,7 @@ pub(crate) mod test_transport {
         }
 
         #[cfg(feature = "nova")]
-        fn fetch_nova_attestation(
-            &self,
-        ) -> Result<crate::nova::NovaAttestation, TransportError> {
+        fn fetch_nova_attestation(&self) -> Result<crate::nova::NovaAttestation, TransportError> {
             self.nova_attestation
                 .lock()
                 .unwrap()

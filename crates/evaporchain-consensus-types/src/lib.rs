@@ -1054,8 +1054,14 @@ mod tests {
 
         let n = vs.jail_tombstoned_by_address(&[addr_dead]);
         assert_eq!(n, 1, "exactly the tombstoned validator was newly jailed");
-        assert!(vs.get(1).unwrap().jailed, "matched validator must be jailed");
-        assert!(!vs.get(2).unwrap().jailed, "non-matching validator unaffected");
+        assert!(
+            vs.get(1).unwrap().jailed,
+            "matched validator must be jailed"
+        );
+        assert!(
+            !vs.get(2).unwrap().jailed,
+            "non-matching validator unaffected"
+        );
         // Health zeroed on jail.
         assert_eq!(vs.get(1).unwrap().health_score, 0.0);
     }
@@ -1173,11 +1179,7 @@ mod tests {
 
         let mut vs = ValidatorSet::new();
         vs.add_validator(ValidatorInfo::new(5, 1000, [0x22; 32]));
-        let added = vs.add_validator_with_pop(
-            ValidatorInfo::new(5, 999, [0x33; 32]),
-            pop,
-            true,
-        );
+        let added = vs.add_validator_with_pop(ValidatorInfo::new(5, 999, [0x33; 32]), pop, true);
         assert!(!added, "duplicate id must be rejected");
     }
 
@@ -1216,12 +1218,8 @@ mod tests {
         let mut found_epoch_for_v2 = None;
         for epoch in 0..500u64 {
             match vs.leader_for_epoch(epoch).map(|v| v.id) {
-                Some(1) if found_epoch_for_v1.is_none() => {
-                    found_epoch_for_v1 = Some(epoch)
-                }
-                Some(2) if found_epoch_for_v2.is_none() => {
-                    found_epoch_for_v2 = Some(epoch)
-                }
+                Some(1) if found_epoch_for_v1.is_none() => found_epoch_for_v1 = Some(epoch),
+                Some(2) if found_epoch_for_v2.is_none() => found_epoch_for_v2 = Some(epoch),
                 _ => {}
             }
         }
@@ -1246,20 +1244,29 @@ mod tests {
 
         let result = vs.unjail(1);
         assert!(result, "unjail must return true");
-        assert!(!vs.get(1).unwrap().jailed, "validator must no longer be jailed");
+        assert!(
+            !vs.get(1).unwrap().jailed,
+            "validator must no longer be jailed"
+        );
     }
 
     #[test]
     fn unjail_non_jailed_validator_returns_false() {
         let mut vs = ValidatorSet::new();
         vs.add_validator(ValidatorInfo::new(1, MIN_STAKE, [0x01; 32]));
-        assert!(!vs.unjail(1), "unjailing a non-jailed validator must return false");
+        assert!(
+            !vs.unjail(1),
+            "unjailing a non-jailed validator must return false"
+        );
     }
 
     #[test]
     fn unjail_nonexistent_validator_returns_false() {
         let mut vs = ValidatorSet::new();
-        assert!(!vs.unjail(999), "unjailing absent validator must return false");
+        assert!(
+            !vs.unjail(999),
+            "unjailing absent validator must return false"
+        );
     }
 
     #[test]
@@ -1270,7 +1277,10 @@ mod tests {
         // Manually jail it (slash_equivocation jails)
         vs.slash_equivocation(1);
         // After slash, stake is still 0 and validator is jailed.
-        assert!(vs.get(1).unwrap().jailed, "should be jailed after equivocation");
+        assert!(
+            vs.get(1).unwrap().jailed,
+            "should be jailed after equivocation"
+        );
         assert!(!vs.unjail(1), "cannot unjail a validator below min_stake");
     }
 
@@ -1278,7 +1288,7 @@ mod tests {
 
     #[test]
     fn verify_vrf_proposal_accepts_valid_proof() {
-        use evaporchain_crypto::vrf::{VrfKeypair, leader_vrf_input};
+        use evaporchain_crypto::vrf::{leader_vrf_input, VrfKeypair};
 
         let vrf_kp = VrfKeypair::generate();
         let pk_bytes = vrf_kp.public_key_bytes();
@@ -1301,7 +1311,7 @@ mod tests {
 
     #[test]
     fn verify_vrf_proposal_rejects_wrong_chain_id() {
-        use evaporchain_crypto::vrf::{VrfKeypair, leader_vrf_input};
+        use evaporchain_crypto::vrf::{leader_vrf_input, VrfKeypair};
 
         let vrf_kp = VrfKeypair::generate();
         let pk_bytes = vrf_kp.public_key_bytes();
@@ -1313,7 +1323,13 @@ mod tests {
         let (output, proof) = vrf_kp.evaluate(&alpha);
 
         let mut vs = ValidatorSet::new();
-        vs.add_validator(ValidatorInfo::with_keys(1, 1000, [0x01; 32], None, Some(pk_bytes)));
+        vs.add_validator(ValidatorInfo::with_keys(
+            1,
+            1000,
+            [0x01; 32],
+            None,
+            Some(pk_bytes),
+        ));
 
         // Verify against "chain-B" — must fail (H-1 cross-chain replay guard)
         assert!(
@@ -1382,7 +1398,11 @@ mod tests {
 
         let mut vs = ValidatorSet::new();
         vs.add_validator(ValidatorInfo::with_bls_pop(
-            1, 1000, [0x01; 32], old_pk.clone(), old_kp.proof_of_possession().0,
+            1,
+            1000,
+            [0x01; 32],
+            old_pk.clone(),
+            old_kp.proof_of_possession().0,
         ));
 
         assert!(vs.rotate_validator_key(1, new_pk.clone(), new_pop.clone(), 10));
@@ -1414,10 +1434,18 @@ mod tests {
 
         let mut vs = ValidatorSet::new();
         vs.add_validator(ValidatorInfo::with_bls_pop(
-            1, 1000, [0x01; 32],
-            old_kp.public_key_bytes().0, old_kp.proof_of_possession().0,
+            1,
+            1000,
+            [0x01; 32],
+            old_kp.public_key_bytes().0,
+            old_kp.proof_of_possession().0,
         ));
-        vs.rotate_validator_key(1, new_kp.public_key_bytes().0, new_kp.proof_of_possession().0, 5);
+        vs.rotate_validator_key(
+            1,
+            new_kp.public_key_bytes().0,
+            new_kp.proof_of_possession().0,
+            5,
+        );
         assert!(vs.get(1).unwrap().bls_public_key_prev.is_some());
 
         // Epoch 5 — not yet expired (expiry = 5, check is strictly >)
@@ -1618,7 +1646,13 @@ mod tests {
         use evaporchain_crypto::vrf::VrfKeypair;
         let vrf_kp = VrfKeypair::generate();
         let mut vs = ValidatorSet::new();
-        vs.add_validator(ValidatorInfo::with_keys(1, 100, [0x01; 32], None, Some(vrf_kp.public_key_bytes())));
+        vs.add_validator(ValidatorInfo::with_keys(
+            1,
+            100,
+            [0x01; 32],
+            None,
+            Some(vrf_kp.public_key_bytes()),
+        ));
         vs.add_validator(ValidatorInfo::new(2, 100, [0x02; 32]));
         assert!(vs.has_vrf_keys());
     }
@@ -1714,13 +1748,17 @@ mod tests {
 
     #[test]
     fn vrf_leader_qualifies_and_sortition_active_path() {
-        use evaporchain_crypto::vrf::{VrfKeypair, leader_vrf_input};
+        use evaporchain_crypto::vrf::{leader_vrf_input, VrfKeypair};
 
         let vrf_kp = VrfKeypair::generate();
         let pk_bytes = vrf_kp.public_key_bytes();
         let mut vs = ValidatorSet::new();
         vs.add_validator(ValidatorInfo::with_keys(
-            1, 1_000_000, [0x01; 32], None, Some(pk_bytes),
+            1,
+            1_000_000,
+            [0x01; 32],
+            None,
+            Some(pk_bytes),
         ));
 
         let alpha = leader_vrf_input("test-chain", 1, 0);
@@ -1748,7 +1786,13 @@ mod tests {
         for (id, kp) in keypairs {
             let pk = kp.public_key_bytes().0;
             let pop = kp.proof_of_possession().0;
-            vs.add_validator(ValidatorInfo::with_bls_pop(*id, 1000, [(*id) as u8; 32], pk, pop));
+            vs.add_validator(ValidatorInfo::with_bls_pop(
+                *id,
+                1000,
+                [(*id) as u8; 32],
+                pk,
+                pop,
+            ));
         }
 
         let round = 0u32;
@@ -1800,8 +1844,7 @@ mod tests {
         let genesis = make_signed_header(0, [0x00u8; 32], &keypairs, chain_id);
         let block1 = make_signed_header(1, [0x01u8; 32], &keypairs, chain_id);
 
-        let mut vcr =
-            LightClientVerifier::with_trust_period(genesis, 0, 9999, chain_id);
+        let mut vcr = LightClientVerifier::with_trust_period(genesis, 0, 9999, chain_id);
 
         // Sequential verify (height gap = 1)
         let result = vcr.verify(&block1, 0);
@@ -1868,12 +1911,8 @@ mod tests {
 
         let genesis = make_signed_header(0, [0x00u8; 32], &keypairs, chain_id);
         // Block at height = MAX_SKIP_HEIGHT_GAP + 2 — forces NeedBisection
-        let far_block = make_signed_header(
-            MAX_SKIP_HEIGHT_GAP + 2,
-            [0xFFu8; 32],
-            &keypairs,
-            chain_id,
-        );
+        let far_block =
+            make_signed_header(MAX_SKIP_HEIGHT_GAP + 2, [0xFFu8; 32], &keypairs, chain_id);
 
         let mut vcr = LightClientVerifier::with_trust_period(genesis, 0, 9_999_999, chain_id);
         match vcr.verify(&far_block, 0) {

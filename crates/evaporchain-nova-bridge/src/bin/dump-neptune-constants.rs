@@ -102,13 +102,13 @@ fn parse_out_path(mut args: impl Iterator<Item = String>) -> PathBuf {
 }
 
 fn run(out_path: PathBuf) -> Result<(), String> {
-    println!("dump-neptune-constants: building PoseidonConstantsCircuit::<bn256::Scalar>::default() …");
+    println!(
+        "dump-neptune-constants: building PoseidonConstantsCircuit::<bn256::Scalar>::default() …"
+    );
     let constants = PoseidonConstantsCircuit::<PrimaryScalar>::default();
     println!("dump-neptune-constants: serializing to JSON …");
-    let json = serde_json::to_string_pretty(&constants)
-        .map_err(|e| format!("serde_json: {e}"))?;
-    fs::write(&out_path, &json)
-        .map_err(|e| format!("write {}: {e}", out_path.display()))?;
+    let json = serde_json::to_string_pretty(&constants).map_err(|e| format!("serde_json: {e}"))?;
+    fs::write(&out_path, &json).map_err(|e| format!("write {}: {e}", out_path.display()))?;
     println!(
         "dump-neptune-constants: wrote {} ({} bytes)",
         out_path.display(),

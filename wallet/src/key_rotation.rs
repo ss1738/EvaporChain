@@ -776,8 +776,8 @@ mod tests {
 
     #[test]
     fn test_with_derivation_path() {
-        let key = ManagedKey::new("k1", KeyType::Signing, "pub1")
-            .with_derivation_path("m/44'/0'/0'");
+        let key =
+            ManagedKey::new("k1", KeyType::Signing, "pub1").with_derivation_path("m/44'/0'/0'");
         assert_eq!(key.derivation_path.as_deref(), Some("m/44'/0'/0'"));
     }
 
@@ -878,7 +878,11 @@ mod tests {
         mgr.add_policy(RotationPolicy::new(KeyType::Signing, 1));
         let results = mgr.check_policies();
         assert_eq!(results.len(), 1);
-        assert!(results[0].1.contains("age"), "expected age-based reason, got: {}", results[0].1);
+        assert!(
+            results[0].1.contains("age"),
+            "expected age-based reason, got: {}",
+            results[0].1
+        );
     }
 
     #[test]
@@ -911,7 +915,9 @@ mod tests {
         let mut mgr = make_manager();
         mgr.add_key(ManagedKey::new("k1", KeyType::Signing, "pub1"))
             .unwrap();
-        let k2 = mgr.rotate_key("k1", "pub2", RotationReason::Manual).unwrap();
+        let k2 = mgr
+            .rotate_key("k1", "pub2", RotationReason::Manual)
+            .unwrap();
         let k3 = mgr.rotate_key(&k2, "pub3", RotationReason::Manual).unwrap();
 
         // Call from root (k1): backward walk = [k1], forward walk adds k2, k3
@@ -940,7 +946,8 @@ mod tests {
         assert_eq!(mgr.rotation_count(), 0);
         mgr.add_key(ManagedKey::new("k1", KeyType::Signing, "pub1"))
             .unwrap();
-        mgr.rotate_key("k1", "pub2", RotationReason::Manual).unwrap();
+        mgr.rotate_key("k1", "pub2", RotationReason::Manual)
+            .unwrap();
         assert_eq!(mgr.rotation_count(), 1);
     }
 

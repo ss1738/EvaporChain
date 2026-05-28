@@ -128,9 +128,10 @@ pub fn try_reveal(
     }
 
     // Step 2 — trigger predicate.
-    let satisfied = contract
-        .trigger
-        .is_satisfied(contract.sealed_at_epoch, &contract.owner, observation)?;
+    let satisfied =
+        contract
+            .trigger
+            .is_satisfied(contract.sealed_at_epoch, &contract.owner, observation)?;
     if !satisfied {
         return Err(RevealError::TriggerNotSatisfied);
     }
@@ -156,17 +157,26 @@ mod tests {
             OWNER,
             50,
         );
-        let reveal = MementoReveal { payload: opening.payload.clone(), nonce: opening.nonce };
+        let reveal = MementoReveal {
+            payload: opening.payload.clone(),
+            nonce: opening.nonce,
+        };
 
         // Before target: trigger unsatisfied.
-        let before = ChainObservation { current_epoch: 99, ..Default::default() };
+        let before = ChainObservation {
+            current_epoch: 99,
+            ..Default::default()
+        };
         assert_eq!(
             try_reveal(&contract, &reveal, &before),
             Err(RevealError::TriggerNotSatisfied)
         );
 
         // At target: trigger fires.
-        let at = ChainObservation { current_epoch: 100, ..Default::default() };
+        let at = ChainObservation {
+            current_epoch: 100,
+            ..Default::default()
+        };
         assert_eq!(try_reveal(&contract, &reveal, &at), Ok(opening.payload));
     }
 
@@ -188,7 +198,10 @@ mod tests {
             payload: b"forged payload".to_vec(),
             nonce: opening.nonce,
         };
-        let obs = ChainObservation { current_epoch: 1_000, ..Default::default() };
+        let obs = ChainObservation {
+            current_epoch: 1_000,
+            ..Default::default()
+        };
         assert_eq!(
             try_reveal(&contract, &tampered, &obs),
             Err(RevealError::CommitmentMismatch)
@@ -202,11 +215,16 @@ mod tests {
         let (contract, opening) = seal(
             b"will".to_vec(),
             [9u8; 32],
-            MementoTrigger::OwnerInactiveSince { min_idle_epochs: 50 },
+            MementoTrigger::OwnerInactiveSince {
+                min_idle_epochs: 50,
+            },
             OWNER,
             /* sealed_at_epoch */ 100,
         );
-        let reveal = MementoReveal { payload: opening.payload, nonce: opening.nonce };
+        let reveal = MementoReveal {
+            payload: opening.payload,
+            nonce: opening.nonce,
+        };
 
         // Owner last active at epoch 130 (AFTER sealing at 100).
         // current_epoch=170 → elapsed since last active = 40 → < 50.
@@ -238,11 +256,16 @@ mod tests {
         let (contract, opening) = seal(
             b"will".to_vec(),
             [3u8; 32],
-            MementoTrigger::OwnerInactiveSince { min_idle_epochs: 50 },
+            MementoTrigger::OwnerInactiveSince {
+                min_idle_epochs: 50,
+            },
             OWNER,
             100, // sealed at epoch 100
         );
-        let reveal = MementoReveal { payload: opening.payload, nonce: opening.nonce };
+        let reveal = MementoReveal {
+            payload: opening.payload,
+            nonce: opening.nonce,
+        };
 
         // Owner was last active at epoch 50 (pre-sealing).
         // current_epoch=149 → window started at sealed_at=100, elapsed=49 → < 50.
@@ -275,7 +298,10 @@ mod tests {
             OWNER,
             0,
         );
-        let reveal = MementoReveal { payload: opening.payload, nonce: opening.nonce };
+        let reveal = MementoReveal {
+            payload: opening.payload,
+            nonce: opening.nonce,
+        };
 
         // Above threshold → unsatisfied.
         let obs_above = ChainObservation {
@@ -321,7 +347,10 @@ mod tests {
             OWNER,
             0,
         );
-        let reveal = MementoReveal { payload: opening.payload, nonce: opening.nonce };
+        let reveal = MementoReveal {
+            payload: opening.payload,
+            nonce: opening.nonce,
+        };
         let obs = ChainObservation {
             current_epoch: 1,
             owner_energy: None, // ← caller forgot to populate
@@ -344,7 +373,10 @@ mod tests {
             OWNER,
             0,
         );
-        let reveal = MementoReveal { payload: opening.payload, nonce: opening.nonce };
+        let reveal = MementoReveal {
+            payload: opening.payload,
+            nonce: opening.nonce,
+        };
 
         // No signature witnessed → trigger needs the field → caller
         // bug surfaces as TriggerData.
@@ -387,7 +419,10 @@ mod tests {
             OWNER,
             0,
         );
-        let reveal = MementoReveal { payload: opening.payload, nonce: opening.nonce };
+        let reveal = MementoReveal {
+            payload: opening.payload,
+            nonce: opening.nonce,
+        };
 
         // Empty approvals → unsatisfied.
         let obs_empty = ChainObservation::default();
@@ -427,7 +462,10 @@ mod tests {
             OWNER,
             0,
         );
-        let obs = ChainObservation { current_epoch: 10, ..Default::default() };
+        let obs = ChainObservation {
+            current_epoch: 10,
+            ..Default::default()
+        };
 
         // Attacker tries 10 random payloads + nonces. None should
         // decommit (probability 10/2^256 ≈ 0).

@@ -1,10 +1,10 @@
 //! Coverage tests for Mortis — chain's final-death act (per
 //! `INVENTION_STACK.md Amendment 2 §A2.5`).
 
+use evaporchain_mortis::certificate::{verify_certificate, CertificateError};
 use evaporchain_mortis::{
     mint_certificate, MortisCertificate, MortisCondition, MortisMonitor, TickOutcome,
 };
-use evaporchain_mortis::certificate::{verify_certificate, CertificateError};
 
 // =================================================================
 // MortisCondition
@@ -46,9 +46,24 @@ fn monitor_counting_outcome_carries_count() {
     let o1 = m.tick(1, 500);
     let o2 = m.tick(2, 500);
     let o3 = m.tick(3, 500);
-    assert!(matches!(o1, TickOutcome::Counting { consecutive_below: 1 }));
-    assert!(matches!(o2, TickOutcome::Counting { consecutive_below: 2 }));
-    assert!(matches!(o3, TickOutcome::Counting { consecutive_below: 3 }));
+    assert!(matches!(
+        o1,
+        TickOutcome::Counting {
+            consecutive_below: 1
+        }
+    ));
+    assert!(matches!(
+        o2,
+        TickOutcome::Counting {
+            consecutive_below: 2
+        }
+    ));
+    assert!(matches!(
+        o3,
+        TickOutcome::Counting {
+            consecutive_below: 3
+        }
+    ));
 }
 
 #[test]
@@ -81,7 +96,10 @@ fn monitor_latched_after_trigger() {
     let _ = m.tick(2, 500);
     let out = m.tick(3, 999_999_999);
     assert!(matches!(out, TickOutcome::AlreadyTriggered));
-    assert!(m.is_triggered(), "trigger must remain latched even on full recovery");
+    assert!(
+        m.is_triggered(),
+        "trigger must remain latched even on full recovery"
+    );
 }
 
 #[test]
@@ -90,7 +108,12 @@ fn monitor_treats_exact_floor_as_below() {
     let cond = MortisCondition::new(1_000, 5);
     let mut m = MortisMonitor::new(cond);
     let out = m.tick(1, 1_000);
-    assert!(matches!(out, TickOutcome::Counting { consecutive_below: 1 }));
+    assert!(matches!(
+        out,
+        TickOutcome::Counting {
+            consecutive_below: 1
+        }
+    ));
 }
 
 #[test]

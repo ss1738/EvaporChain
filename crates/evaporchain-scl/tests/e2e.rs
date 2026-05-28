@@ -79,7 +79,13 @@ fn yield_optimizer_exercises_then_expires_structurally() {
     is_authorised(&lease, &withdraw_cap(), addr(YIELD_OPT), 400).unwrap();
     // Structurally expired at 501 — no revoke tx was needed.
     let err = is_authorised(&lease, &withdraw_cap(), addr(YIELD_OPT), 501).unwrap_err();
-    assert!(matches!(err, AuthError::Expired { now: 501, expires_at: 500 }));
+    assert!(matches!(
+        err,
+        AuthError::Expired {
+            now: 501,
+            expires_at: 500
+        }
+    ));
 }
 
 #[test]
@@ -137,8 +143,7 @@ fn mev_searcher_cannot_steal_lease_via_change_subject() {
 #[test]
 fn third_party_cannot_list_lease_for_sale() {
     let lease = grant_lease();
-    let err =
-        list_lease_for_sale(&lease, addr(0xEE), auction_id(4), 1000, 100, 0, 50).unwrap_err();
+    let err = list_lease_for_sale(&lease, addr(0xEE), auction_id(4), 1000, 100, 0, 50).unwrap_err();
     assert_eq!(err, MarketError::NotCurrentSubject);
 }
 

@@ -41,10 +41,9 @@ pub fn max_matching_size(g: &MatchingGraph) -> usize {
     let mut matching = 0usize;
     while bfs(g, &pair_u, &pair_v, &mut dist) {
         for u in 0..g.n_left {
-            if pair_u[u] == NIL
-                && dfs(g, u, &mut pair_u, &mut pair_v, &mut dist) {
-                    matching += 1;
-                }
+            if pair_u[u] == NIL && dfs(g, u, &mut pair_u, &mut pair_v, &mut dist) {
+                matching += 1;
+            }
         }
     }
     matching

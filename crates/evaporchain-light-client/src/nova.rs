@@ -190,8 +190,7 @@ mod tests {
     #[test]
     fn ingest_with_nova_rejects_when_no_vk_bytes() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
-        let genesis =
-            make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
+        let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         let mut lc = LightClient::new(genesis, 100, "", /* vk_bytes */ None);
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
@@ -207,8 +206,7 @@ mod tests {
     #[test]
     fn ingest_with_nova_rejects_identity_instance() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
-        let genesis =
-            make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
+        let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         // Garbage vk_bytes — won't be reached because identity is
         // checked before SNARK verification.
         let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
@@ -226,8 +224,7 @@ mod tests {
     #[test]
     fn ingest_with_nova_rejects_below_min_energy() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
-        let genesis =
-            make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
+        let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
@@ -244,8 +241,7 @@ mod tests {
     #[test]
     fn ingest_with_nova_rejects_garbage_proof_bytes() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
-        let genesis =
-            make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
+        let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
@@ -265,8 +261,7 @@ mod tests {
         // defence-in-depth guarantee — Nova proving doesn't
         // bypass chain-integrity gates.
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
-        let genesis =
-            make_signed_header(5, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
+        let genesis = make_signed_header(5, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
 
         let same = make_signed_header(5, [0u8; 32], [0xcc; 32], vs, &kps, &[0, 1, 2]);

@@ -149,7 +149,9 @@ mod disk_full_detection_tests {
     #[test]
     fn detects_uppercase_and_mixed_case() {
         assert!(error_indicates_disk_full("NO SPACE LEFT ON DEVICE"));
-        assert!(error_indicates_disk_full("No Space Left On Device (errno 28)"));
+        assert!(error_indicates_disk_full(
+            "No Space Left On Device (errno 28)"
+        ));
         assert!(error_indicates_disk_full("disk full"));
         assert!(error_indicates_disk_full("DISK QUOTA EXCEEDED"));
     }
@@ -734,7 +736,9 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
     ];
 
     for (oid, owner_hex, energy, half_life, label) in &objects {
-        let owner = parse_swap_addr(owner_hex).expect("invalid genesis address").1;
+        let owner = parse_swap_addr(owner_hex)
+            .expect("invalid genesis address")
+            .1;
         db.put_object(StateObject {
             id: obj_id(*oid),
             owner,
@@ -2732,9 +2736,9 @@ async fn main() -> Result<()> {
         // window get served the block from chain_store instead of an
         // empty Vec — required for fresh-from-genesis catch-up.
         let chain_store_for_sync = Arc::clone(&chain_store);
-        let disk_block_fetcher = Some(evaporchain_network::DiskBlockFetcher::new(
-            move |height| chain_store_for_sync.load_full_block(height),
-        ));
+        let disk_block_fetcher = Some(evaporchain_network::DiskBlockFetcher::new(move |height| {
+            chain_store_for_sync.load_full_block(height)
+        }));
         let net_config = NetworkConfig {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
             bootstrap_peers: effective_bootstrap_peers.clone(),
@@ -3609,7 +3613,11 @@ async fn main() -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        Arc::new(Mutex::new(LightClientVerifier::new(genesis_header, now, &args.chain_id)))
+        Arc::new(Mutex::new(LightClientVerifier::new(
+            genesis_header,
+            now,
+            &args.chain_id,
+        )))
     };
 
     // ── API server ──

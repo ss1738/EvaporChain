@@ -31,9 +31,10 @@ fn keygen_deterministic(seed: u64) -> (Scalar, G1Affine) {
 }
 
 fn sign(sk: Scalar, msg: &[u8]) -> G2Affine {
-    let h: G2Projective = <G2Projective as HashToCurve<
-        ExpandMsgXmd<sha2_old_for_bls::Sha256>,
-    >>::hash_to_curve(msg, BLS_DST);
+    let h: G2Projective =
+        <G2Projective as HashToCurve<ExpandMsgXmd<sha2_old_for_bls::Sha256>>>::hash_to_curve(
+            msg, BLS_DST,
+        );
     (h * sk).into()
 }
 
@@ -56,10 +57,10 @@ fn g1_to_eip2537(p: G1Affine) -> [u8; 128] {
 fn g2_to_eip2537(p: G2Affine) -> [u8; 256] {
     let raw = p.to_uncompressed();
     let mut out = [0u8; 256];
-    out[16..64].copy_from_slice(&raw[48..96]);   // x.c0
-    out[80..128].copy_from_slice(&raw[0..48]);   // x.c1
+    out[16..64].copy_from_slice(&raw[48..96]); // x.c0
+    out[80..128].copy_from_slice(&raw[0..48]); // x.c1
     out[144..192].copy_from_slice(&raw[144..192]); // y.c0
-    out[208..256].copy_from_slice(&raw[96..144]);  // y.c1
+    out[208..256].copy_from_slice(&raw[96..144]); // y.c1
     out
 }
 
@@ -111,8 +112,7 @@ fn generate_state_membership_fixture() {
     header_preimg.extend_from_slice(&epoch.to_be_bytes());
     let header_msg_hash = keccak(&header_preimg);
 
-    let header_sigs: Vec<G2Affine> =
-        sks.iter().map(|sk| sign(*sk, &header_msg_hash)).collect();
+    let header_sigs: Vec<G2Affine> = sks.iter().map(|sk| sign(*sk, &header_msg_hash)).collect();
     let header_agg = g2_to_eip2537(aggregate(&header_sigs));
 
     // ── State-membership claim (signed separately) ───────────────
@@ -129,8 +129,7 @@ fn generate_state_membership_fixture() {
     attest_preimg.extend_from_slice(&value_hash);
     let attest_msg_hash = keccak(&attest_preimg);
 
-    let attest_sigs: Vec<G2Affine> =
-        sks.iter().map(|sk| sign(*sk, &attest_msg_hash)).collect();
+    let attest_sigs: Vec<G2Affine> = sks.iter().map(|sk| sign(*sk, &attest_msg_hash)).collect();
     let attest_agg = g2_to_eip2537(aggregate(&attest_sigs));
 
     let bitmap = vec![0x1Fu8];

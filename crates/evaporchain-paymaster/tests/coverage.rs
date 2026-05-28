@@ -121,7 +121,10 @@ fn sponsor_idempotent_same_key_replays_without_burning_nonce() {
     let first = pm
         .sponsor_idempotent(Some("retry-1"), &mut op_first)
         .unwrap();
-    assert!(matches!(first, SponsorOutcome::Fresh { paymaster_nonce: 0 }));
+    assert!(matches!(
+        first,
+        SponsorOutcome::Fresh { paymaster_nonce: 0 }
+    ));
 
     // Second call under the same key must Replay — same nonce, same sig.
     let mut op_retry = empty_user_op([7u8; 32]);
@@ -169,13 +172,8 @@ fn info_reflects_config_and_state() {
     cfg.allowed_inner_variants = Some(vec![InnerVariant::Transfer]);
     cfg.idempotency_max_keys = 64;
     cfg.idempotency_ttl_secs = 300;
-    let pm = Paymaster::new_with_config(
-        HybridKeypair::generate(),
-        CHAIN_ID,
-        nonce_path(&dir),
-        cfg,
-    )
-    .unwrap();
+    let pm = Paymaster::new_with_config(HybridKeypair::generate(), CHAIN_ID, nonce_path(&dir), cfg)
+        .unwrap();
     let info = pm.info();
     assert_eq!(info.chain_id, CHAIN_ID);
     assert_eq!(info.next_paymaster_nonce, 0);
@@ -240,7 +238,10 @@ fn inner_variant_from_transaction_tags_supported_variants() {
         public_key: None,
         mev_refund_eligible: None,
     });
-    assert_eq!(InnerVariant::from_transaction(&tx), Some(InnerVariant::Transfer));
+    assert_eq!(
+        InnerVariant::from_transaction(&tx),
+        Some(InnerVariant::Transfer)
+    );
 }
 
 #[test]
@@ -248,13 +249,8 @@ fn sponsor_rejects_inner_variant_not_in_whitelist() {
     let dir = TempDir::new().unwrap();
     let mut cfg = PaymasterConfig::permissive();
     cfg.allowed_inner_variants = Some(vec![InnerVariant::CallScript]); // Transfer NOT allowed
-    let pm = Paymaster::new_with_config(
-        HybridKeypair::generate(),
-        CHAIN_ID,
-        nonce_path(&dir),
-        cfg,
-    )
-    .unwrap();
+    let pm = Paymaster::new_with_config(HybridKeypair::generate(), CHAIN_ID, nonce_path(&dir), cfg)
+        .unwrap();
 
     let inner = Transaction::Transfer(TransferTx {
         from: [0u8; 32],
@@ -284,13 +280,8 @@ fn sponsor_allows_inner_variant_in_whitelist() {
     let dir = TempDir::new().unwrap();
     let mut cfg = PaymasterConfig::permissive();
     cfg.allowed_inner_variants = Some(vec![InnerVariant::Transfer]);
-    let pm = Paymaster::new_with_config(
-        HybridKeypair::generate(),
-        CHAIN_ID,
-        nonce_path(&dir),
-        cfg,
-    )
-    .unwrap();
+    let pm = Paymaster::new_with_config(HybridKeypair::generate(), CHAIN_ID, nonce_path(&dir), cfg)
+        .unwrap();
     let inner = Transaction::Transfer(TransferTx {
         from: [0u8; 32],
         to: [1u8; 32],
@@ -311,13 +302,8 @@ fn sponsor_empty_call_data_bypasses_inner_whitelist() {
     let dir = TempDir::new().unwrap();
     let mut cfg = PaymasterConfig::permissive();
     cfg.allowed_inner_variants = Some(vec![InnerVariant::CallScript]); // Transfer NOT allowed
-    let pm = Paymaster::new_with_config(
-        HybridKeypair::generate(),
-        CHAIN_ID,
-        nonce_path(&dir),
-        cfg,
-    )
-    .unwrap();
+    let pm = Paymaster::new_with_config(HybridKeypair::generate(), CHAIN_ID, nonce_path(&dir), cfg)
+        .unwrap();
     // call_data is empty (gas-only sponsorship) → always allowed.
     let mut op = empty_user_op([1u8; 32]);
     assert!(op.call_data.is_empty());
@@ -367,13 +353,9 @@ fn nonce_persists_across_paymaster_restarts() {
     {
         let kp = HybridKeypair::generate();
         kp_bytes = kp.public_key_bytes();
-        let pm = Paymaster::new_with_config(
-            kp,
-            CHAIN_ID,
-            path.clone(),
-            PaymasterConfig::permissive(),
-        )
-        .unwrap();
+        let pm =
+            Paymaster::new_with_config(kp, CHAIN_ID, path.clone(), PaymasterConfig::permissive())
+                .unwrap();
         for i in 0..3 {
             let mut op = empty_user_op([i as u8; 32]);
             pm.sponsor(&mut op).unwrap();

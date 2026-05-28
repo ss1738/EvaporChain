@@ -62,9 +62,8 @@ fn generators() -> &'static Vec<Ep> {
 fn bytes_to_scalar(bytes: &[u8; 32]) -> Fq {
     let mut repr = *bytes;
     repr[31] &= 0x3F; // ensure < field modulus (254-bit subspace)
-    Fq::from_repr(repr).expect(
-        "bytes_to_scalar invariant: after `repr[31] &= 0x3F` the value is < Fq modulus",
-    )
+    Fq::from_repr(repr)
+        .expect("bytes_to_scalar invariant: after `repr[31] &= 0x3F` the value is < Fq modulus")
 }
 
 fn point_to_bytes(point: &Ep) -> [u8; 32] {
@@ -1976,7 +1975,10 @@ mod tests {
         trie.insert(k1, make_value(1), 0, 10, 0);
         trie.insert(k2, make_value(2), 0, 10, 0);
         let count = trie.compress_cold();
-        assert!(count > 0, "nested Internal with energy=0 must be compressed");
+        assert!(
+            count > 0,
+            "nested Internal with energy=0 must be compressed"
+        );
         assert_eq!(trie.root_meta().leaf_count, 2);
     }
 
@@ -2273,7 +2275,6 @@ mod tests {
         assert!(EnergyVerkleTrie::verify_multi(&proof, &[0u8; 32]));
         assert!(!EnergyVerkleTrie::verify_multi(&proof, &[1u8; 32]));
     }
-
 }
 
 // ═══════════════════════════════════════════════════════════════════

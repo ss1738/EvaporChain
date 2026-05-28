@@ -131,8 +131,7 @@ fn adversarial_t08_forged_integrity_hash_rejected_via_missing_quorum_cert() {
     assert!(
         matches!(
             strict,
-            Err(SnapshotError::MissingQuorumCert)
-                | Err(SnapshotError::StateRootMismatch { .. })
+            Err(SnapshotError::MissingQuorumCert) | Err(SnapshotError::StateRootMismatch { .. })
         ),
         "from_bytes_strict MUST reject (either path); got {:?}",
         strict.err()
@@ -447,7 +446,7 @@ fn adversarial_t08_partial_state_withhold_nullifier_rejected_via_cert() {
     // (Honest from_bytes already rejects via tampered integrity_hash;
     // the cert check fires regardless of which check is first.)
     attacker.integrity_hash = [0u8; 32]; // placeholder — strict path catches via cert
-    // Re-attach the honest cert (signed over the original hash).
+                                         // Re-attach the honest cert (signed over the original hash).
     attacker.quorum_cert = Some(honest_cert);
 
     // verify_quorum_cert MUST reject — cert.integrity_hash != attacker's

@@ -49,6 +49,7 @@ pub mod init_childkey;
 pub mod init_gallery_forgets;
 pub mod init_mayfly;
 pub mod init_mnemochain;
+pub mod init_refresh_market;
 pub mod init_sap;
 pub mod init_sbav;
 pub mod init_scl;
@@ -65,7 +66,6 @@ pub mod init_singh_sabi;
 pub mod init_singh_triage;
 pub mod init_ssm;
 pub mod init_witnessfit;
-pub mod init_refresh_market;
 
 pub use dispatch::{materialise, EngineError, TypedInit};
 

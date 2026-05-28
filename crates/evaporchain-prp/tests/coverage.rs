@@ -14,10 +14,10 @@
 //!   - Serde round-trip.
 //!   - `RetentionProofError` Display + Eq.
 
+use evaporchain_energy_kernel::{ChainLambda, Lambda};
 use evaporchain_prp::{
     prove_retention, verify_retention_proof, RetentionProof, RetentionProofError,
 };
-use evaporchain_energy_kernel::{ChainLambda, Lambda};
 
 fn lambda_100() -> ChainLambda {
     ChainLambda::new(Lambda::from_epochs(100))
@@ -102,7 +102,7 @@ fn prove_retention_floor_at_or_above_committed_yields_zero_retention() {
     // floor >= committed → energy_at_epoch(_, _, 0) == committed,
     // which is NOT > floor at t=0. Binary search lands on lo=0 ⇒
     // retained_until == activated (no retention beyond start).
-    let p_eq    = prove_retention([0u8; 32], 1_000, lambda_100(), 100, 1_000);
+    let p_eq = prove_retention([0u8; 32], 1_000, lambda_100(), 100, 1_000);
     let p_above = prove_retention([0u8; 32], 1_000, lambda_100(), 100, 5_000);
     assert_eq!(p_eq.retained_until_epoch, 100);
     assert_eq!(p_above.retained_until_epoch, 100);
@@ -116,9 +116,11 @@ fn prove_retention_floor_zero_extends_to_search_horizon() {
     // half_life=100, so the search reaches up to ~6400 epochs.
     // Decay is exponential — after ~6400 epochs energy is effectively 0
     // (1000 / 2^64 == 0 in integer arithmetic).
-    assert!(p.retained_until_epoch >= 100,
+    assert!(
+        p.retained_until_epoch >= 100,
         "floor=0 must yield retention beyond one half-life, got {}",
-        p.retained_until_epoch);
+        p.retained_until_epoch
+    );
 }
 
 #[test]
@@ -145,7 +147,10 @@ fn verify_one_epoch_past_retained_until_rejected_with_payload() {
     let p = prove_retention([7u8; 32], 1_000, lambda_100(), 0, 100);
     let beyond = p.retained_until_epoch + 1;
     match verify_retention_proof(&p, beyond) {
-        Err(RetentionProofError::QueryAfterRetention { query, retained_until }) => {
+        Err(RetentionProofError::QueryAfterRetention {
+            query,
+            retained_until,
+        }) => {
             assert_eq!(query, beyond);
             assert_eq!(retained_until, p.retained_until_epoch);
         }
@@ -178,11 +183,16 @@ fn proof_serde_round_trips_and_still_verifies() {
 
 #[test]
 fn retention_proof_error_displays_both_variants() {
-    let qar = RetentionProofError::QueryAfterRetention { query: 100, retained_until: 50 }
-        .to_string();
+    let qar = RetentionProofError::QueryAfterRetention {
+        query: 100,
+        retained_until: 50,
+    }
+    .to_string();
     let wm = RetentionProofError::WitnessMismatch {
-        derived: [0u8; 32], claimed: [1u8; 32],
-    }.to_string();
+        derived: [0u8; 32],
+        claimed: [1u8; 32],
+    }
+    .to_string();
     assert!(qar.contains("100") && qar.contains("50"), "got: {qar}");
     assert!(wm.contains("mismatch"), "got: {wm}");
 }
@@ -191,10 +201,22 @@ fn retention_proof_error_displays_both_variants() {
 fn retention_proof_error_eq_discriminates_variants_and_payloads() {
     // RetentionProofError derives PartialEq + Eq but NOT Clone — pin
     // the equality semantics we DO have.
-    let qar_a = RetentionProofError::QueryAfterRetention { query: 1, retained_until: 2 };
-    let qar_a2 = RetentionProofError::QueryAfterRetention { query: 1, retained_until: 2 };
-    let qar_b = RetentionProofError::QueryAfterRetention { query: 1, retained_until: 3 };
-    let wm = RetentionProofError::WitnessMismatch { derived: [0u8; 32], claimed: [0u8; 32] };
+    let qar_a = RetentionProofError::QueryAfterRetention {
+        query: 1,
+        retained_until: 2,
+    };
+    let qar_a2 = RetentionProofError::QueryAfterRetention {
+        query: 1,
+        retained_until: 2,
+    };
+    let qar_b = RetentionProofError::QueryAfterRetention {
+        query: 1,
+        retained_until: 3,
+    };
+    let wm = RetentionProofError::WitnessMismatch {
+        derived: [0u8; 32],
+        claimed: [0u8; 32],
+    };
     assert_eq!(qar_a, qar_a2);
     assert_ne!(qar_a, qar_b);
     assert_ne!(qar_a, wm);

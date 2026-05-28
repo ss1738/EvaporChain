@@ -17,11 +17,7 @@
 
 use crate::section3_witness::{Section3Witness, SparseTriple};
 use ark_bn254::Fr as Bn254Fr;
-use ark_r1cs_std::{
-    alloc::AllocVar,
-    eq::EqGadget,
-    fields::fp::FpVar,
-};
+use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 /// Enforce primary RelaxedR1CS satisfiability in-circuit.
@@ -145,9 +141,7 @@ mod tests {
         let x_vars: Vec<FpVar<Bn254Fr>> = s3
             .x_primary
             .iter()
-            .map(|&x| {
-                FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(x))
-            })
+            .map(|&x| FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(x)))
             .collect::<Result<_, _>>()
             .expect("alloc x_vars");
 

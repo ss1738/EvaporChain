@@ -94,11 +94,7 @@ fn main() {
         })
         .collect();
 
-    let ic_arr: Vec<String> = vk
-        .gamma_abc_g1
-        .iter()
-        .map(|p| hex(&g1_bytes(p)))
-        .collect();
+    let ic_arr: Vec<String> = vk.gamma_abc_g1.iter().map(|p| hex(&g1_bytes(p))).collect();
 
     let json = serde_json::json!({
         "proof": hex(&proof_bytes),
@@ -113,8 +109,7 @@ fn main() {
     });
 
     let out_path = "ethereum-bridge/contracts/fixtures/verkle_proof_smoke.json";
-    std::fs::write(out_path, serde_json::to_string_pretty(&json).unwrap())
-        .expect("write fixture");
+    std::fs::write(out_path, serde_json::to_string_pretty(&json).unwrap()).expect("write fixture");
     eprintln!("smoke-fixture-emit: wrote {out_path}");
     eprintln!(
         "smoke-fixture-emit: proof_bytes={} public_inputs={} ic={}",

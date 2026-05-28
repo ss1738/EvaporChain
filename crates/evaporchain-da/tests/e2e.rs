@@ -11,8 +11,8 @@
 //! empty payloads and insufficient quorums fail closed.
 
 use evaporchain_da::{
+    erasure::{EncodedData, ErasureConfig},
     ErasureEncoder,
-    erasure::{ErasureConfig, EncodedData},
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -23,7 +23,11 @@ fn yusuf_payload() -> Vec<u8> {
 }
 
 fn encoder_4_4() -> ErasureEncoder {
-    ErasureEncoder::new(ErasureConfig { data_shards: 4, parity_shards: 4 }).unwrap()
+    ErasureEncoder::new(ErasureConfig {
+        data_shards: 4,
+        parity_shards: 4,
+    })
+    .unwrap()
 }
 
 fn encode_payload() -> EncodedData {
@@ -55,8 +59,10 @@ fn encode_produces_eight_shards() {
 fn all_shards_pass_hash_verification() {
     // Each shard's embedded hash must match its data at encode time.
     for (i, shard) in encode_payload().shards.iter().enumerate() {
-        assert!(ErasureEncoder::verify_shard(shard),
-            "shard {i} must verify immediately after encoding");
+        assert!(
+            ErasureEncoder::verify_shard(shard),
+            "shard {i} must verify immediately after encoding"
+        );
     }
 }
 
@@ -67,8 +73,11 @@ fn data_shards_only_reconstruct_exactly() {
     let payload = yusuf_payload();
     let subset = subset_from(&encoded, &[0, 1, 2, 3]);
     let out = encoder_4_4().reconstruct(subset).unwrap();
-    assert_eq!(&out[..payload.len()], &payload[..],
-        "4 data shards must reconstruct the original payload byte-for-byte");
+    assert_eq!(
+        &out[..payload.len()],
+        &payload[..],
+        "4 data shards must reconstruct the original payload byte-for-byte"
+    );
 }
 
 #[test]
@@ -78,8 +87,11 @@ fn parity_shards_only_reconstruct_exactly() {
     let payload = yusuf_payload();
     let subset = subset_from(&encoded, &[4, 5, 6, 7]);
     let out = encoder_4_4().reconstruct(subset).unwrap();
-    assert_eq!(&out[..payload.len()], &payload[..],
-        "4 parity shards must also reconstruct");
+    assert_eq!(
+        &out[..payload.len()],
+        &payload[..],
+        "4 parity shards must also reconstruct"
+    );
 }
 
 #[test]
@@ -89,8 +101,11 @@ fn mixed_quorum_reconstructs() {
     let payload = yusuf_payload();
     let subset = subset_from(&encoded, &[1, 3, 5, 7]);
     let out = encoder_4_4().reconstruct(subset).unwrap();
-    assert_eq!(&out[..payload.len()], &payload[..],
-        "mixed 4-of-8 quorum must reconstruct");
+    assert_eq!(
+        &out[..payload.len()],
+        &payload[..],
+        "mixed 4-of-8 quorum must reconstruct"
+    );
 }
 
 #[test]
@@ -98,8 +113,10 @@ fn tampered_shard_fails_hash_verification() {
     // IVAN flips one byte in shard 0 — verify_shard must catch it.
     let mut encoded = encode_payload();
     encoded.shards[0].data[0] ^= 0xFF;
-    assert!(!ErasureEncoder::verify_shard(&encoded.shards[0]),
-        "tampered shard must fail hash verification");
+    assert!(
+        !ErasureEncoder::verify_shard(&encoded.shards[0]),
+        "tampered shard must fail hash verification"
+    );
     // Other shards are still clean.
     assert!(ErasureEncoder::verify_shard(&encoded.shards[1]));
 }
@@ -109,15 +126,19 @@ fn insufficient_shards_fail_closed() {
     // Only 3 of 4 required data shards → reconstruct must fail.
     let encoded = encode_payload();
     let subset = subset_from(&encoded, &[0, 1, 2]); // only 3
-    assert!(encoder_4_4().reconstruct(subset).is_err(),
-        "3-of-8 must fail closed (need 4)");
+    assert!(
+        encoder_4_4().reconstruct(subset).is_err(),
+        "3-of-8 must fail closed (need 4)"
+    );
 }
 
 #[test]
 fn empty_payload_fails_closed() {
     // Empty input must return a typed error, not silent empty encoding.
-    assert!(encoder_4_4().encode(&[]).is_err(),
-        "empty payload must be rejected");
+    assert!(
+        encoder_4_4().encode(&[]).is_err(),
+        "empty payload must be rejected"
+    );
 }
 
 #[test]
@@ -127,8 +148,10 @@ fn different_payloads_produce_different_shards() {
     let p2: Vec<u8> = vec![0xBB; 256];
     let e1 = enc.encode(&p1).unwrap();
     let e2 = enc.encode(&p2).unwrap();
-    assert_ne!(e1.shards[0].data, e2.shards[0].data,
-        "different payloads must produce different shard content");
+    assert_ne!(
+        e1.shards[0].data, e2.shards[0].data,
+        "different payloads must produce different shard content"
+    );
 }
 
 #[test]
@@ -147,6 +170,9 @@ fn yusuf_da_round_full_arc() {
     // Reconstruct from 4 online clients.
     let subset = subset_from(&encoded, &[1, 3, 5, 7]);
     let out = encoder_4_4().reconstruct(subset).unwrap();
-    assert_eq!(&out[..payload.len()], &payload[..],
-        "DA round must reconstruct even with 4 offline clients");
+    assert_eq!(
+        &out[..payload.len()],
+        &payload[..],
+        "DA round must reconstruct even with 4 offline clients"
+    );
 }

@@ -70,11 +70,7 @@ pub fn compress_first_full_rounds(
         plain_ark.len(),
         half_full_rounds * width
     );
-    assert_eq!(
-        inverse_mds.len(),
-        width,
-        "inverse_mds must be width×width"
-    );
+    assert_eq!(inverse_mds.len(), width, "inverse_mds must be width×width");
 
     let mut res: Vec<Fr> = Vec::with_capacity(half_full_rounds * width);
     // Round 0: plain ARK extended.
@@ -134,9 +130,7 @@ pub fn compress_full(
     assert_eq!(inverse_mds.len(), width, "inverse_mds must be width×width");
 
     // Helper: extract one row's worth of plain ARK as &[Fr].
-    let round_keys = |r: usize| -> &[Fr] {
-        &plain_ark[r * width..(r + 1) * width]
-    };
+    let round_keys = |r: usize| -> &[Fr] { &plain_ark[r * width..(r + 1) * width] };
 
     // ── Slice 1: first half-full rounds ────────────────────
     let mut res: Vec<Fr> = Vec::with_capacity(expected_len);
@@ -190,7 +184,9 @@ pub fn compress_full(
 mod tests {
     use super::*;
     use crate::grain_lfsr::generate_round_constants_bn254_arity_24_standard;
-    use crate::neptune_dump_parser::{extract_compressed_round_constants, extract_mds_inverse_matrix};
+    use crate::neptune_dump_parser::{
+        extract_compressed_round_constants, extract_mds_inverse_matrix,
+    };
 
     /// **THE empirical test.** Run the first-half-full preprocessing
     /// using our LFSR-generated plain ARK + real neptune
@@ -207,8 +203,8 @@ mod tests {
     #[ignore = "requires /tmp/neptune-bn256-standard.json"]
     fn first_100_compressed_match_neptune_crc() {
         let plain_ark = generate_round_constants_bn254_arity_24_standard();
-        let m_inv = extract_mds_inverse_matrix("/tmp/neptune-bn256-standard.json")
-            .expect("load m_inv");
+        let m_inv =
+            extract_mds_inverse_matrix("/tmp/neptune-bn256-standard.json").expect("load m_inv");
         let crc = extract_compressed_round_constants("/tmp/neptune-bn256-standard.json")
             .expect("load crc");
 
@@ -226,7 +222,10 @@ mod tests {
             mismatches.len()
         );
         if !mismatches.is_empty() {
-            eprintln!("  Mismatch indices: {:?}", &mismatches[..mismatches.len().min(10)]);
+            eprintln!(
+                "  Mismatch indices: {:?}",
+                &mismatches[..mismatches.len().min(10)]
+            );
         }
         assert!(
             mismatches.is_empty(),
@@ -247,8 +246,8 @@ mod tests {
     #[ignore = "requires /tmp/neptune-bn256-standard.json"]
     fn full_compressed_match_neptune_crc() {
         let plain_ark = generate_round_constants_bn254_arity_24_standard();
-        let m_inv = extract_mds_inverse_matrix("/tmp/neptune-bn256-standard.json")
-            .expect("load m_inv");
+        let m_inv =
+            extract_mds_inverse_matrix("/tmp/neptune-bn256-standard.json").expect("load m_inv");
         let crc = extract_compressed_round_constants("/tmp/neptune-bn256-standard.json")
             .expect("load crc");
 
@@ -283,10 +282,30 @@ mod tests {
     fn output_length_matches_contract() {
         // 4×4 identity inverse-MDS + 16-entry plain ARK = 4×4 output
         let identity_4 = vec![
-            vec![Fr::from(1u64), Fr::from(0u64), Fr::from(0u64), Fr::from(0u64)],
-            vec![Fr::from(0u64), Fr::from(1u64), Fr::from(0u64), Fr::from(0u64)],
-            vec![Fr::from(0u64), Fr::from(0u64), Fr::from(1u64), Fr::from(0u64)],
-            vec![Fr::from(0u64), Fr::from(0u64), Fr::from(0u64), Fr::from(1u64)],
+            vec![
+                Fr::from(1u64),
+                Fr::from(0u64),
+                Fr::from(0u64),
+                Fr::from(0u64),
+            ],
+            vec![
+                Fr::from(0u64),
+                Fr::from(1u64),
+                Fr::from(0u64),
+                Fr::from(0u64),
+            ],
+            vec![
+                Fr::from(0u64),
+                Fr::from(0u64),
+                Fr::from(1u64),
+                Fr::from(0u64),
+            ],
+            vec![
+                Fr::from(0u64),
+                Fr::from(0u64),
+                Fr::from(0u64),
+                Fr::from(1u64),
+            ],
         ];
         let plain_ark: Vec<Fr> = (0..16).map(|i| Fr::from(i as u64)).collect();
         let out = compress_first_full_rounds(&plain_ark, &identity_4, 4, 4);
@@ -307,7 +326,11 @@ mod tests {
 
     fn identity_n(n: usize) -> Vec<Vec<Fr>> {
         (0..n)
-            .map(|i| (0..n).map(|j| Fr::from(if i == j { 1u64 } else { 0u64 })).collect())
+            .map(|i| {
+                (0..n)
+                    .map(|j| Fr::from(if i == j { 1u64 } else { 0u64 }))
+                    .collect()
+            })
             .collect()
     }
 

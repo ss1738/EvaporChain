@@ -46,8 +46,7 @@
 //! INVENTION_STACK §A4: Singh Inequality (energy-weighted Hoeffding).
 
 use evaporchain_singh_inequality::{
-    hoeffding_variance_bound, passes_singh_gate, singh_variance_bound,
-    BoundError, Contributor,
+    hoeffding_variance_bound, passes_singh_gate, singh_variance_bound, BoundError, Contributor,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -69,10 +68,13 @@ fn epoch_a_all_fresh_singh_equals_hoeffding() {
     let committee = committee_epoch(&[1_000, 1_000, 1_000, 1_000, 1_000]);
 
     let hoeffding = hoeffding_variance_bound(&committee).unwrap();
-    let singh     = singh_variance_bound(&committee).unwrap();
+    let singh = singh_variance_bound(&committee).unwrap();
 
     assert_eq!(hoeffding, 50_000, "Hoeffding: 5 × 100² = 50_000");
-    assert_eq!(singh, hoeffding, "at full energy Singh must equal Hoeffding");
+    assert_eq!(
+        singh, hoeffding,
+        "at full energy Singh must equal Hoeffding"
+    );
 }
 
 #[test]
@@ -81,13 +83,14 @@ fn epoch_b_three_decayed_singh_strictly_tighter() {
     let committee = committee_epoch(&[1_000, 1_000, 100, 10, 0]);
 
     let hoeffding = hoeffding_variance_bound(&committee).unwrap();
-    let singh     = singh_variance_bound(&committee).unwrap();
+    let singh = singh_variance_bound(&committee).unwrap();
 
     assert_eq!(hoeffding, 50_000);
-    assert_eq!(singh, 20_101,
-        "Singh σ²: 10_000+10_000+100+1+0=20_101");
-    assert!(singh < hoeffding,
-        "Singh must be strictly tighter when contributors are decayed");
+    assert_eq!(singh, 20_101, "Singh σ²: 10_000+10_000+100+1+0=20_101");
+    assert!(
+        singh < hoeffding,
+        "Singh must be strictly tighter when contributors are decayed"
+    );
 }
 
 #[test]
@@ -96,7 +99,7 @@ fn epoch_c_only_two_fresh_singh_further_tightens() {
     let committee = committee_epoch(&[1_000, 1_000, 0, 0, 0]);
 
     let hoeffding = hoeffding_variance_bound(&committee).unwrap();
-    let singh     = singh_variance_bound(&committee).unwrap();
+    let singh = singh_variance_bound(&committee).unwrap();
 
     assert_eq!(hoeffding, 50_000);
     assert_eq!(singh, 20_000, "Singh σ²: 10_000+10_000+0+0+0=20_000");
@@ -120,7 +123,10 @@ fn doctrine_decay_lets_deviation_pass_singh_but_fail_hoeffding() {
     let s_passes = passes_singh_gate(105, &committee, 1).unwrap();
 
     assert!(!h_passes, "Hoeffding must REJECT deviation=105 at Epoch B");
-    assert!(s_passes,  "Singh must ADMIT deviation=105 at Epoch B (decayed validators excluded)");
+    assert!(
+        s_passes,
+        "Singh must ADMIT deviation=105 at Epoch B (decayed validators excluded)"
+    );
 }
 
 #[test]
@@ -134,7 +140,10 @@ fn doctrine_decay_collapse_at_full_decay_epoch_c() {
     let h_var = hoeffding_variance_bound(&committee).unwrap();
     let h_passes = 2 * 100u128.pow(2) >= h_var;
 
-    assert!(s_passes,  "Singh must ADMIT deviation=100 at Epoch C (gate: ≥)");
+    assert!(
+        s_passes,
+        "Singh must ADMIT deviation=100 at Epoch C (gate: ≥)"
+    );
     assert!(!h_passes, "Hoeffding must REJECT deviation=100 at Epoch C");
 }
 
@@ -151,7 +160,10 @@ fn doctrine_singh_leq_hoeffding_across_all_epochs() {
         let committee = committee_epoch(&energies);
         let h = hoeffding_variance_bound(&committee).unwrap();
         let s = singh_variance_bound(&committee).unwrap();
-        assert!(s <= h, "Singh ({s}) must be ≤ Hoeffding ({h}) for energies={energies:?}");
+        assert!(
+            s <= h,
+            "Singh ({s}) must be ≤ Hoeffding ({h}) for energies={energies:?}"
+        );
     }
 }
 
@@ -172,8 +184,10 @@ fn decay_monotonically_shrinks_singh_variance() {
             c(0, 100, 100),
         ];
         let singh = singh_variance_bound(&committee).unwrap();
-        assert!(singh <= prev_singh,
-            "Singh σ² must be monotone non-increasing as V2 energy drops (e={e})");
+        assert!(
+            singh <= prev_singh,
+            "Singh σ² must be monotone non-increasing as V2 energy drops (e={e})"
+        );
         prev_singh = singh;
     }
 }
@@ -193,26 +207,48 @@ fn variance_bounds_are_deterministic() {
 
 #[test]
 fn adversarial_empty_list_fails_closed() {
-    assert_eq!(hoeffding_variance_bound(&[]).unwrap_err(), BoundError::Empty);
+    assert_eq!(
+        hoeffding_variance_bound(&[]).unwrap_err(),
+        BoundError::Empty
+    );
     assert_eq!(singh_variance_bound(&[]).unwrap_err(), BoundError::Empty);
-    assert!(passes_singh_gate(10, &[], 1).is_err(),
-        "passes_singh_gate on empty list must fail");
+    assert!(
+        passes_singh_gate(10, &[], 1).is_err(),
+        "passes_singh_gate on empty list must fail"
+    );
 }
 
 #[test]
 fn adversarial_invalid_range_lo_gt_hi_rejected() {
     let bad = vec![c(100, 10, 1_000)]; // lo=100 > hi=10
     let err = hoeffding_variance_bound(&bad).unwrap_err();
-    assert!(matches!(err, BoundError::InvalidRange { lo: 100, hi: 10, .. }));
+    assert!(matches!(
+        err,
+        BoundError::InvalidRange {
+            lo: 100,
+            hi: 10,
+            ..
+        }
+    ));
     let err2 = singh_variance_bound(&bad).unwrap_err();
-    assert!(matches!(err2, BoundError::InvalidRange { lo: 100, hi: 10, .. }));
+    assert!(matches!(
+        err2,
+        BoundError::InvalidRange {
+            lo: 100,
+            hi: 10,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn adversarial_all_zero_energy_fails_closed() {
     let all_dead = vec![c(0, 100, 0), c(0, 100, 0), c(0, 100, 0)];
-    assert_eq!(singh_variance_bound(&all_dead).unwrap_err(), BoundError::ZeroEMax,
-        "all-zero energy must fail closed (ZeroEMax)");
+    assert_eq!(
+        singh_variance_bound(&all_dead).unwrap_err(),
+        BoundError::ZeroEMax,
+        "all-zero energy must fail closed (ZeroEMax)"
+    );
 }
 
 #[test]

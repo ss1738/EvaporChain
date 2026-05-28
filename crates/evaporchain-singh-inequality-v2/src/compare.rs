@@ -176,7 +176,11 @@ mod tests {
         let bad = vec![cv(100, 5, 1000, 0)];
         let r = bernstein_strictly_tighter(10, &bad, 1);
         match r {
-            Err(BernsteinError::InvalidRange { idx: 0, lo: 100, hi: 5 }) => {}
+            Err(BernsteinError::InvalidRange {
+                idx: 0,
+                lo: 100,
+                hi: 5,
+            }) => {}
             other => panic!("expected InvalidRange, got {other:?}"),
         }
     }

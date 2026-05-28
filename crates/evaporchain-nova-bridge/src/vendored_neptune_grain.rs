@@ -63,7 +63,9 @@ impl VendoredGrain {
     /// (matches neptune `Grain::new`).
     pub fn new(init_sequence: Vec<bool>) -> Self {
         assert_eq!(80, init_sequence.len());
-        let mut g = VendoredGrain { state: init_sequence };
+        let mut g = VendoredGrain {
+            state: init_sequence,
+        };
         for _ in 0..160 {
             g.generate_new_bit();
         }
@@ -72,12 +74,8 @@ impl VendoredGrain {
     }
 
     fn generate_new_bit(&mut self) -> bool {
-        let new_bit = self.bit(62)
-            ^ self.bit(51)
-            ^ self.bit(38)
-            ^ self.bit(23)
-            ^ self.bit(13)
-            ^ self.bit(0);
+        let new_bit =
+            self.bit(62) ^ self.bit(51) ^ self.bit(38) ^ self.bit(23) ^ self.bit(13) ^ self.bit(0);
         self.state.remove(0);
         self.state.push(new_bit);
         new_bit
@@ -134,8 +132,8 @@ pub fn vendored_first_ark_bn254() -> ark_bn254::Fr {
         let mut repr_be = [0u8; 32];
         g.get_next_bytes_bn254(&mut repr_be);
         repr_be.reverse(); // now LE
-        // Try to interpret as Fr. Bias-rejection: if value ≥ MODULUS,
-        // skip and try next.
+                           // Try to interpret as Fr. Bias-rejection: if value ≥ MODULUS,
+                           // skip and try next.
         let candidate = ark_bn254::Fr::from_le_bytes_mod_order(&repr_be);
         let canonical_le = ark_ff::BigInteger::to_bytes_le(&candidate.into_bigint());
         let mut canonical_32 = [0u8; 32];
@@ -149,7 +147,9 @@ pub fn vendored_first_ark_bn254() -> ark_bn254::Fr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grain_lfsr::{generate_round_constants_bn254_arity_24_standard, GrainSeedParams, grain_seed_state};
+    use crate::grain_lfsr::{
+        generate_round_constants_bn254_arity_24_standard, grain_seed_state, GrainSeedParams,
+    };
 
     #[test]
     fn vendored_seed_matches_our_seed_bytewise() {

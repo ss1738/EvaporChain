@@ -1422,8 +1422,7 @@ fn require_custodial_ownership(
     user_id: Option<i64>,
     addr_hex: &str,
 ) -> Result<(), String> {
-    let user_id =
-        user_id.ok_or("custodial signing requires an authenticated session")?;
+    let user_id = user_id.ok_or("custodial signing requires an authenticated session")?;
     let user_db = state
         .user_db
         .as_ref()
@@ -1431,10 +1430,7 @@ fn require_custodial_ownership(
     match user_db.get_wallet_owner(addr_hex) {
         Ok(Some(owner_id)) if owner_id == user_id => Ok(()),
         Ok(Some(_)) => Err("address does not belong to your account".into()),
-        Ok(None) => {
-            Err("no owner record for this address — custodial signing denied"
-                .into())
-        }
+        Ok(None) => Err("no owner record for this address — custodial signing denied".into()),
         Err(e) => Err(format!("unable to verify wallet ownership: {e}")),
     }
 }
@@ -3493,7 +3489,11 @@ async fn post_hbct_seed_demo(
 ) -> Json<HbctSeedDemoResp> {
     // Audit E5: seed endpoints write demo state; admin-gate to prevent pollution.
     if require_admin_auth(&headers).is_err() {
-        return Json(HbctSeedDemoResp { status: "error", minted_positions: 0, detail: "unauthorized".into() });
+        return Json(HbctSeedDemoResp {
+            status: "error",
+            minted_positions: 0,
+            detail: "unauthorized".into(),
+        });
     }
     // Realistic-shaped demo positions. Locations are GB BMU codes +
     // German bidding zone; holders are deterministic stand-ins.
@@ -3710,7 +3710,10 @@ async fn post_hbct_tick(
 ) -> Json<HbctTickResp> {
     // Audit E5: auto-burn tick is a state mutation; admin-gate to prevent unauthorized burns.
     if require_admin_auth(&headers).is_err() {
-        return Json(HbctTickResp { entries_removed: 0, mwh_burnt: 0 });
+        return Json(HbctTickResp {
+            entries_removed: 0,
+            mwh_burnt: 0,
+        });
     }
     let mut book = safe_lock(&state.hbct_book);
     let outcome = evaporchain_hbct::auto_burn_at_slot_close(&mut book, req.current_epoch);
@@ -4003,7 +4006,11 @@ async fn post_sentinel_seed_demo(
 ) -> Json<SentinelSeedDemoResp> {
     // Audit E5: governance demo seed writes to state; admin-gate.
     if require_admin_auth(&headers).is_err() {
-        return Json(SentinelSeedDemoResp { status: "error", registered: vec![], detail: "unauthorized".into() });
+        return Json(SentinelSeedDemoResp {
+            status: "error",
+            registered: vec![],
+            detail: "unauthorized".into(),
+        });
     }
     // (id, current, min, max). Realistic-shaped chain knobs.
     let params: &[(u32, u64, u64, u64)] = &[
@@ -4062,7 +4069,11 @@ async fn post_sentinel_seed_votes(
 ) -> Json<SentinelSeedVotesResp> {
     // Audit E5: governance vote seeding writes to state; admin-gate.
     if require_admin_auth(&headers).is_err() {
-        return Json(SentinelSeedVotesResp { status: "error", votes_recorded: 0, detail: "unauthorized".into() });
+        return Json(SentinelSeedVotesResp {
+            status: "error",
+            votes_recorded: 0,
+            detail: "unauthorized".into(),
+        });
     }
     // Deterministic vote slate: 3 demo validators, each voting for a
     // target near the parameter's max (to make drift visible upward).
@@ -4186,7 +4197,13 @@ async fn post_sentinel_tick(
 ) -> Json<SentinelParameterResp> {
     // Audit E4: sentinel tick (parameter adjustment) must be admin-gated.
     if require_admin_auth(&headers).is_err() {
-        return Json(SentinelParameterResp { id: req.parameter_id, current: 0, min: 0, max: 0, vote_count: 0 });
+        return Json(SentinelParameterResp {
+            id: req.parameter_id,
+            current: 0,
+            min: 0,
+            max: 0,
+            vote_count: 0,
+        });
     }
     let mut db = safe_lock(&state.db);
     let votes = db.get_sentinel_votes(req.parameter_id);
@@ -7298,11 +7315,7 @@ async fn post_antichain_compute(Json(req): Json<AntichainComputeReq>) -> Json<se
         req.threshold,
     );
 
-    let member_ids: Vec<String> = antichain
-        .members()
-        .iter()
-        .map(hex::encode)
-        .collect();
+    let member_ids: Vec<String> = antichain.members().iter().map(hex::encode).collect();
     Json(serde_json::json!({
         "status": "ok",
         "antichain_size": member_ids.len(),
@@ -8104,11 +8117,7 @@ async fn post_mera_commit(Json(req): Json<MeraCommitReq>) -> Json<serde_json::Va
     let lhl = req.lambda_half_life.max(1);
     let bhl = req.base_half_life.max(1);
     let (commitment, _tree) = commit(&req.energies, lhl, bhl);
-    let layer_hashes_hex: Vec<String> = commitment
-        .layer_hashes
-        .iter()
-        .map(hex::encode)
-        .collect();
+    let layer_hashes_hex: Vec<String> = commitment.layer_hashes.iter().map(hex::encode).collect();
     Json(serde_json::json!({
         "status": "ok",
         "n_accounts": commitment.n_accounts,
@@ -9436,7 +9445,10 @@ async fn get_latest_light_header(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let history = safe_lock(&state.block_history);
-    let latest_height = history.back().map(|b| b.number).ok_or(StatusCode::NOT_FOUND)?;
+    let latest_height = history
+        .back()
+        .map(|b| b.number)
+        .ok_or(StatusCode::NOT_FOUND)?;
     drop(history);
     let block = store
         .load_full_block(latest_height)
@@ -10358,12 +10370,8 @@ async fn get_account_demurrage_preview(
     drop(db);
 
     let params = evaporchain_demurrage::DemurrageParams::default();
-    let pending = evaporchain_demurrage::demurrage_owed(
-        balance,
-        last_touched_epoch,
-        current_epoch,
-        &params,
-    );
+    let pending =
+        evaporchain_demurrage::demurrage_owed(balance, last_touched_epoch, current_epoch, &params);
     let elapsed_epochs = current_epoch.saturating_sub(last_touched_epoch);
 
     Ok(Json(serde_json::json!({
@@ -10788,7 +10796,10 @@ async fn post_transfer(
                     success: false,
                     message: format!(
                         "Insufficient balance: {} < {} (amount {} + gas {})",
-                        acct.balance, required, req.amount, evaporchain_execution::GAS_TRANSFER
+                        acct.balance,
+                        required,
+                        req.amount,
+                        evaporchain_execution::GAS_TRANSFER
                     ),
                     tx_hash: None,
                 });
@@ -11046,7 +11057,10 @@ async fn post_delegate(
                     success: false,
                     message: format!(
                         "Insufficient balance: {} < {} (amount {} + gas {})",
-                        acct.balance, required, req.amount, evaporchain_execution::GAS_DELEGATE
+                        acct.balance,
+                        required,
+                        req.amount,
+                        evaporchain_execution::GAS_DELEGATE
                     ),
                     tx_hash: None,
                 });
@@ -11177,7 +11191,8 @@ async fn post_undelegate(
                     success: false,
                     message: format!(
                         "Insufficient balance for gas: {} < {}",
-                        acct.balance, evaporchain_execution::GAS_DELEGATE
+                        acct.balance,
+                        evaporchain_execution::GAS_DELEGATE
                     ),
                     tx_hash: None,
                 });
@@ -11305,7 +11320,8 @@ async fn post_claim_delegation(
                     success: false,
                     message: format!(
                         "Insufficient balance for gas: {} < {}",
-                        acct.balance, evaporchain_execution::GAS_DELEGATE
+                        acct.balance,
+                        evaporchain_execution::GAS_DELEGATE
                     ),
                     tx_hash: None,
                 });
@@ -11455,11 +11471,9 @@ async fn post_create_object(
     // this catches both at submission and returns a clear error.
     {
         let estimated_gas = evaporchain_execution::GAS_CREATE_OBJECT_BASE.saturating_add(
-            evaporchain_execution::GAS_CREATE_OBJECT_PER_BYTE
-                .saturating_mul(data.len() as u64),
+            evaporchain_execution::GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(data.len() as u64),
         );
-        let required = estimated_gas
-            .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+        let required = estimated_gas.saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
         let db = safe_lock(&state.db);
         if let Some(acct) = db.get_account(&creator) {
             if acct.balance < required {
@@ -11682,7 +11696,8 @@ async fn post_batch(
                         BatchItemResult {
                             index: i,
                             success: false,
-                            message: "Transfer rejected: mempool full or per-account cap reached".into(),
+                            message: "Transfer rejected: mempool full or per-account cap reached"
+                                .into(),
                             tx_hash: None,
                         }
                     }
@@ -11736,7 +11751,9 @@ async fn post_batch(
                             BatchItemResult {
                                 index: i,
                                 success: false,
-                                message: "CreateObject rejected: mempool full or per-account cap reached".into(),
+                                message:
+                                    "CreateObject rejected: mempool full or per-account cap reached"
+                                        .into(),
                                 tx_hash: None,
                             }
                         }
@@ -11774,7 +11791,8 @@ async fn post_batch(
                         BatchItemResult {
                             index: i,
                             success: false,
-                            message: "Refresh rejected: mempool full or per-account cap reached".into(),
+                            message: "Refresh rejected: mempool full or per-account cap reached"
+                                .into(),
                             tx_hash: None,
                         }
                     }
@@ -11811,7 +11829,8 @@ async fn post_batch(
                         BatchItemResult {
                             index: i,
                             success: false,
-                            message: "Resurrect rejected: mempool full or per-account cap reached".into(),
+                            message: "Resurrect rejected: mempool full or per-account cap reached"
+                                .into(),
                             tx_hash: None,
                         }
                     }
@@ -12451,7 +12470,10 @@ async fn get_script(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> 
         tc.script_engine().get(id).map(|sc| script_to_json!(sc))
     } else {
         let c = safe_lock(&state.consensus);
-        c.executor.script_engine.get(id).map(|sc| script_to_json!(sc))
+        c.executor
+            .script_engine
+            .get(id)
+            .map(|sc| script_to_json!(sc))
     };
     match found {
         Some(resp) => (StatusCode::OK, Json(resp)).into_response(),
@@ -12469,10 +12491,15 @@ async fn get_script_abi(
 ) -> impl IntoResponse {
     let found = if let Some(tc_arc) = state.tendermint.as_ref() {
         let tc = safe_lock(tc_arc);
-        tc.script_engine().get(id).map(|sc| serde_json::to_value(&sc.abi).unwrap())
+        tc.script_engine()
+            .get(id)
+            .map(|sc| serde_json::to_value(&sc.abi).unwrap())
     } else {
         let c = safe_lock(&state.consensus);
-        c.executor.script_engine.get(id).map(|sc| serde_json::to_value(&sc.abi).unwrap())
+        c.executor
+            .script_engine
+            .get(id)
+            .map(|sc| serde_json::to_value(&sc.abi).unwrap())
     };
     match found {
         Some(abi) => (StatusCode::OK, Json(abi)).into_response(),
@@ -12514,7 +12541,10 @@ async fn healthz() -> impl IntoResponse {
 }
 
 async fn readyz(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let block_history = state.block_history.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let block_history = state.block_history.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let has_blocks = !block_history.is_empty();
     let tip_height = block_history.back().map(|b| b.number).unwrap_or(0);
     drop(block_history);
@@ -12879,12 +12909,14 @@ async fn wallet_sign_tx(
     // A1: capture user_id so we can verify wallet ownership below.
     let user_id = match require_tx_auth(&headers, &state, false) {
         Ok(uid) => uid,
-        Err(Json(e)) => return Json(WalletSignTxResp {
-            success: false,
-            message: e.message,
-            signed_tx: None,
-            tx_hash: None,
-        }),
+        Err(Json(e)) => {
+            return Json(WalletSignTxResp {
+                success: false,
+                message: e.message,
+                signed_tx: None,
+                tx_hash: None,
+            })
+        }
     };
 
     let from_addr = match parse_hex_address(&req.from) {
@@ -13251,10 +13283,7 @@ async fn post_faucet_token(
                         token_symbol: req.token_symbol.clone(),
                         recipient: req.recipient.clone(),
                         new_balance: 0,
-                        message: Some(format!(
-                            "token '{}' not deployed",
-                            req.token_symbol
-                        )),
+                        message: Some(format!("token '{}' not deployed", req.token_symbol)),
                     }),
                 );
             }
@@ -13369,8 +13398,7 @@ async fn post_faucet_bundle(
             evp_credited: evp_amount,
             tokens_credited,
             message: Some(
-                "EVP transfer queued for next block; token credits applied immediately."
-                    .into(),
+                "EVP transfer queued for next block; token credits applied immediately.".into(),
             ),
         }),
     )
@@ -14536,15 +14564,25 @@ async fn post_pool_mint(
     }
     let amt_x: u128 = match req.amount_x.parse() {
         Ok(v) => v,
-        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_x must be a u128 decimal string"})),
+        Err(_) => {
+            return Json(
+                serde_json::json!({"success": false, "message": "amount_x must be a u128 decimal string"}),
+            )
+        }
     };
     let amt_y: u128 = match req.amount_y.parse() {
         Ok(v) => v,
-        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_y must be a u128 decimal string"})),
+        Err(_) => {
+            return Json(
+                serde_json::json!({"success": false, "message": "amount_y must be a u128 decimal string"}),
+            )
+        }
     };
     let mut pools = safe_lock(&state.singh_pools);
     let Some(pool) = pools.get_mut(&id) else {
-        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+        return Json(
+            serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}),
+        );
     };
     let holder = evaporchain_cl_amm::HolderId(holder_addr);
     let result = pool.mint_initial(holder, amt_x, amt_y, req.anchor_energy, req.epoch);
@@ -14595,11 +14633,17 @@ async fn post_pool_withdraw(
     }
     let shares: u128 = match req.shares_to_burn.parse() {
         Ok(v) => v,
-        Err(_) => return Json(serde_json::json!({"success": false, "message": "shares_to_burn must be a u128 decimal string"})),
+        Err(_) => {
+            return Json(
+                serde_json::json!({"success": false, "message": "shares_to_burn must be a u128 decimal string"}),
+            )
+        }
     };
     let mut pools = safe_lock(&state.singh_pools);
     let Some(pool) = pools.get_mut(&id) else {
-        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+        return Json(
+            serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}),
+        );
     };
     let holder = evaporchain_cl_amm::HolderId(holder_addr);
     let result = pool.withdraw(holder, shares);
@@ -14638,11 +14682,17 @@ async fn post_pool_swap_x_for_y(
     }
     let amt: u128 = match req.amount_in.parse() {
         Ok(v) => v,
-        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_in must be a u128 decimal string"})),
+        Err(_) => {
+            return Json(
+                serde_json::json!({"success": false, "message": "amount_in must be a u128 decimal string"}),
+            )
+        }
     };
     let mut pools = safe_lock(&state.singh_pools);
     let Some(pool) = pools.get_mut(&id) else {
-        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+        return Json(
+            serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}),
+        );
     };
     let result = pool.swap_x_for_y(amt);
     let response = match result {
@@ -14674,11 +14724,17 @@ async fn post_pool_swap_y_for_x(
     }
     let amt: u128 = match req.amount_in.parse() {
         Ok(v) => v,
-        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_in must be a u128 decimal string"})),
+        Err(_) => {
+            return Json(
+                serde_json::json!({"success": false, "message": "amount_in must be a u128 decimal string"}),
+            )
+        }
     };
     let mut pools = safe_lock(&state.singh_pools);
     let Some(pool) = pools.get_mut(&id) else {
-        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+        return Json(
+            serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}),
+        );
     };
     let result = pool.swap_y_for_x(amt);
     let response = match result {
@@ -14730,7 +14786,9 @@ async fn post_pool_reanchor(
     }
     let mut pools = safe_lock(&state.singh_pools);
     let Some(pool) = pools.get_mut(&id) else {
-        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+        return Json(
+            serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}),
+        );
     };
     let holder = evaporchain_cl_amm::HolderId(holder_addr);
     let result = pool.reanchor(holder, req.anchor_energy, req.epoch);
@@ -14833,9 +14891,7 @@ async fn post_swap_quote(
                         // (Uniswap-v2 convention on input side). Compute the
                         // displayed `fee` as the input-side fee for parity
                         // with the oracle-path response shape.
-                        let fee_input = amount_in_u128
-                            .saturating_mul(pool.fee_bp as u128)
-                            / 10_000;
+                        let fee_input = amount_in_u128.saturating_mul(pool.fee_bp as u128) / 10_000;
                         let rate = if amount_in_u128 > 0 {
                             out as f64 / amount_in_u128 as f64
                         } else {
@@ -14944,8 +15000,7 @@ async fn post_swap_execute(
                             out_u128 as u64
                         };
                         // Pool-route slippage: req.amount × (1 − slippage%).
-                        let min_out =
-                            (req.amount as f64 * (1.0 - req.slippage / 100.0)) as u64;
+                        let min_out = (req.amount as f64 * (1.0 - req.slippage / 100.0)) as u64;
                         if out_u64 < min_out {
                             return Json(TxResultResponse {
                                 success: false,
@@ -14971,8 +15026,7 @@ async fn post_swap_execute(
         let gross_out = (req.amount as f64 * rate) as u64;
         let fee = (gross_out * SWAP_FEE_BPS / 10_000).max(1);
         let out = gross_out.saturating_sub(fee);
-        let min_out =
-            (req.amount as f64 * rate * (1.0 - req.slippage / 100.0)) as u64;
+        let min_out = (req.amount as f64 * rate * (1.0 - req.slippage / 100.0)) as u64;
         if out < min_out {
             return Json(TxResultResponse {
                 success: false,
@@ -15028,11 +15082,16 @@ async fn post_swap_execute(
                 .find(|t| t.symbol.to_ascii_uppercase() == from_upper)
             {
                 Some(t) => t,
-                None => return Json(TxResultResponse {
-                    success: false,
-                    message: format!("internal: from_token {} not found after is_token check", from_upper),
-                    tx_hash: None,
-                }),
+                None => {
+                    return Json(TxResultResponse {
+                        success: false,
+                        message: format!(
+                            "internal: from_token {} not found after is_token check",
+                            from_upper
+                        ),
+                        tx_hash: None,
+                    })
+                }
             };
             token.tick_decay(epoch);
             let bal = token.balances.entry(holder_key.clone()).or_insert(0);
@@ -15065,11 +15124,16 @@ async fn post_swap_execute(
                 .find(|t| t.symbol.to_ascii_uppercase() == to_upper)
             {
                 Some(t) => t,
-                None => return Json(TxResultResponse {
-                    success: false,
-                    message: format!("internal: to_token {} not found after is_token check", to_upper),
-                    tx_hash: None,
-                }),
+                None => {
+                    return Json(TxResultResponse {
+                        success: false,
+                        message: format!(
+                            "internal: to_token {} not found after is_token check",
+                            to_upper
+                        ),
+                        tx_hash: None,
+                    })
+                }
             };
             token.tick_decay(epoch);
             let bal = token.balances.entry(holder_key.clone()).or_insert(0);
@@ -15140,7 +15204,10 @@ fn oracle_rate(state: &ApiState, from: &str, to: &str) -> f64 {
     }
 
     let (from_usd, to_usd) = if let Some(ref ob) = state.oracle_bridge {
-        let bridge = ob.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+        let bridge = ob.lock().unwrap_or_else(|p| {
+            tracing::warn!("Recovered poisoned lock");
+            p.into_inner()
+        });
         let f = if from_u == "EVAP" {
             bridge
                 .get_twap("evap_usd")
@@ -16395,7 +16462,11 @@ async fn post_admin_validator_reinstate(
     );
 
     Ok(Json(ReinstateValidatorResponse {
-        status: if added { "reinstated" } else { "already_present" },
+        status: if added {
+            "reinstated"
+        } else {
+            "already_present"
+        },
         validator_id: body.validator_id,
         stake: body.stake,
         validators_after,
@@ -17251,7 +17322,10 @@ async fn get_frontier_status(State(state): State<Arc<ApiState>>) -> impl IntoRes
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
-    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let fs = fs_arc.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let health = fs.energy_trie.health();
     let poha_dist = fs.poha.temperature_distribution();
 
@@ -17289,7 +17363,10 @@ async fn get_lazy_eval(
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
-    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let fs = fs_arc.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
 
     if let Some(object_id_hex) = params.object_id {
         let Ok(bytes) = hex::decode(&object_id_hex) else {
@@ -17355,7 +17432,10 @@ struct LazyEvalParams {
 // ─────────────── Data Availability Sampling ───────────────────────────────
 
 async fn get_da_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let store = state.da_store.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let blocks_with_da: Vec<u64> = store.keys().cloned().collect();
     let total = blocks_with_da.len();
     let latest = blocks_with_da.last().copied();
@@ -17371,7 +17451,10 @@ async fn get_da_sample(
     State(state): State<Arc<ApiState>>,
     Path((block, shard_index)): Path<(u64, usize)>,
 ) -> impl IntoResponse {
-    let store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let store = state.da_store.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -17392,7 +17475,13 @@ async fn get_da_sample(
     // Audit F1: BlockDA::new() failure crashes the node; return error response instead.
     let da = match evaporchain_da::block_da::BlockDA::new() {
         Ok(d) => d,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("DA init failed: {e}")}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("DA init failed: {e}")})),
+            )
+                .into_response()
+        }
     };
     match da.prove_shard(package, shard_index) {
         Ok(response) => Json(serde_json::json!({
@@ -17421,7 +17510,10 @@ async fn get_da_light_sample(
     State(state): State<Arc<ApiState>>,
     Path(block): Path<u64>,
 ) -> impl IntoResponse {
-    let store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let store = state.da_store.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -17442,7 +17534,13 @@ async fn get_da_light_sample(
     // Audit F1: BlockDA::new() failure crashes the node; return error response instead.
     let da = match evaporchain_da::block_da::BlockDA::new() {
         Ok(d) => d,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("DA init failed: {e}")}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("DA init failed: {e}")})),
+            )
+                .into_response()
+        }
     };
     let mut samples = Vec::new();
     let mut all_valid = true;
@@ -17481,7 +17579,10 @@ async fn get_da_cell_sample(
     State(state): State<Arc<ApiState>>,
     Path((block, row, col)): Path<(u64, usize, usize)>,
 ) -> impl IntoResponse {
-    let store = state.da_2d_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let store = state.da_2d_store.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -17540,7 +17641,10 @@ async fn get_da_2d_header(
     State(state): State<Arc<ApiState>>,
     Path(block): Path<u64>,
 ) -> impl IntoResponse {
-    let store = state.da_2d_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let store = state.da_2d_store.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -17567,7 +17671,10 @@ async fn get_da_2d_light_sample(
     State(state): State<Arc<ApiState>>,
     Path(block): Path<u64>,
 ) -> impl IntoResponse {
-    let store = state.da_2d_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let store = state.da_2d_store.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -17648,7 +17755,10 @@ async fn get_evaporation_da_proof(
         }
     };
 
-    let db = state.db.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let db = state.db.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let Some(ghost) = db.get_ghost(&object_id) else {
         return (
             StatusCode::NOT_FOUND,
@@ -17657,7 +17767,10 @@ async fn get_evaporation_da_proof(
             .into_response();
     };
 
-    let da_store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let da_store = state.da_store.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
 
     let evap_epoch = ghost.evaporated_at;
     let candidate_blocks: Vec<_> = da_store.keys().copied().collect();
@@ -17729,7 +17842,10 @@ async fn get_poha_certificate(
         )
             .into_response();
     };
-    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let fs = fs_arc.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
 
     if let Some(cert) = fs.poha.get(block_number) {
         let temp = cert.temperature();
@@ -17772,7 +17888,10 @@ async fn get_poha_certificates(State(state): State<Arc<ApiState>>) -> impl IntoR
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
-    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let fs = fs_arc.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let dist = fs.poha.temperature_distribution();
 
     let certs: Vec<_> = fs
@@ -17866,7 +17985,10 @@ async fn post_submit_encrypted_tx(
     };
 
     {
-        let mut pool = state.encrypted_mempool.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+        let mut pool = state.encrypted_mempool.lock().unwrap_or_else(|p| {
+            tracing::warn!("Recovered poisoned lock");
+            p.into_inner()
+        });
         pool.submit_encrypted(enc_tx);
     }
 
@@ -17914,7 +18036,10 @@ async fn post_reveal_encrypted_tx(
         safe_lock(&state.consensus).epoch()
     };
 
-    let mut pool = state.encrypted_mempool.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let mut pool = state.encrypted_mempool.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let revealed = pool.process_reveals(current_epoch, &[(commitment, nonce)]);
 
     if revealed.is_empty() {
@@ -17935,7 +18060,10 @@ async fn post_reveal_encrypted_tx(
 }
 
 async fn get_encrypted_mempool_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let pool = state.encrypted_mempool.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let pool = state.encrypted_mempool.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let (encrypted, plaintext) = pool.pending_count();
     Json(serde_json::json!({
         "encrypted_pending": encrypted,
@@ -17968,7 +18096,10 @@ fn hex_to_32(s: &str) -> Option<[u8; 32]> {
 // ─────────────────── Light Client ────────────────────────────────────────
 
 async fn get_light_client_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let lc = state.light_client.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let lc = state.light_client.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let latest = lc.latest_trusted_height();
     Json(serde_json::json!({
         "latest_trusted_height": latest,
@@ -18009,7 +18140,10 @@ async fn post_verify_header(
         }
     };
 
-    let lc = state.light_client.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let lc = state.light_client.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let trusted = lc.trusted_state_at(body.height);
     match trusted {
         Some(ts) => {
@@ -18036,7 +18170,10 @@ async fn get_trusted_header(
     State(state): State<Arc<ApiState>>,
     Path(height): Path<u64>,
 ) -> impl IntoResponse {
-    let lc = state.light_client.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let lc = state.light_client.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     match lc.trusted_state_at(height) {
         Some(ts) => Json(serde_json::json!({
             "found": true,
@@ -18061,7 +18198,10 @@ async fn get_trusted_header(
 
 async fn get_weak_subjectivity_checkpoint(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     if let Some(ref tc_arc) = state.tendermint {
-        let tc = tc_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+        let tc = tc_arc.lock().unwrap_or_else(|p| {
+            tracing::warn!("Recovered poisoned lock");
+            p.into_inner()
+        });
         let ws_period = tc.weak_subjectivity_period();
         let trusted = tc.trusted_checkpoint();
         let latest = tc.latest_checkpoint();
@@ -18092,7 +18232,10 @@ async fn get_weak_subjectivity_checkpoint(State(state): State<Arc<ApiState>>) ->
 }
 
 async fn get_finality(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let ft = state.finality_tracker.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let ft = state.finality_tracker.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     let latest = ft.latest_finalized_height();
     let stats = ft.stats(100);
     let latest_proof = ft.generate_proof(latest);
@@ -18122,7 +18265,10 @@ async fn get_finality_proof(
     State(state): State<Arc<ApiState>>,
     Path(height): Path<u64>,
 ) -> impl IntoResponse {
-    let ft = state.finality_tracker.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let ft = state.finality_tracker.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     match ft.generate_proof(height) {
         Some(proof) => Json(serde_json::json!({
             "found": true,
@@ -18154,7 +18300,10 @@ async fn get_finality_proof(
 ///   newest first, sourced from the consensus engine's ring buffer.
 async fn get_finality_gap(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let (unfinalised, worst_ms, recent) = if let Some(tc) = &state.tendermint {
-        let tc = tc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+        let tc = tc.lock().unwrap_or_else(|p| {
+            tracing::warn!("Recovered poisoned lock");
+            p.into_inner()
+        });
         (
             tc.unfinalised_tail(),
             tc.worst_unfinalised_gap_ms(),
@@ -18204,9 +18353,9 @@ async fn get_finality_gap(State(state): State<Arc<ApiState>>) -> impl IntoRespon
 #[derive(Serialize)]
 struct BridgeFinalisedHeader {
     height: u64,
-    block_hash: String,  // 0x-hex 32 bytes
-    state_root: String,  // 0x-hex 32 bytes
-    mmr_root: String,    // 0x-hex 32 bytes
+    block_hash: String, // 0x-hex 32 bytes
+    state_root: String, // 0x-hex 32 bytes
+    mmr_root: String,   // 0x-hex 32 bytes
     epoch: u64,
 }
 
@@ -18236,13 +18385,13 @@ async fn get_bridge_finalized_headers(
     State(state): State<Arc<ApiState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let from: u64 = params
-        .get("from")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let from: u64 = params.get("from").and_then(|v| v.parse().ok()).unwrap_or(0);
 
     let latest_finalized = {
-        let ft = state.finality_tracker.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+        let ft = state.finality_tracker.lock().unwrap_or_else(|p| {
+            tracing::warn!("Recovered poisoned lock");
+            p.into_inner()
+        });
         ft.latest_finalized_height()
     };
 
@@ -18267,7 +18416,12 @@ async fn get_bridge_finalized_headers(
             height: block.number,
             block_hash: format!(
                 "0x{}",
-                hex::encode(block.commit_certificate.as_ref().map_or([0u8; 32], |c| c.block_hash))
+                hex::encode(
+                    block
+                        .commit_certificate
+                        .as_ref()
+                        .map_or([0u8; 32], |c| c.block_hash)
+                )
             ),
             state_root: format!("0x{}", hex::encode(block.state_root)),
             mmr_root: format!("0x{}", hex::encode(mmr_root)),
@@ -18314,7 +18468,9 @@ async fn get_bridge_commit_cert(
     let Some(cert) = block.commit_certificate else {
         return (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "block has no commit certificate (not yet finalised)"})),
+            Json(
+                serde_json::json!({"error": "block has no commit certificate (not yet finalised)"}),
+            ),
         )
             .into_response();
     };
@@ -18333,11 +18489,7 @@ async fn get_bridge_commit_cert(
             .validator_set()
             .validators()
             .iter()
-            .filter_map(|v| {
-                v.bls_public_key
-                    .as_ref()
-                    .map(|pk| (v.id, pk.clone()))
-            })
+            .filter_map(|v| v.bls_public_key.as_ref().map(|pk| (v.id, pk.clone())))
             .collect();
         vs.sort_by_key(|(id, _)| *id);
         vs
@@ -18431,7 +18583,10 @@ async fn get_bridge_validators(
 }
 
 async fn get_sync_snapshot_info(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let info = state.snapshot_info.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
+    let info = state.snapshot_info.lock().unwrap_or_else(|p| {
+        tracing::warn!("Recovered poisoned lock");
+        p.into_inner()
+    });
     match *info {
         Some((height, state_root, data_len)) => Json(serde_json::json!({
             "available": true,
@@ -19262,8 +19417,14 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/finality/proof/:height", get(get_finality_proof))
         .route("/api/finality/gap", get(get_finality_gap))
         // Ethereum bridge relayer endpoints
-        .route("/api/bridge/headers/finalized", get(get_bridge_finalized_headers))
-        .route("/api/bridge/headers/:height/commit_cert", get(get_bridge_commit_cert))
+        .route(
+            "/api/bridge/headers/finalized",
+            get(get_bridge_finalized_headers),
+        )
+        .route(
+            "/api/bridge/headers/:height/commit_cert",
+            get(get_bridge_commit_cert),
+        )
         .route("/api/bridge/validators", get(get_bridge_validators))
         // State sync
         .route("/api/sync/snapshot-info", get(get_sync_snapshot_info))
@@ -20221,11 +20382,13 @@ mod parse_swap_addr_tests {
         // Zero-padded 32-byte form must land on the same holder key as
         // the bare 20-byte form (so a caller can pass either).
         let bare_20 = "0x7f3a8b2ce419d605a1c74e823fb960d4159ae378";
-        let padded_32 =
-            "0x0000000000000000000000007f3a8b2ce419d605a1c74e823fb960d4159ae378";
+        let padded_32 = "0x0000000000000000000000007f3a8b2ce419d605a1c74e823fb960d4159ae378";
         let (k1, a1) = parse_swap_addr(bare_20).unwrap();
         let (k2, a2) = parse_swap_addr(padded_32).unwrap();
-        assert_eq!(k1, k2, "20-byte and zero-padded-32-byte must share holder key");
+        assert_eq!(
+            k1, k2,
+            "20-byte and zero-padded-32-byte must share holder key"
+        );
         assert_eq!(a1, a2, "and chain address bytes must be identical");
     }
 
@@ -20252,7 +20415,10 @@ mod parse_swap_addr_tests {
         // Mixed-case input must canonicalise to lowercase for HashMap key stability.
         let upper = "0x7F3A8B2CE419D605A1C74E823FB960D4159AE378";
         let lower = "0x7f3a8b2ce419d605a1c74e823fb960d4159ae378";
-        assert_eq!(parse_swap_addr(upper).unwrap().0, parse_swap_addr(lower).unwrap().0);
+        assert_eq!(
+            parse_swap_addr(upper).unwrap().0,
+            parse_swap_addr(lower).unwrap().0
+        );
     }
 }
 
@@ -21831,7 +21997,11 @@ mod canonical_tx_hash_regression {
     fn canonical_hash_format_is_blake3_signable_bytes() {
         let tx = sample_transfer();
         let h = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-        assert_eq!(h.len(), 64, "canonical hash must be 64 hex chars (32 bytes)");
+        assert_eq!(
+            h.len(),
+            64,
+            "canonical hash must be 64 hex chars (32 bytes)"
+        );
         assert!(
             h.chars().all(|c| c.is_ascii_hexdigit()),
             "canonical hash must be all-hex"
@@ -21899,7 +22069,10 @@ mod canonical_tx_hash_regression {
         });
         let h5 = hex::encode(blake3::hash(&tx_n5.signable_bytes()).as_bytes());
         let h6 = hex::encode(blake3::hash(&tx_n6.signable_bytes()).as_bytes());
-        assert_ne!(h5, h6, "canonical hash must distinguish txs that differ only in nonce");
+        assert_ne!(
+            h5, h6,
+            "canonical hash must distinguish txs that differ only in nonce"
+        );
     }
 }
 
@@ -21954,7 +22127,10 @@ mod singh_pool_helpers {
     fn pool_id_for_pair_rejects_self_swap() {
         // from == to has no canonical pool — caller must oracle-fallback.
         assert!(pool_id_for_pair("EVAP", "EVAP").is_none());
-        assert!(pool_id_for_pair("evap", "EVAP").is_none(), "case-insensitive equality");
+        assert!(
+            pool_id_for_pair("evap", "EVAP").is_none(),
+            "case-insensitive equality"
+        );
     }
 
     #[test]
@@ -21963,7 +22139,8 @@ mod singh_pool_helpers {
         // returns the output. Original pool reserves must be untouched.
         let mut pool = SinghPool::new(30, 0).unwrap();
         let holder = HolderId([0xAA; 32]);
-        pool.mint_initial(holder, 1_000_000, 1_000_000, 1000, 0).unwrap();
+        pool.mint_initial(holder, 1_000_000, 1_000_000, 1000, 0)
+            .unwrap();
 
         let r_x_before = pool.reserve_x();
         let r_y_before = pool.reserve_y();
@@ -21971,11 +22148,22 @@ mod singh_pool_helpers {
 
         // Preview a swap.
         let out = pool_quote_preview(&pool, true, 100_000).unwrap();
-        assert!(out > 0, "non-trivial preview should yield a positive output");
+        assert!(
+            out > 0,
+            "non-trivial preview should yield a positive output"
+        );
 
         // Original pool unchanged.
-        assert_eq!(pool.reserve_x(), r_x_before, "reserve_x mutated by preview!");
-        assert_eq!(pool.reserve_y(), r_y_before, "reserve_y mutated by preview!");
+        assert_eq!(
+            pool.reserve_x(),
+            r_x_before,
+            "reserve_x mutated by preview!"
+        );
+        assert_eq!(
+            pool.reserve_y(),
+            r_y_before,
+            "reserve_y mutated by preview!"
+        );
         assert_eq!(pool.k(), k_before, "k invariant changed by preview!");
     }
 
@@ -21995,10 +22183,7 @@ mod singh_pool_helpers {
         let mut original_map: std::collections::BTreeMap<String, SinghPool> =
             std::collections::BTreeMap::new();
         original_map.insert("X-Y".to_string(), original_pool.clone());
-        original_map.insert(
-            "EVAP-FLUX".to_string(),
-            SinghPool::new(30, 0).unwrap(),
-        );
+        original_map.insert("EVAP-FLUX".to_string(), SinghPool::new(30, 0).unwrap());
 
         // Direct file write (mirrors persist_pools without needing a full
         // ApiState). Verifies the on-disk format is what load_pools reads.
@@ -22035,7 +22220,10 @@ mod singh_pool_helpers {
         let path = pool_state_path(Some(&dir)).unwrap();
         std::fs::write(&path, b"this is not bincode either").unwrap();
         let loaded = load_pools(Some(&dir));
-        assert!(loaded.is_empty(), "corrupted file → empty map (warn-logged)");
+        assert!(
+            loaded.is_empty(),
+            "corrupted file → empty map (warn-logged)"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -22077,7 +22265,10 @@ mod a2_settle_demurrage_pk_binding {
         let pk2: Vec<u8> = vec![0xBB; 1952];
         let addr1 = *blake3::hash(&pk1).as_bytes();
         let addr2 = *blake3::hash(&pk2).as_bytes();
-        assert_ne!(addr1, addr2, "different keys must produce different addresses");
+        assert_ne!(
+            addr1, addr2,
+            "different keys must produce different addresses"
+        );
     }
 }
 
@@ -22155,7 +22346,11 @@ mod a6_snapshot_rate_limit {
         let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
         let a = ip(7);
         for i in 0..SNAPSHOT_DOWNLOAD_PER_MINUTE {
-            assert!(check_snapshot_rate_limit(&mut m, a), "req {} should pass", i);
+            assert!(
+                check_snapshot_rate_limit(&mut m, a),
+                "req {} should pass",
+                i
+            );
         }
         assert!(
             !check_snapshot_rate_limit(&mut m, a),

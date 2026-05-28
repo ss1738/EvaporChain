@@ -36,7 +36,7 @@
 
 use evaporchain_energy_kernel::{ChainLambda, Lambda};
 use evaporchain_lambda_fold::{
-    fold, verify_folded, FoldedInstance, FoldError, StepWitness, VerifyError,
+    fold, verify_folded, FoldError, FoldedInstance, StepWitness, VerifyError,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -57,19 +57,25 @@ fn hash(b: u8) -> [u8; 32] {
 fn five_step_session() -> FoldedInstance {
     let λ = chain_lambda();
     let init = FoldedInstance::identity();
-    let s1 = fold(init, StepWitness::new(hash(0x01), 10_000, 0),   λ).unwrap();
-    let s2 = fold(s1,   StepWitness::new(hash(0x02),  8_000, 50),  λ).unwrap();
-    let s3 = fold(s2,   StepWitness::new(hash(0x03),  6_000, 100), λ).unwrap();
-    let s4 = fold(s3,   StepWitness::new(hash(0x04),  5_000, 200), λ).unwrap();
+    let s1 = fold(init, StepWitness::new(hash(0x01), 10_000, 0), λ).unwrap();
+    let s2 = fold(s1, StepWitness::new(hash(0x02), 8_000, 50), λ).unwrap();
+    let s3 = fold(s2, StepWitness::new(hash(0x03), 6_000, 100), λ).unwrap();
+    let s4 = fold(s3, StepWitness::new(hash(0x04), 5_000, 200), λ).unwrap();
     fold(s4, StepWitness::new(hash(0x05), 4_000, 400), λ).unwrap()
 }
 
 #[test]
 fn five_step_session_produces_correct_step_count_and_epoch() {
     let inst = five_step_session();
-    assert_eq!(inst.step_count,   5,   "five folds must yield step_count=5");
-    assert_eq!(inst.latest_epoch, 400, "latest_epoch must track the last step's epoch");
-    assert!(!inst.is_identity(), "folded instance with 5 steps must not be identity");
+    assert_eq!(inst.step_count, 5, "five folds must yield step_count=5");
+    assert_eq!(
+        inst.latest_epoch, 400,
+        "latest_epoch must track the last step's epoch"
+    );
+    assert!(
+        !inst.is_identity(),
+        "folded instance with 5 steps must not be identity"
+    );
 }
 
 #[test]
@@ -98,9 +104,9 @@ fn five_step_session_energy_at_one_halflife_exactly_halves_prior() {
     // Test this by comparing with/without step 5.
     let λ = chain_lambda();
     let init = FoldedInstance::identity();
-    let s1 = fold(init, StepWitness::new(hash(0x01), 10_000, 0),   λ).unwrap();
-    let s2 = fold(s1,   StepWitness::new(hash(0x02),  8_000, 50),  λ).unwrap();
-    let s3 = fold(s2,   StepWitness::new(hash(0x03),  6_000, 100), λ).unwrap();
+    let s1 = fold(init, StepWitness::new(hash(0x01), 10_000, 0), λ).unwrap();
+    let s2 = fold(s1, StepWitness::new(hash(0x02), 8_000, 50), λ).unwrap();
+    let s3 = fold(s2, StepWitness::new(hash(0x03), 6_000, 100), λ).unwrap();
     let after_s4 = fold(s3, StepWitness::new(hash(0x04), 5_000, 200), λ).unwrap();
 
     // Now fold step 5 at epoch 400 (200 elapsed from 200 = exactly 1 half-life).
@@ -122,17 +128,23 @@ fn acc_hash_changes_at_every_fold_step() {
     let λ = chain_lambda();
     let init = FoldedInstance::identity();
     let s1 = fold(init, StepWitness::new(hash(0x01), 1000, 0), λ).unwrap();
-    let s2 = fold(s1,   StepWitness::new(hash(0x02), 1000, 1), λ).unwrap();
-    let s3 = fold(s2,   StepWitness::new(hash(0x03), 1000, 2), λ).unwrap();
+    let s2 = fold(s1, StepWitness::new(hash(0x02), 1000, 1), λ).unwrap();
+    let s3 = fold(s2, StepWitness::new(hash(0x03), 1000, 2), λ).unwrap();
 
-    assert_ne!(init.acc_hash, s1.acc_hash, "fold from identity must change acc_hash");
-    assert_ne!(s1.acc_hash,   s2.acc_hash, "second fold must change acc_hash");
-    assert_ne!(s2.acc_hash,   s3.acc_hash, "third fold must change acc_hash");
+    assert_ne!(
+        init.acc_hash, s1.acc_hash,
+        "fold from identity must change acc_hash"
+    );
+    assert_ne!(s1.acc_hash, s2.acc_hash, "second fold must change acc_hash");
+    assert_ne!(s2.acc_hash, s3.acc_hash, "third fold must change acc_hash");
     // All four must be distinct.
     let hashes = [init.acc_hash, s1.acc_hash, s2.acc_hash, s3.acc_hash];
     for i in 0..4 {
-        for j in (i+1)..4 {
-            assert_ne!(hashes[i], hashes[j], "all acc_hashes must be distinct (i={i}, j={j})");
+        for j in (i + 1)..4 {
+            assert_ne!(
+                hashes[i], hashes[j],
+                "all acc_hashes must be distinct (i={i}, j={j})"
+            );
         }
     }
 }
@@ -176,11 +188,21 @@ fn doctrine_older_energy_decays_faster_than_recent() {
     let λ = chain_lambda();
     let energy = 10_000u64;
 
-    let early = fold(FoldedInstance::identity(), StepWitness::new(hash(0x01), energy, 0), λ).unwrap();
+    let early = fold(
+        FoldedInstance::identity(),
+        StepWitness::new(hash(0x01), energy, 0),
+        λ,
+    )
+    .unwrap();
     // Decay early from epoch=0 to epoch=200 by folding a zero-energy step.
     let early_at_200 = fold(early, StepWitness::new(hash(0x02), 0, 200), λ).unwrap();
 
-    let late = fold(FoldedInstance::identity(), StepWitness::new(hash(0x01), energy, 200), λ).unwrap();
+    let late = fold(
+        FoldedInstance::identity(),
+        StepWitness::new(hash(0x01), energy, 200),
+        λ,
+    )
+    .unwrap();
 
     // Energy from early step must have decayed to ~half (1 half-life elapsed).
     assert_eq!(
@@ -189,14 +211,14 @@ fn doctrine_older_energy_decays_faster_than_recent() {
         "after exactly 1 half-life, early energy must halve from {energy}"
     );
     assert_eq!(
-        late.total_energy_remaining,
-        energy as u128,
+        late.total_energy_remaining, energy as u128,
         "late step's energy (just added at epoch=200) must be intact"
     );
     assert!(
         early_at_200.total_energy_remaining < late.total_energy_remaining,
         "older energy ({}) must be less than newly-added energy ({})",
-        early_at_200.total_energy_remaining, late.total_energy_remaining
+        early_at_200.total_energy_remaining,
+        late.total_energy_remaining
     );
 }
 
@@ -211,7 +233,8 @@ fn adversarial_out_of_order_step_rejected() {
         FoldedInstance::identity(),
         StepWitness::new(hash(0x01), 1000, 50),
         λ,
-    ).unwrap();
+    )
+    .unwrap();
 
     let earlier = StepWitness::new(hash(0x02), 500, 40); // epoch < prev.latest_epoch
     let err = fold(s1, earlier, λ).unwrap_err();
@@ -259,7 +282,10 @@ fn adversarial_identity_fails_nonzero_energy_floor() {
     // The identity instance has zero energy. Any non-zero floor rejects it.
     let inst = FoldedInstance::identity();
     let err = verify_folded(&inst, inst.acc_hash, 1).unwrap_err();
-    assert!(matches!(err, VerifyError::EnergyBelowMinimum { got: 0, min: 1 }));
+    assert!(matches!(
+        err,
+        VerifyError::EnergyBelowMinimum { got: 0, min: 1 }
+    ));
 }
 
 #[test]
@@ -272,18 +298,23 @@ fn adversarial_different_step_hashes_produce_different_acc_hashes() {
         FoldedInstance::identity(),
         StepWitness::new(hash(0x01), 1000, 0),
         λ,
-    ).unwrap();
+    )
+    .unwrap();
 
     let forged = fold(
         FoldedInstance::identity(),
         StepWitness::new(hash(0xFF), 1000, 0), // different state_hash
         λ,
-    ).unwrap();
+    )
+    .unwrap();
 
     assert_ne!(
         genuine.acc_hash, forged.acc_hash,
         "different state_hash must produce different acc_hash"
     );
     // The energy is the same (same step_energy + epoch) — only the hash differs.
-    assert_eq!(genuine.total_energy_remaining, forged.total_energy_remaining);
+    assert_eq!(
+        genuine.total_energy_remaining,
+        forged.total_energy_remaining
+    );
 }

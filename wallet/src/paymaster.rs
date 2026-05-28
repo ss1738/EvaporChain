@@ -52,8 +52,8 @@ pub struct PaymasterClient {
 impl PaymasterClient {
     /// Build a client targeting `base_url` (e.g. `http://paymaster.example:8088`).
     pub fn new(base_url: &str) -> Result<Self, PaymasterClientError> {
-        let base_url = Url::parse(base_url)
-            .map_err(|e| PaymasterClientError::InvalidUrl(e.to_string()))?;
+        let base_url =
+            Url::parse(base_url).map_err(|e| PaymasterClientError::InvalidUrl(e.to_string()))?;
         Ok(Self {
             base_url,
             http: reqwest::Client::new(),
@@ -67,8 +67,8 @@ impl PaymasterClient {
         base_url: &str,
         http: reqwest::Client,
     ) -> Result<Self, PaymasterClientError> {
-        let base_url = Url::parse(base_url)
-            .map_err(|e| PaymasterClientError::InvalidUrl(e.to_string()))?;
+        let base_url =
+            Url::parse(base_url).map_err(|e| PaymasterClientError::InvalidUrl(e.to_string()))?;
         Ok(Self { base_url, http })
     }
 
@@ -301,7 +301,10 @@ mod tests {
         tokio::sync::oneshot::Sender<()>,
     ) {
         use axum::{
-            extract::State, http::StatusCode, routing::{get, post}, Json, Router,
+            extract::State,
+            http::StatusCode,
+            routing::{get, post},
+            Json, Router,
         };
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -534,7 +537,8 @@ mod tests {
 
         // Wallet-side keypair (the user).
         let user_kp = HybridKeypair::generate();
-        let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
+        let sender: AccountAddress =
+            evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
 
         // Wallet reads paymaster info.
         let info = client.info().await.unwrap();
@@ -758,14 +762,21 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("paymaster_keypair.json");
         let original = generate_keypair_to_file(&path).expect("generate");
-        let loaded =
-            evaporchain_paymaster::load_keypair_from_file(&path).expect("load");
+        let loaded = evaporchain_paymaster::load_keypair_from_file(&path).expect("load");
         // Functional equivalence: both keypairs sign+verify the same
         // canary.
         let msg = b"evaporchain-keypair-roundtrip-canary";
         let sig = original.sign(msg);
-        assert!(HybridVerifier::verify(msg, &sig, &original.public_key_bytes()));
+        assert!(HybridVerifier::verify(
+            msg,
+            &sig,
+            &original.public_key_bytes()
+        ));
         let sig2 = loaded.sign(msg);
-        assert!(HybridVerifier::verify(msg, &sig2, &loaded.public_key_bytes()));
+        assert!(HybridVerifier::verify(
+            msg,
+            &sig2,
+            &loaded.public_key_bytes()
+        ));
     }
 }

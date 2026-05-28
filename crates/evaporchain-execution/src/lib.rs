@@ -1249,7 +1249,7 @@ impl SimpleExecutor {
         // Without this, an attacker submits tx.from=victim, signs with attacker_sk;
         // HybridVerifier::verify passes (valid sig under attacker_pk), but the sig
         // authorises the attacker's key, not the victim's. Address derivation on this
-        // chain: address = blake3(pk_bytes). 
+        // chain: address = blake3(pk_bytes).
         // MultiSig uses a script-derived address — skip binding.
         // UserOp tx-level sig is always from tx.sender (user), not the paymaster.
         let binding_addr: Option<&evaporchain_types::AccountAddress> = match tx {
@@ -1725,10 +1725,9 @@ impl SimpleExecutor {
             // pending a refactor to wire `evaporchain-total-evaporscript`.
             // Leaving the runtime-gate intact so when the wiring lands
             // operators can flip the flag without code changes here.
-            let _ast = evaporchain_script::parser::parse(&tx.source_code)
-                .map_err(|e| ExecutionError::ScriptError(format!(
-                    "DeployScript parse (totality gate): {e}"
-                )))?;
+            let _ast = evaporchain_script::parser::parse(&tx.source_code).map_err(|e| {
+                ExecutionError::ScriptError(format!("DeployScript parse (totality gate): {e}"))
+            })?;
         }
 
         let id = self
@@ -1774,13 +1773,11 @@ impl SimpleExecutor {
         // Construct the request the canonical-byte way. Params arrive
         // as canonical JSON bytes — parse to Value for validation, and
         // re-serialise inside `materialise_request` if needed.
-        let params_value: serde_json::Value = serde_json::from_slice(&tx.params)
-            .map_err(|e| ExecutionError::ContractError(
-                format!("DeployTemplate: params not valid JSON: {e}")
-            ))?;
-        let descriptor = find(TemplateClass(tx.template_class)).map_err(|e| {
-            ExecutionError::ContractError(format!("DeployTemplate: {e}"))
+        let params_value: serde_json::Value = serde_json::from_slice(&tx.params).map_err(|e| {
+            ExecutionError::ContractError(format!("DeployTemplate: params not valid JSON: {e}"))
         })?;
+        let descriptor = find(TemplateClass(tx.template_class))
+            .map_err(|e| ExecutionError::ContractError(format!("DeployTemplate: {e}")))?;
 
         let request = DeployRequest {
             template_class: TemplateClass(tx.template_class),
@@ -1790,17 +1787,15 @@ impl SimpleExecutor {
             nonce: tx.nonce,
         };
 
-        validate_against_descriptor(&request, &descriptor).map_err(|e| {
-            ExecutionError::ContractError(format!("DeployTemplate schema: {e}"))
-        })?;
+        validate_against_descriptor(&request, &descriptor)
+            .map_err(|e| ExecutionError::ContractError(format!("DeployTemplate schema: {e}")))?;
 
         let instr = materialise_request(&request).map_err(|e| {
             ExecutionError::ContractError(format!("DeployTemplate materialise: {e}"))
         })?;
 
-        let _typed_init = engine_materialise(&instr).map_err(|e| {
-            ExecutionError::ContractError(format!("DeployTemplate engine: {e}"))
-        })?;
+        let _typed_init = engine_materialise(&instr)
+            .map_err(|e| ExecutionError::ContractError(format!("DeployTemplate engine: {e}")))?;
 
         // Anchor the deployer's last-touched epoch — same convention
         // CallContract uses so demurrage doesn't bill stale anchors.
@@ -2489,84 +2484,81 @@ impl SimpleExecutor {
         // ── Section 2: read + verify paymaster preconditions ─────────
         // Returns `Some((pm_addr, total_gas_cost))` on success so
         // section 3 can apply the mutations without re-reading.
-        let paymaster_state: Option<(evaporchain_types::AccountAddress, u64)> = if let Some(
-            ref paymaster,
-        ) = tx.paymaster
-        {
-            // Phase 4.1 (2026-05-03): paymaster_nonce required when
-            // paymaster is set, for replay protection.
-            let paymaster_nonce_arg = tx.paymaster_nonce.ok_or_else(|| {
-                ExecutionError::ContractError(
-                    "UserOpTx with paymaster must include paymaster_nonce \
+        let paymaster_state: Option<(evaporchain_types::AccountAddress, u64)> =
+            if let Some(ref paymaster) = tx.paymaster {
+                // Phase 4.1 (2026-05-03): paymaster_nonce required when
+                // paymaster is set, for replay protection.
+                let paymaster_nonce_arg = tx.paymaster_nonce.ok_or_else(|| {
+                    ExecutionError::ContractError(
+                        "UserOpTx with paymaster must include paymaster_nonce \
                      (replay protection — see audit §3 / 2026-05-03 closure)"
-                        .into(),
-                )
-            })?;
+                            .into(),
+                    )
+                })?;
 
-            // Day 1B (Option B paymaster, 2026-05-08): require + verify
-            // hybrid sponsorship signature. Without this, any user could
-            // forge `paymaster: <victim>` and drain the victim's balance.
-            // Verified unconditionally — paymaster debit is real state
-            // and must always carry proof of consent.
-            let pm_sig = tx.paymaster_signature.as_deref().ok_or_else(|| {
-                ExecutionError::ContractError(
-                    "UserOpTx with paymaster must include paymaster_signature \
+                // Day 1B (Option B paymaster, 2026-05-08): require + verify
+                // hybrid sponsorship signature. Without this, any user could
+                // forge `paymaster: <victim>` and drain the victim's balance.
+                // Verified unconditionally — paymaster debit is real state
+                // and must always carry proof of consent.
+                let pm_sig = tx.paymaster_signature.as_deref().ok_or_else(|| {
+                    ExecutionError::ContractError(
+                        "UserOpTx with paymaster must include paymaster_signature \
                      (sponsorship-consent — closes drain-by-forged-paymaster)"
-                        .into(),
-                )
-            })?;
-            let pm_pk = tx.paymaster_public_key.as_deref().ok_or_else(|| {
-                ExecutionError::ContractError(
-                    "UserOpTx with paymaster must include paymaster_public_key"
-                        .into(),
-                )
-            })?;
-            // Bind paymaster public key to paymaster address — must go
-            // through the DST-aware `address_from_pubkey` helper so the
-            // verification side matches the producer side (H-2).
-            let derived_pm_addr: [u8; 32] = evaporchain_types::address_from_pubkey(pm_pk);
-            if &derived_pm_addr != paymaster {
-                return Err(ExecutionError::ContractError(format!(
-                    "UserOpTx: paymaster_public_key does not derive to paymaster address \
+                            .into(),
+                    )
+                })?;
+                let pm_pk = tx.paymaster_public_key.as_deref().ok_or_else(|| {
+                    ExecutionError::ContractError(
+                        "UserOpTx with paymaster must include paymaster_public_key".into(),
+                    )
+                })?;
+                // Bind paymaster public key to paymaster address — must go
+                // through the DST-aware `address_from_pubkey` helper so the
+                // verification side matches the producer side (H-2).
+                let derived_pm_addr: [u8; 32] = evaporchain_types::address_from_pubkey(pm_pk);
+                if &derived_pm_addr != paymaster {
+                    return Err(ExecutionError::ContractError(format!(
+                        "UserOpTx: paymaster_public_key does not derive to paymaster address \
                      (derived {} vs paymaster {})",
-                    hex::encode(derived_pm_addr),
-                    hex::encode(paymaster)
-                )));
-            }
-            // Canonical sponsorship payload — chain-id-bound,
-            // blake3(call_data)-bound. See UserOpTx::paymaster_sponsorship_payload.
-            let payload = tx
-                .paymaster_sponsorship_payload(&self.chain_id)
-                .expect("paymaster + paymaster_nonce both checked Some above");
-            if !HybridVerifier::verify(&payload, pm_sig, pm_pk) {
-                return Err(ExecutionError::ContractError(
-                    "UserOpTx: paymaster_signature verification failed".into(),
-                ));
-            }
+                        hex::encode(derived_pm_addr),
+                        hex::encode(paymaster)
+                    )));
+                }
+                // Canonical sponsorship payload — chain-id-bound,
+                // blake3(call_data)-bound. See UserOpTx::paymaster_sponsorship_payload.
+                let payload = tx
+                    .paymaster_sponsorship_payload(&self.chain_id)
+                    .expect("paymaster + paymaster_nonce both checked Some above");
+                if !HybridVerifier::verify(&payload, pm_sig, pm_pk) {
+                    return Err(ExecutionError::ContractError(
+                        "UserOpTx: paymaster_signature verification failed".into(),
+                    ));
+                }
 
-            // Read-only paymaster account check. We DO NOT mutate
-            // here — section 3 applies the gas debit + nonce bump
-            // after sender-side validation has also passed.
-            let pm_acct = db.get_or_create_account(paymaster);
-            if pm_acct.nonce != paymaster_nonce_arg {
-                return Err(ExecutionError::InvalidNonce {
-                    expected: pm_acct.nonce,
-                    got: paymaster_nonce_arg,
-                });
-            }
-            let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
-            if pm_acct.balance < total_gas_cost {
-                return Err(ExecutionError::InsufficientGas {
-                    account: hex::encode(paymaster),
-                    required: total_gas_cost,
-                    available: pm_acct.balance,
-                });
-            }
-            // Mutable borrow ends with the if-let block.
-            Some((*paymaster, total_gas_cost))
-        } else {
-            None
-        };
+                // Read-only paymaster account check. We DO NOT mutate
+                // here — section 3 applies the gas debit + nonce bump
+                // after sender-side validation has also passed.
+                let pm_acct = db.get_or_create_account(paymaster);
+                if pm_acct.nonce != paymaster_nonce_arg {
+                    return Err(ExecutionError::InvalidNonce {
+                        expected: pm_acct.nonce,
+                        got: paymaster_nonce_arg,
+                    });
+                }
+                let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
+                if pm_acct.balance < total_gas_cost {
+                    return Err(ExecutionError::InsufficientGas {
+                        account: hex::encode(paymaster),
+                        required: total_gas_cost,
+                        available: pm_acct.balance,
+                    });
+                }
+                // Mutable borrow ends with the if-let block.
+                Some((*paymaster, total_gas_cost))
+            } else {
+                None
+            };
 
         // ── Section 3: apply mutations (all preconditions passed) ────
         {
@@ -3696,8 +3688,10 @@ impl ExecutionEngine for SimpleExecutor {
         // Snapshot total_minted before block rewards so we can credit
         // newly-minted supply into conservation_before below, making
         // audit_block_step compare like-for-like (minting is not a violation).
-        let minted_before_rewards: u64 =
-            self.reward_accumulator.as_ref().map_or(0, |ra| ra.total_minted);
+        let minted_before_rewards: u64 = self
+            .reward_accumulator
+            .as_ref()
+            .map_or(0, |ra| ra.total_minted);
 
         // Collect commit-certificate signers as attesters for TOKENOMICS §2.1
         // 60/40 proposer/attester split. Clone stake data out before the
@@ -3707,7 +3701,14 @@ impl ExecutionEngine for SimpleExecutor {
             let snap: Vec<(u64, [u8; 32], u64, Option<u64>)> = db
                 .all_stakes()
                 .iter()
-                .map(|s| (s.validator_id, s.validator_address, s.staked_amount, s.unbonding_epoch))
+                .map(|s| {
+                    (
+                        s.validator_id,
+                        s.validator_address,
+                        s.staked_amount,
+                        s.unbonding_epoch,
+                    )
+                })
                 .collect();
             let total_staked = snap
                 .iter()
@@ -4458,7 +4459,10 @@ mod tests {
             })],
         );
         let result = executor.execute_block(&mut db, &block).unwrap();
-        assert_eq!(result.txs_executed, 1, "400/500 transferable should succeed");
+        assert_eq!(
+            result.txs_executed, 1,
+            "400/500 transferable should succeed"
+        );
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 600);
         assert_eq!(db.get_account(&addr(2)).unwrap().balance, 400);
     }
@@ -5429,8 +5433,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         let owner_kp = MlDsaKeypair::generate();
         let attacker_kp = MlDsaKeypair::generate();
-        let owner: [u8; 32] =
-            evaporchain_types::address_from_pubkey(&owner_kp.public_key_bytes());
+        let owner: [u8; 32] = evaporchain_types::address_from_pubkey(&owner_kp.public_key_bytes());
         db.put_object(StateObject {
             id: obj_id(1),
             owner,
@@ -7398,7 +7401,7 @@ contract Looper {
         // Exceeds 1 trillion cap — rejected
         assert!(validate_param_value("base_fee_floor", "1000000000001").is_err());
         assert!(validate_param_value("base_fee_ceiling", "18446744073709551615").is_err()); // u64::MAX
-        // Non-numeric — rejected
+                                                                                            // Non-numeric — rejected
         assert!(validate_param_value("base_fee_floor", "infinity").is_err());
     }
 
@@ -7569,7 +7572,8 @@ contract Counter {
     #[test]
     fn upgrade_contract_admin_signature_invalid_rejects() {
         let admin_kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&admin_kp.public_key_bytes());
+        let admin_addr: [u8; 32] =
+            evaporchain_types::address_from_pubkey(&admin_kp.public_key_bytes());
         // Different keypair — the wrong admin.
         let attacker_kp = MlDsaKeypair::generate();
 
@@ -8011,7 +8015,10 @@ contract Counter {
         // Sender's nonce + last_touched_epoch are UNTOUCHED.
         let s = db.get_account(&sender_addr).expect("sender exists");
         assert_eq!(s.nonce, 7, "sender nonce must NOT have been bumped");
-        assert_eq!(s.last_touched_epoch, 0, "demurrage anchor must NOT have moved");
+        assert_eq!(
+            s.last_touched_epoch, 0,
+            "demurrage anchor must NOT have moved"
+        );
         // Paymaster also untouched.
         let pm = db.get_account(&victim_pm).expect("paymaster exists");
         assert_eq!(pm.balance, 1_000_000);
@@ -8040,7 +8047,7 @@ contract Counter {
         let (mut tx, pm_addr, _kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![]);
         // Override sender_nonce to a stale value; re-sign.
         tx.nonce = 99; // sender.nonce is 5, tx.nonce is 99 — mismatch
-        // Not bothering to re-sign user side (verify_signatures off in test).
+                       // Not bothering to re-sign user side (verify_signatures off in test).
 
         fund_account_at(&mut db, pm_addr, 1_000_000);
         let mut executor = executor;
@@ -8175,8 +8182,7 @@ contract Counter {
         fund_account(&mut db, 1, 0);
         let mut executor = SimpleExecutor::new_for_test(7);
 
-        let (mut tx, pm_addr, _kp) =
-            make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
+        let (mut tx, pm_addr, _kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
         fund_account_at(&mut db, pm_addr, 1_000_000);
 
         // Tamper after signing — bump call_gas_limit. Sponsorship payload
@@ -8342,14 +8348,8 @@ contract Counter {
         fund_account(&mut db, 1, 0);
         let mut executor = SimpleExecutor::new_for_test(7);
 
-        let (tx, pm_addr, _kp) = make_signed_user_op(
-            &executor,
-            1,
-            0,
-            0,
-            50_000,
-            b"not-a-transaction".to_vec(),
-        );
+        let (tx, pm_addr, _kp) =
+            make_signed_user_op(&executor, 1, 0, 0, 50_000, b"not-a-transaction".to_vec());
         fund_account_at(&mut db, pm_addr, 1_000_000);
 
         let r = executor.execute_user_op(&mut db, &tx, 0);
@@ -8681,17 +8681,30 @@ contract Counter {
     fn t1_20_sort_txs_by_gas_priority_descending() {
         let mut txs = vec![
             Transaction::Refresh(evaporchain_types::RefreshTx {
-                object_id: [0u8; 32], energy_deposit: 0,
-                signature: None, public_key: None,
+                object_id: [0u8; 32],
+                energy_deposit: 0,
+                signature: None,
+                public_key: None,
             }),
             Transaction::Transfer(evaporchain_types::TransferTx {
-                from: [1u8; 32], to: [2u8; 32], amount: 1, nonce: 0,
-                signature: None, public_key: None, mev_refund_eligible: None,
+                from: [1u8; 32],
+                to: [2u8; 32],
+                amount: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::CreateObject(evaporchain_types::CreateObjectTx {
-                creator: [3u8; 32], object_id: [4u8; 32], energy: 500, half_life: 10,
-                data: vec![], decay_curve: None, lad_mode: None,
-                signature: None, public_key: None,
+                creator: [3u8; 32],
+                object_id: [4u8; 32],
+                energy: 500,
+                half_life: 10,
+                data: vec![],
+                decay_curve: None,
+                lad_mode: None,
+                signature: None,
+                public_key: None,
             }),
         ];
         sort_txs_by_gas_priority(&mut txs);
@@ -8699,7 +8712,10 @@ contract Counter {
         // Sorted descending by gas: CreateObject(50k), Refresh(30k), Transfer(21k).
         let gas: Vec<u64> = txs.iter().map(SimpleExecutor::estimate_gas).collect();
         for w in gas.windows(2) {
-            assert!(w[0] >= w[1], "sort_txs_by_gas_priority must be descending; got {w:?}");
+            assert!(
+                w[0] >= w[1],
+                "sort_txs_by_gas_priority must be descending; got {w:?}"
+            );
         }
     }
 
@@ -8724,7 +8740,9 @@ contract Counter {
         // After a call, it must be Some(verdict).
         let verdict = exec.record_cmu_observation(100, 50, 200);
         // Verdict is returned AND stored.
-        let stored = exec.last_cmu_verdict.expect("cmu verdict must be stored after observation");
+        let stored = exec
+            .last_cmu_verdict
+            .expect("cmu verdict must be stored after observation");
         assert_eq!(verdict, stored);
     }
 
@@ -8733,7 +8751,9 @@ contract Counter {
         let mut exec = SimpleExecutor::new(10);
         let samples = &[10u64, 12, 11, 10, 13];
         let verdict = exec.record_tur_observation(samples, 500);
-        let stored = exec.last_tur_verdict.expect("tur verdict must be stored after observation");
+        let stored = exec
+            .last_tur_verdict
+            .expect("tur verdict must be stored after observation");
         assert_eq!(verdict, stored);
     }
 
@@ -8753,13 +8773,19 @@ contract Counter {
         let mut exec = SimpleExecutor::new(10);
         // Without a reward accumulator installed, must return 0.
         let bonus = exec.apply_proposer_priority_bonus(&mut db, &[0u8; 32], 1, 1000, 10);
-        assert_eq!(bonus, 0, "no reward accumulator installed → priority bonus must be 0");
+        assert_eq!(
+            bonus, 0,
+            "no reward accumulator installed → priority bonus must be 0"
+        );
     }
 
     #[test]
     fn t1_20_fee_controller_getter_none_before_set() {
         let exec = SimpleExecutor::new(10);
-        assert!(exec.fee_controller().is_none(), "no fee controller set at construction");
+        assert!(
+            exec.fee_controller().is_none(),
+            "no fee controller set at construction"
+        );
     }
 
     #[test]
@@ -8767,7 +8793,6 @@ contract Counter {
         let mut exec = SimpleExecutor::new(10);
         assert!(exec.fee_controller_mut().is_none());
     }
-
 
     // -- T1.20 gap-closure: execute_validator_exit (no stake record) --
 
@@ -8777,8 +8802,11 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 10, 50_000);
         let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
-            validator_address: addr(10), validator_id: 99, nonce: 0,
-            signature: None, public_key: None,
+            validator_address: addr(10),
+            validator_id: 99,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         })];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
@@ -8802,15 +8830,21 @@ contract Counter {
             slashed_amount: 0,
         });
         let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
-            validator_address: addr(11), validator_id: 5, nonce: 0,
-            signature: None, public_key: None,
+            validator_address: addr(11),
+            validator_id: 5,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         })];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_executed, 1, "validator exit must succeed");
         let stake = db.get_stake(5).unwrap();
-        assert!(stake.unbonding_epoch.is_some(), "unbonding_epoch must be set after exit");
+        assert!(
+            stake.unbonding_epoch.is_some(),
+            "unbonding_epoch must be set after exit"
+        );
     }
 
     // -- T1.20 gap-closure: execute_validator_exit already exiting --
@@ -8825,12 +8859,15 @@ contract Counter {
             validator_address: addr(12),
             staked_amount: 20_000,
             staked_at_epoch: 0,
-            unbonding_epoch: Some(300),  // already exiting
+            unbonding_epoch: Some(300), // already exiting
             slashed_amount: 0,
         });
         let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
-            validator_address: addr(12), validator_id: 6, nonce: 0,
-            signature: None, public_key: None,
+            validator_address: addr(12),
+            validator_id: 6,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         })];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
@@ -8850,12 +8887,15 @@ contract Counter {
             validator_address: addr(20),
             staked_amount: 10_000,
             staked_at_epoch: 0,
-            unbonding_epoch: None,  // not exited yet
+            unbonding_epoch: None, // not exited yet
             slashed_amount: 0,
         });
         let txs = vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
-            validator_address: addr(20), validator_id: 7, nonce: 0,
-            signature: None, public_key: None,
+            validator_address: addr(20),
+            validator_id: 7,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         })];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
@@ -8875,18 +8915,24 @@ contract Counter {
             validator_address: addr(21),
             staked_amount: 10_000,
             staked_at_epoch: 0,
-            unbonding_epoch: Some(1000),  // unbonding done at epoch 1000
+            unbonding_epoch: Some(1000), // unbonding done at epoch 1000
             slashed_amount: 0,
         });
         let txs = vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
-            validator_address: addr(21), validator_id: 8, nonce: 0,
-            signature: None, public_key: None,
+            validator_address: addr(21),
+            validator_id: 8,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         })];
         // block.epoch=1 < unbonding_epoch=1000 -> too early
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "claim before unbonding period ends must fail");
+        assert_eq!(
+            r.txs_failed, 1,
+            "claim before unbonding period ends must fail"
+        );
     }
 
     // -- T1.20 gap-closure: execute_validator_claim_stake valid success --
@@ -8901,12 +8947,15 @@ contract Counter {
             validator_address: addr(22),
             staked_amount: 50_000,
             staked_at_epoch: 0,
-            unbonding_epoch: Some(1),  // unbonding started at epoch 1
+            unbonding_epoch: Some(1), // unbonding started at epoch 1
             slashed_amount: 0,
         });
         let txs = vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
-            validator_address: addr(22), validator_id: 9, nonce: 0,
-            signature: None, public_key: None,
+            validator_address: addr(22),
+            validator_id: 9,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         })];
         // block.epoch=1001 >= unbonding_epoch=1 -> claim succeeds
         let block = make_block(1, 1001, txs);
@@ -8916,7 +8965,10 @@ contract Counter {
         let bal = db.get_account(&addr(22)).unwrap().balance;
         assert_eq!(bal, 50_000, "stake must be returned to validator");
         // Stake record must be removed after full claim.
-        assert!(db.get_stake(9).is_none(), "stake record removed after claim");
+        assert!(
+            db.get_stake(9).is_none(),
+            "stake record removed after claim"
+        );
     }
 
     // -- T1.20 gap-closure: execute_validator_stake valid success --
@@ -8925,12 +8977,18 @@ contract Counter {
     fn t1_20_validator_stake_success() {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 30, 100_000);
-        let txs = vec![Transaction::ValidatorStake(evaporchain_types::ValidatorStakeTx {
-            validator_address: addr(30), stake_amount: 30_000,
-            validator_id: 10, nonce: 0,
-            bls_public_key: None, vrf_public_key: None,
-            signature: None, public_key: None,
-        })];
+        let txs = vec![Transaction::ValidatorStake(
+            evaporchain_types::ValidatorStakeTx {
+                validator_address: addr(30),
+                stake_amount: 30_000,
+                validator_id: 10,
+                nonce: 0,
+                bls_public_key: None,
+                vrf_public_key: None,
+                signature: None,
+                public_key: None,
+            },
+        )];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
@@ -8949,8 +9007,12 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 40, 10_000);
         let txs = vec![Transaction::Refund(RefundTx {
-            attacker: addr(40), victim: addr(41), amount: 0,
-            source_block_height: 1, source_observation_idx: 0, settle_block_height: 1,
+            attacker: addr(40),
+            victim: addr(41),
+            amount: 0,
+            source_block_height: 1,
+            source_observation_idx: 0,
+            settle_block_height: 1,
         })];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
@@ -8966,8 +9028,12 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 50, 5_000);
         let txs = vec![Transaction::Refund(RefundTx {
-            attacker: addr(50), victim: addr(51), amount: 2_000,
-            source_block_height: 1, source_observation_idx: 0, settle_block_height: 1,
+            attacker: addr(50),
+            victim: addr(51),
+            amount: 2_000,
+            source_block_height: 1,
+            source_observation_idx: 0,
+            settle_block_height: 1,
         })];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
@@ -8984,19 +9050,29 @@ contract Counter {
         // The mint-bypass path skips nonce increment; seed zero-address with balance.
         let mut db = InMemoryStateDB::new();
         db.put_account(Account {
-            address: [0u8; 32], balance: 10_000, nonce: 5,
-            storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0, vesting: None,
+            address: [0u8; 32],
+            balance: 10_000,
+            nonce: 5,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
         });
         let txs = vec![Transaction::Transfer(evaporchain_types::TransferTx {
-            from: [0u8; 32], to: addr(60), amount: 1_000, nonce: 0,
-            signature: None, public_key: None, mev_refund_eligible: None,
+            from: [0u8; 32],
+            to: addr(60),
+            amount: 1_000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
         })];
         let block = make_block(1, 1, txs);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_executed, 1, "mint-bypass must succeed");
         // Nonce must NOT have been incremented.
-        let z = db.get_account(&[0u8;32]).unwrap();
+        let z = db.get_account(&[0u8; 32]).unwrap();
         assert_eq!(z.nonce, 5, "mint-bypass must not increment nonce");
         assert_eq!(db.get_account(&addr(60)).unwrap().balance, 1_000);
     }
@@ -9025,7 +9101,11 @@ contract Counter {
     #[test]
     fn t1_20_governance_create_proposal_success() {
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS))]);
+        let block = make_block(
+            1,
+            1,
+            vec![gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS))],
+        );
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_executed, 1, "valid CreateProposal must succeed");
@@ -9084,7 +9164,11 @@ contract Counter {
     #[test]
     fn t1_20_governance_create_proposal_voting_epochs_too_low() {
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS - 1))]);
+        let block = make_block(
+            1,
+            1,
+            vec![gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS - 1))],
+        );
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_failed, 1, "voting_epochs below MIN must fail");
@@ -9093,7 +9177,11 @@ contract Counter {
     #[test]
     fn t1_20_governance_create_proposal_voting_epochs_too_high() {
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![gov_tx(1, 0, create_proposal_action(MAX_VOTING_EPOCHS + 1))]);
+        let block = make_block(
+            1,
+            1,
+            vec![gov_tx(1, 0, create_proposal_action(MAX_VOTING_EPOCHS + 1))],
+        );
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_failed, 1, "voting_epochs above MAX must fail");
@@ -9138,11 +9226,21 @@ contract Counter {
 
         // Create proposal at epoch 1.
         let create = gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS));
-        ex.execute_block(&mut db, &make_block(1, 1, vec![create])).unwrap();
+        ex.execute_block(&mut db, &make_block(1, 1, vec![create]))
+            .unwrap();
 
         // Vote on it at epoch 2 (still within voting window).
-        let vote = gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true });
-        let r = ex.execute_block(&mut db, &make_block(2, 2, vec![vote])).unwrap();
+        let vote = gov_tx(
+            2,
+            0,
+            GovernanceAction::CastVote {
+                proposal_id: 0,
+                vote: true,
+            },
+        );
+        let r = ex
+            .execute_block(&mut db, &make_block(2, 2, vec![vote]))
+            .unwrap();
         assert_eq!(r.txs_executed, 1, "CastVote must succeed");
         let p = db.get_proposal(0).unwrap();
         assert!(p.votes_for > 0, "votes_for must be incremented");
@@ -9151,7 +9249,14 @@ contract Counter {
     #[test]
     fn t1_20_governance_cast_vote_proposal_not_found() {
         let mut db = InMemoryStateDB::new();
-        let vote = gov_tx(1, 0, GovernanceAction::CastVote { proposal_id: 99, vote: true });
+        let vote = gov_tx(
+            1,
+            0,
+            GovernanceAction::CastVote {
+                proposal_id: 99,
+                vote: true,
+            },
+        );
         let block = make_block(1, 1, vec![vote]);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
@@ -9176,7 +9281,14 @@ contract Counter {
             created_at: 1,
             voters: Default::default(),
         });
-        let vote = gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true });
+        let vote = gov_tx(
+            2,
+            0,
+            GovernanceAction::CastVote {
+                proposal_id: 0,
+                vote: true,
+            },
+        );
         let block = make_block(1, 1, vec![vote]);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
@@ -9204,7 +9316,14 @@ contract Counter {
         // block.epoch=10 > end_epoch=2, but finalize_expired_proposals runs first at epoch 10
         // and transitions to Rejected, so the vote lands on a now-Rejected proposal.
         // Either way the CastVote path must fail.
-        let vote = gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true });
+        let vote = gov_tx(
+            2,
+            0,
+            GovernanceAction::CastVote {
+                proposal_id: 0,
+                vote: true,
+            },
+        );
         let block = make_block(1, 10, vec![vote]);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
@@ -9217,19 +9336,52 @@ contract Counter {
         let mut ex = SimpleExecutor::new(10);
 
         // Create proposal.
-        ex.execute_block(&mut db, &make_block(1, 1, vec![
-            gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS)),
-        ])).unwrap();
+        ex.execute_block(
+            &mut db,
+            &make_block(
+                1,
+                1,
+                vec![gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS))],
+            ),
+        )
+        .unwrap();
 
         // First vote (epoch 2, within window 1..=11).
-        ex.execute_block(&mut db, &make_block(2, 2, vec![
-            gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true }),
-        ])).unwrap();
+        ex.execute_block(
+            &mut db,
+            &make_block(
+                2,
+                2,
+                vec![gov_tx(
+                    2,
+                    0,
+                    GovernanceAction::CastVote {
+                        proposal_id: 0,
+                        vote: true,
+                    },
+                )],
+            ),
+        )
+        .unwrap();
 
         // Same sender tries to vote again.
-        let r = ex.execute_block(&mut db, &make_block(3, 3, vec![
-            gov_tx(2, 1, GovernanceAction::CastVote { proposal_id: 0, vote: false }),
-        ])).unwrap();
+        let r = ex
+            .execute_block(
+                &mut db,
+                &make_block(
+                    3,
+                    3,
+                    vec![gov_tx(
+                        2,
+                        1,
+                        GovernanceAction::CastVote {
+                            proposal_id: 0,
+                            vote: false,
+                        },
+                    )],
+                ),
+            )
+            .unwrap();
         assert_eq!(r.txs_failed, 1, "duplicate vote must fail");
     }
 
@@ -9255,7 +9407,8 @@ contract Counter {
         });
         // execute_block at epoch 10 > 5 triggers finalize_expired_proposals first.
         let mut ex = SimpleExecutor::new(10);
-        ex.execute_block(&mut db, &make_block(1, 10, vec![])).unwrap();
+        ex.execute_block(&mut db, &make_block(1, 10, vec![]))
+            .unwrap();
         assert_eq!(
             db.get_proposal(0).unwrap().status,
             ProposalStatus::Rejected,
@@ -9283,7 +9436,8 @@ contract Counter {
         });
         let mut ex = SimpleExecutor::new(10);
         // Epoch 10 == end_epoch(5) + GOVERNANCE_TIMELOCK_EPOCHS(5) → executes.
-        ex.execute_block(&mut db, &make_block(1, 10, vec![])).unwrap();
+        ex.execute_block(&mut db, &make_block(1, 10, vec![]))
+            .unwrap();
         assert_eq!(
             db.get_proposal(0).unwrap().status,
             ProposalStatus::Executed,
@@ -9349,13 +9503,7 @@ contract Counter {
     fn t1_20_multisig_unauthorized_signer() {
         let mut db = InMemoryStateDB::new();
         // signers list only has addr(10); signature from addr(99) is unauthorized.
-        let tx = msig_tx(
-            100,
-            1,
-            vec![addr(10)],
-            vec![(addr(99), vec![])],
-            0,
-        );
+        let tx = msig_tx(100, 1, vec![addr(10)], vec![(addr(99), vec![])], 0);
         let block = make_block(1, 1, vec![tx]);
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
@@ -9377,7 +9525,11 @@ contract Counter {
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_executed, 1, "valid multisig must succeed");
-        assert_eq!(db.get_account(&addr(100)).unwrap().nonce, 1, "nonce must increment");
+        assert_eq!(
+            db.get_account(&addr(100)).unwrap().nonce,
+            1,
+            "nonce must increment"
+        );
     }
 
     #[test]
@@ -9417,12 +9569,14 @@ contract Counter {
         let mut db = InMemoryStateDB::default();
         // Victim has balance.
         let victim_kp = MlDsaKeypair::generate();
-        let victim_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&victim_kp.public_key_bytes());
+        let victim_addr: [u8; 32] =
+            evaporchain_types::address_from_pubkey(&victim_kp.public_key_bytes());
         db.get_or_create_account(&victim_addr).balance = 1_000_000;
 
         // Attacker keypair — different from victim's.
         let attacker_kp = MlDsaKeypair::generate();
-        let attacker_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&attacker_kp.public_key_bytes());
+        let attacker_addr: [u8; 32] =
+            evaporchain_types::address_from_pubkey(&attacker_kp.public_key_bytes());
 
         // Forge: tx.from = victim, but signed by attacker.
         let chain_id = "testchain";
@@ -9457,9 +9611,17 @@ contract Counter {
         // Gas is charged even on rejected txs (spam-deterrence). Security
         // property: the forged 500_000 transfer must NOT have executed.
         let victim_bal = db.get_account(&victim_addr).map(|a| a.balance).unwrap_or(0);
-        let attacker_bal = db.get_account(&attacker_addr).map(|a| a.balance).unwrap_or(0);
-        assert!(victim_bal > 500_000, "victim must not be drained by forged tx");
-        assert_eq!(attacker_bal, 0, "attacker must receive nothing from forged tx");
+        let attacker_bal = db
+            .get_account(&attacker_addr)
+            .map(|a| a.balance)
+            .unwrap_or(0);
+        assert!(
+            victim_bal > 500_000,
+            "victim must not be drained by forged tx"
+        );
+        assert_eq!(
+            attacker_bal, 0,
+            "attacker must receive nothing from forged tx"
+        );
     }
-
 }

@@ -72,6 +72,4 @@ pub use error::LightClientError;
 // Re-exports of the underlying types so consumers don't need to
 // depend on consensus + proving + crypto directly. Each consumer
 // gets a single SDK dep with all the types they need.
-pub use evaporchain_consensus_types::{
-    LightBlockHeader, TrustedState, VerificationResult,
-};
+pub use evaporchain_consensus_types::{LightBlockHeader, TrustedState, VerificationResult};

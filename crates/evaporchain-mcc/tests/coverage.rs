@@ -76,7 +76,8 @@ fn path_energy_missing_blocks_contribute_zero() {
 fn path_energy_saturates_at_energy_max() {
     let mut lc = LightCone::new();
     lc.insert(Block::new(id(0), vec![], u64::MAX, 0)).unwrap();
-    lc.insert(Block::new(id(1), vec![id(0)], u64::MAX, 1)).unwrap();
+    lc.insert(Block::new(id(1), vec![id(0)], u64::MAX, 1))
+        .unwrap();
     let t = Trajectory::new(vec![id(0), id(1)]);
     // saturating_add(u64::MAX, u64::MAX) clamps to Energy::MAX (= u64::MAX).
     assert_eq!(path_energy(&t, &lc), u64::MAX);
@@ -137,7 +138,7 @@ fn mcc_choose_picks_lower_energy_at_positive_beta() {
     lc.insert(Block::new(id(1), vec![id(0)], 500, 1)).unwrap();
     lc.insert(Block::new(id(2), vec![id(0)], 1500, 1)).unwrap();
     let t_cheap = Trajectory::new(vec![id(0), id(1)]); // sum = 1500
-    let t_dear = Trajectory::new(vec![id(0), id(2)]);  // sum = 2500
+    let t_dear = Trajectory::new(vec![id(0), id(2)]); // sum = 2500
     let picked = mcc_choose([&t_cheap, &t_dear].iter().copied(), &lc, 10_000).unwrap();
     assert_eq!(picked, &t_cheap);
 }

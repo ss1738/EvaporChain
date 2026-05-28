@@ -88,8 +88,8 @@ pub fn encrypt_blob(plaintext: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, Stri
     // 32-byte material is overwritten on drop. Matches the CLI-KDF-001
     // closure already applied to EVK1.
     let key = Zeroizing::new(kdf(passphrase, &salt)?);
-    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
-        .map_err(|e| format!("cipher init: {e}"))?;
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(key.as_ref()).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, plaintext)
@@ -146,8 +146,8 @@ pub fn decrypt_blob(blob: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, String> {
     let ciphertext = &blob[cursor..];
 
     let key = Zeroizing::new(kdf(passphrase, salt)?);
-    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
-        .map_err(|e| format!("cipher init: {e}"))?;
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(key.as_ref()).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)

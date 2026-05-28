@@ -727,9 +727,7 @@ impl Parser {
             self.stmt_depth -= 1;
             return Err(ScriptError::Parse {
                 line: self.line(),
-                message: format!(
-                    "block nesting depth exceeds maximum ({MAX_STMT_DEPTH})"
-                ),
+                message: format!("block nesting depth exceeds maximum ({MAX_STMT_DEPTH})"),
             });
         }
         self.expect(&Token::LBrace)?;
@@ -1904,9 +1902,7 @@ contract Test {
         let depth = MAX_STMT_DEPTH + 2;
         let open: String = "if true { ".repeat(depth);
         let close: String = "} ".repeat(depth);
-        let src = format!(
-            "contract C {{ fn f() {{ {open}let x: u64 = 1{close}}} }}"
-        );
+        let src = format!("contract C {{ fn f() {{ {open}let x: u64 = 1{close}}} }}");
         let result = parse(&src);
         match result {
             Err(e) => {
@@ -1928,9 +1924,7 @@ contract Test {
         let depth = MAX_STMT_DEPTH - 1;
         let open: String = "if true { ".repeat(depth);
         let close: String = "} ".repeat(depth);
-        let src = format!(
-            "contract C {{ fn f() {{ {open}let x: u64 = 1{close}}} }}"
-        );
+        let src = format!("contract C {{ fn f() {{ {open}let x: u64 = 1{close}}} }}");
         let result = parse(&src);
         assert!(
             result.is_ok(),

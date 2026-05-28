@@ -118,7 +118,10 @@ struct BatchUndoLog {
 /// rolling historical-snapshot window. Aliased so the
 /// `BTreeMap<u64, …>` declaration on `RocksDBStateDB::snapshots`
 /// fits clippy's `type_complexity` budget.
-type HistoricalSnapshot = (HashMap<AccountAddress, Account>, HashMap<ObjectId, StateObject>);
+type HistoricalSnapshot = (
+    HashMap<AccountAddress, Account>,
+    HashMap<ObjectId, StateObject>,
+);
 
 /// RocksDB-backed state database with in-memory write-through cache.
 pub struct RocksDBStateDB {
@@ -280,7 +283,8 @@ impl RocksDBStateDB {
                         addr.copy_from_slice(&key);
                         accounts.insert(addr, acct);
                     }
-                    Err(_) => match crate::legacy::deserialize_account_with_legacy_fallback(&value) {
+                    Err(_) => match crate::legacy::deserialize_account_with_legacy_fallback(&value)
+                    {
                         Ok(acct) => {
                             let mut addr = [0u8; 32];
                             addr.copy_from_slice(&key);
@@ -792,7 +796,10 @@ impl RocksDBStateDB {
         } else {
             drop(guard);
             let cf = self.cf(CF_TRIE);
-            if let Err(e) = self.db.put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root) {
+            if let Err(e) = self
+                .db
+                .put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root)
+            {
                 fatal_persistence_error("write_privacy_note_tree_root", e);
             }
             if let Err(e) = self.db.put_cf(
@@ -802,9 +809,9 @@ impl RocksDBStateDB {
             ) {
                 fatal_persistence_error("write_privacy_pool_balance", e);
             }
-            if let Err(e) = self
-                .db
-                .put_cf(cf, PRIVACY_NOTE_COUNT_KEY, self.note_count.to_le_bytes())
+            if let Err(e) =
+                self.db
+                    .put_cf(cf, PRIVACY_NOTE_COUNT_KEY, self.note_count.to_le_bytes())
             {
                 fatal_persistence_error("write_privacy_note_count", e);
             }
@@ -1632,11 +1639,19 @@ impl StateDB for RocksDBStateDB {
     fn clear_all_stakes_and_delegations(&mut self) {
         let mut batch = WriteBatch::default();
         let cf_s = self.cf(CF_STAKES);
-        for (key, _) in self.db.iterator_cf(cf_s, rocksdb::IteratorMode::Start).flatten() {
+        for (key, _) in self
+            .db
+            .iterator_cf(cf_s, rocksdb::IteratorMode::Start)
+            .flatten()
+        {
             batch.delete_cf(cf_s, key);
         }
         let cf_d = self.cf(CF_DELEGATIONS);
-        for (key, _) in self.db.iterator_cf(cf_d, rocksdb::IteratorMode::Start).flatten() {
+        for (key, _) in self
+            .db
+            .iterator_cf(cf_d, rocksdb::IteratorMode::Start)
+            .flatten()
+        {
             batch.delete_cf(cf_d, key);
         }
         if let Err(e) = self.db.write(batch) {
@@ -1649,11 +1664,19 @@ impl StateDB for RocksDBStateDB {
     fn clear_all_sentinel_state(&mut self) {
         let mut batch = WriteBatch::default();
         let cf_p = self.cf(CF_SENTINEL_PARAMS);
-        for (key, _) in self.db.iterator_cf(cf_p, rocksdb::IteratorMode::Start).flatten() {
+        for (key, _) in self
+            .db
+            .iterator_cf(cf_p, rocksdb::IteratorMode::Start)
+            .flatten()
+        {
             batch.delete_cf(cf_p, key);
         }
         let cf_v = self.cf(CF_SENTINEL_VOTES);
-        for (key, _) in self.db.iterator_cf(cf_v, rocksdb::IteratorMode::Start).flatten() {
+        for (key, _) in self
+            .db
+            .iterator_cf(cf_v, rocksdb::IteratorMode::Start)
+            .flatten()
+        {
             batch.delete_cf(cf_v, key);
         }
         if let Err(e) = self.db.write(batch) {
@@ -2114,7 +2137,10 @@ mod tests {
             db.flush_accounts();
         }
         let db = RocksDBStateDB::open(dir.path()).unwrap();
-        assert_eq!(db.get_account(&make_account(7, 0).address).unwrap().balance, 42_000);
+        assert_eq!(
+            db.get_account(&make_account(7, 0).address).unwrap().balance,
+            42_000
+        );
     }
 
     #[test]
@@ -2164,10 +2190,7 @@ mod tests {
         let mut db = tmp_db();
         // Must register the param first so the votes slot exists.
         db.put_sentinel_param(BoundedParameter::new(5, 50, 0, 200).unwrap());
-        let votes = vec![
-            Vote::new(1, 60, 100),
-            Vote::new(2, 70, 101),
-        ];
+        let votes = vec![Vote::new(1, 60, 100), Vote::new(2, 70, 101)];
         db.put_sentinel_votes(5, votes.clone());
         let loaded = db.get_sentinel_votes(5);
         assert_eq!(loaded.len(), 2);
@@ -2710,7 +2733,9 @@ mod tests {
         assert_eq!(commits[0], [42u8; 32]);
 
         // Sentinel params loaded from CF_SENTINEL_PARAMS
-        let param = db2.get_sentinel_param(3).expect("param should load from disk");
+        let param = db2
+            .get_sentinel_param(3)
+            .expect("param should load from disk");
         assert_eq!(param.current, 300);
 
         // Sentinel votes loaded from CF_SENTINEL_VOTES
@@ -2724,7 +2749,9 @@ mod tests {
 
         // Delegations loaded from CF_DELEGATIONS
         let delegator = [0xAA; 32];
-        let del = db2.get_delegation(&delegator, 7).expect("delegation should load from disk");
+        let del = db2
+            .get_delegation(&delegator, 7)
+            .expect("delegation should load from disk");
         assert_eq!(del.amount, 100_000);
     }
 
@@ -2748,13 +2775,21 @@ mod tests {
                 voters: Default::default(),
             });
             db.put_governance_param("block_gas_limit".to_string(), "20000000".to_string());
-            db.put_governance_param("conservation_enforcement".to_string(), "enforce".to_string());
+            db.put_governance_param(
+                "conservation_enforcement".to_string(),
+                "enforce".to_string(),
+            );
         }
         // Reopen — proposals and params must survive restart.
         let db2 = RocksDBStateDB::open(dir.path()).unwrap();
-        let p = db2.get_proposal(42).expect("proposal must persist across restart");
+        let p = db2
+            .get_proposal(42)
+            .expect("proposal must persist across restart");
         assert_eq!(p.param_key, "block_gas_limit");
-        assert_eq!(db2.get_governance_param("block_gas_limit"), Some("20000000"));
+        assert_eq!(
+            db2.get_governance_param("block_gas_limit"),
+            Some("20000000")
+        );
         assert_eq!(
             db2.get_governance_param("conservation_enforcement"),
             Some("enforce")
@@ -2814,15 +2849,23 @@ mod tests {
             let mut db = RocksDBStateDB::open(dir.path()).unwrap();
             db.put_object(obj.clone());
             db.put_account(Account {
-                address: addr, balance: 1234, nonce: 5,
-                storage_deposit: 0, storage_bytes: 0,
-                last_touched_epoch: 0, vesting: None,
+                address: addr,
+                balance: 1234,
+                nonce: 5,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 0,
+                vesting: None,
             });
         }
         let db2 = RocksDBStateDB::open(dir.path()).unwrap();
-        let loaded_obj = db2.get_object(&obj.id).expect("object must reload from disk");
+        let loaded_obj = db2
+            .get_object(&obj.id)
+            .expect("object must reload from disk");
         assert_eq!(loaded_obj.energy, 500);
-        let loaded_acc = db2.get_account(&addr).expect("account must reload from disk");
+        let loaded_acc = db2
+            .get_account(&addr)
+            .expect("account must reload from disk");
         assert_eq!(loaded_acc.balance, 1234);
         assert_eq!(loaded_acc.nonce, 5);
         assert!(db2.has_data());

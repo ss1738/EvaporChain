@@ -28,9 +28,8 @@ pub const VS_PPM_DENOMINATOR: u64 = 1_000_000;
 // `evaporchain-state` (`refresh_delegated_stakes`) was extracted to a
 // free function below — see definition near line ~620 of this file.
 pub use evaporchain_consensus_types::{
-    ValidatorInfo, ValidatorSet, HEALTH_BONUS_CAP, HEALTH_DECAY_RATE,
-    HEALTH_PER_EVAPORATION, MAX_HEALTH_SCORE, MIN_STAKE,
-    SLASH_DOWNTIME_PCT, SLASH_EQUIVOCATION_PCT,
+    ValidatorInfo, ValidatorSet, HEALTH_BONUS_CAP, HEALTH_DECAY_RATE, HEALTH_PER_EVAPORATION,
+    MAX_HEALTH_SCORE, MIN_STAKE, SLASH_DOWNTIME_PCT, SLASH_EQUIVOCATION_PCT,
 };
 
 // ─────────────────────── ValidatorSet ─────────────────────────────────────
@@ -53,10 +52,7 @@ pub use evaporchain_consensus_types::{
 /// `evaporchain-state` dep). Existing callers should migrate from
 /// `set.refresh_delegated_stakes(db)` to
 /// `validator_set::refresh_delegated_stakes(set, db)`.
-pub fn refresh_delegated_stakes(
-    set: &mut ValidatorSet,
-    db: &dyn evaporchain_state::db::StateDB,
-) {
+pub fn refresh_delegated_stakes(set: &mut ValidatorSet, db: &dyn evaporchain_state::db::StateDB) {
     let mut totals: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
     for d in db.all_delegations() {
         *totals.entry(d.validator_id).or_insert(0) = totals
@@ -71,7 +67,6 @@ pub fn refresh_delegated_stakes(
         }
     }
 }
-
 
 /// Apply a proportional slash to every delegation against `validator_id`
 /// (P0 #4 Phase 5). Use after [`ValidatorSet::slash_equivocation`] or
@@ -291,7 +286,11 @@ impl EpochTransitionManager {
         let stake_budget = (total_stake as f64 * MAX_STAKE_CHURN_FRACTION) as u64;
         let mut stake_churned: u64 = 0;
         let stake_of = |vs: &ValidatorSet, id: u64| -> u64 {
-            vs.validators().iter().find(|v| v.id == id).map(|v| v.stake).unwrap_or(0)
+            vs.validators()
+                .iter()
+                .find(|v| v.id == id)
+                .map(|v| v.stake)
+                .unwrap_or(0)
         };
 
         // 1. Stake updates. Under enforcement: only those past their one-epoch
@@ -847,8 +846,10 @@ mod tests {
         vs.add_validator(ValidatorInfo::new(1, 50, [1u8; 32])); // Below MIN_STAKE after slash
         let slashed = vs.slash_equivocation(1);
         assert_eq!(slashed, 5); // 10% of 50
-        // Validator stays in set but is jailed; removal is governance-only.
-        let v = vs.get(1).expect("validator must not be removed by slashing");
+                                // Validator stays in set but is jailed; removal is governance-only.
+        let v = vs
+            .get(1)
+            .expect("validator must not be removed by slashing");
         assert!(v.jailed);
         assert_eq!(v.stake, 45);
     }
@@ -1144,10 +1145,7 @@ mod tests {
             "stake-delta exceeding the churn budget must defer"
         );
         assert!(r.applied.is_empty());
-        assert!(r
-            .deferred
-            .iter()
-            .any(|d| d.contains("stake-churn budget")));
+        assert!(r.deferred.iter().any(|d| d.contains("stake-churn budget")));
     }
 
     #[test]
@@ -1160,10 +1158,7 @@ mod tests {
 
         let r = mgr.apply_epoch_transition(&mut vs, 2, true);
         assert_eq!(vs.len(), 4, "join exceeding stake-churn budget must defer");
-        assert!(r
-            .deferred
-            .iter()
-            .any(|d| d.contains("stake-churn budget")));
+        assert!(r.deferred.iter().any(|d| d.contains("stake-churn budget")));
     }
 
     #[test]

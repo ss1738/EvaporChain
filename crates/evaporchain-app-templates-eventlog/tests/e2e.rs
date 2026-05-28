@@ -19,7 +19,9 @@ use evaporchain_app_templates_eventlog::{
 };
 use evaporchain_app_templates_receipt::DeployReceipt;
 
-fn felix() -> [u8; 32] { [0xFE; 32] }
+fn felix() -> [u8; 32] {
+    [0xFE; 32]
+}
 
 fn receipt(
     commit: [u8; 32],
@@ -47,11 +49,21 @@ fn empty_log_is_empty() {
 #[test]
 fn monotone_height_enforced() {
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_001)).unwrap();
-    let err = log.append(receipt([0x02; 32], 0x02, MAYFLY, 5_000)).unwrap_err();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_001))
+        .unwrap();
+    let err = log
+        .append(receipt([0x02; 32], 0x02, MAYFLY, 5_000))
+        .unwrap_err();
     assert!(
-        matches!(err, AppendError::NonMonotoneHeight { incoming: 5_000, last: 5_001 }),
-        "non-monotone height must be rejected: {:?}", err
+        matches!(
+            err,
+            AppendError::NonMonotoneHeight {
+                incoming: 5_000,
+                last: 5_001
+            }
+        ),
+        "non-monotone height must be rejected: {:?}",
+        err
     );
 }
 
@@ -59,9 +71,12 @@ fn monotone_height_enforced() {
 fn same_height_multiple_deploys_allowed() {
     // Multiple deploys in one block share a height.
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000)).unwrap();
-    log.append(receipt([0x02; 32], 0x02, MAYFLY,     5_000)).unwrap();
-    log.append(receipt([0x03; 32], 0x03, MNEMOCHAIN_CARD, 5_000)).unwrap();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
+    log.append(receipt([0x02; 32], 0x02, MAYFLY, 5_000))
+        .unwrap();
+    log.append(receipt([0x03; 32], 0x03, MNEMOCHAIN_CARD, 5_000))
+        .unwrap();
     assert_eq!(log.len(), 3);
 }
 
@@ -73,17 +88,22 @@ fn duplicate_event_id_rejected() {
     let err = log.append(r).unwrap_err();
     assert!(
         matches!(err, AppendError::DuplicateEventId(_)),
-        "duplicate must be rejected: {:?}", err
+        "duplicate must be rejected: {:?}",
+        err
     );
 }
 
 #[test]
 fn since_returns_receipts_at_or_after_height() {
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI,    5_000)).unwrap();
-    log.append(receipt([0x02; 32], 0x02, MAYFLY,         5_001)).unwrap();
-    log.append(receipt([0x03; 32], 0x03, MNEMOCHAIN_CARD,5_002)).unwrap();
-    log.append(receipt([0x04; 32], 0x04, CHILDKEY_LETTER,5_003)).unwrap();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
+    log.append(receipt([0x02; 32], 0x02, MAYFLY, 5_001))
+        .unwrap();
+    log.append(receipt([0x03; 32], 0x03, MNEMOCHAIN_CARD, 5_002))
+        .unwrap();
+    log.append(receipt([0x04; 32], 0x04, CHILDKEY_LETTER, 5_003))
+        .unwrap();
 
     let tail = log.since(5_002);
     assert_eq!(tail.len(), 2);
@@ -94,15 +114,18 @@ fn since_returns_receipts_at_or_after_height() {
 #[test]
 fn since_zero_returns_all() {
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000)).unwrap();
-    log.append(receipt([0x02; 32], 0x02, MAYFLY,      5_001)).unwrap();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
+    log.append(receipt([0x02; 32], 0x02, MAYFLY, 5_001))
+        .unwrap();
     assert_eq!(log.since(0).len(), 2);
 }
 
 #[test]
 fn since_past_last_returns_empty() {
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000)).unwrap();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
     assert!(log.since(9_999).is_empty());
 }
 
@@ -110,7 +133,8 @@ fn since_past_last_returns_empty() {
 fn range_inclusive_endpoints() {
     let mut log = DeployEventLog::new();
     for (i, h) in (5_000u64..5_010).enumerate() {
-        log.append(receipt([i as u8; 32], i as u8 + 1, SINGH_SABI, h)).unwrap();
+        log.append(receipt([i as u8; 32], i as u8 + 1, SINGH_SABI, h))
+            .unwrap();
     }
     let r = log.range(5_002, 5_004);
     assert_eq!(r.len(), 3);
@@ -121,7 +145,8 @@ fn range_inclusive_endpoints() {
 #[test]
 fn range_inverted_returns_empty() {
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000)).unwrap();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
     assert!(log.range(5_010, 5_000).is_empty());
 }
 
@@ -129,7 +154,8 @@ fn range_inverted_returns_empty() {
 fn prune_drops_prefix_and_evicts_seen() {
     let mut log = DeployEventLog::new();
     for (i, h) in (5_000u64..5_010).enumerate() {
-        log.append(receipt([i as u8; 32], i as u8 + 1, SINGH_SABI, h)).unwrap();
+        log.append(receipt([i as u8; 32], i as u8 + 1, SINGH_SABI, h))
+            .unwrap();
     }
     let dropped = log.prune_before_height(5_005);
     assert_eq!(dropped, 5);
@@ -141,7 +167,8 @@ fn prune_drops_prefix_and_evicts_seen() {
 #[test]
 fn prune_below_first_is_noop() {
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000)).unwrap();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
     assert_eq!(log.prune_before_height(1_000), 0);
     assert_eq!(log.len(), 1);
 }
@@ -169,7 +196,7 @@ fn merkle_root_changes_when_receipt_changes() {
 #[test]
 fn merkle_root_changes_with_receipt_order() {
     let r1 = receipt([0x01; 32], 0x01, SINGH_SABI, 5_000);
-    let r2 = receipt([0x02; 32], 0x02, MAYFLY,     5_001);
+    let r2 = receipt([0x02; 32], 0x02, MAYFLY, 5_001);
     assert_ne!(
         merkle_root(&[r1.clone(), r2.clone()]),
         merkle_root(&[r2, r1])
@@ -181,22 +208,31 @@ fn single_receipt_inclusion_proof_verifies() {
     // Single-receipt tree has depth 0 — empty path, root = leaf hash.
     let r = receipt([0x42; 32], 0x01, SINGH_SABI, 5_000);
     let root = merkle_root(std::slice::from_ref(&r));
-    assert!(verify_inclusion(&r, 0, 1, &[], &root),
-        "single-receipt inclusion must verify with empty path");
+    assert!(
+        verify_inclusion(&r, 0, 1, &[], &root),
+        "single-receipt inclusion must verify with empty path"
+    );
     // Wrong root rejects.
-    assert!(!verify_inclusion(&r, 0, 1, &[], &[0u8; 32]),
-        "bogus root must not verify");
+    assert!(
+        !verify_inclusion(&r, 0, 1, &[], &[0u8; 32]),
+        "bogus root must not verify"
+    );
     // Out-of-range idx rejects.
-    assert!(!verify_inclusion(&r, 1, 1, &[], &root),
-        "idx >= leaf_count must not verify");
+    assert!(
+        !verify_inclusion(&r, 1, 1, &[], &root),
+        "idx >= leaf_count must not verify"
+    );
 }
 
 #[test]
 fn serde_round_trip_with_rebuild_index() {
     let mut log = DeployEventLog::new();
-    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000)).unwrap();
-    log.append(receipt([0x02; 32], 0x02, MAYFLY,     5_001)).unwrap();
-    log.append(receipt([0x03; 32], 0x03, MNEMOCHAIN_CARD, 5_002)).unwrap();
+    log.append(receipt([0x01; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
+    log.append(receipt([0x02; 32], 0x02, MAYFLY, 5_001))
+        .unwrap();
+    log.append(receipt([0x03; 32], 0x03, MNEMOCHAIN_CARD, 5_002))
+        .unwrap();
 
     let json = serde_json::to_string(&log).unwrap();
     let mut back: DeployEventLog = serde_json::from_str(&json).unwrap();
@@ -209,7 +245,8 @@ fn serde_round_trip_with_rebuild_index() {
     // Note: event_id differs because block_height changed, so use the
     // original exact duplicate by appending at the same height (monotone
     // check may fire first). Just confirm the index is live.
-    back.append(receipt([0x04; 32], 0x04, CHILDKEY_LETTER, 5_005)).unwrap();
+    back.append(receipt([0x04; 32], 0x04, CHILDKEY_LETTER, 5_005))
+        .unwrap();
     assert_eq!(back.len(), 4);
     let _ = dup;
 }
@@ -220,10 +257,14 @@ fn felix_indexer_streaming_full_arc() {
     // blocks 5_000-5_002 (two in 5_000). FELIX streams via since(5_000),
     // archives through 5_001, then prunes below 5_001.
     let mut log = DeployEventLog::new();
-    log.append(receipt([0xA1; 32], 0x01, SINGH_SABI,    5_000)).unwrap();
-    log.append(receipt([0xA2; 32], 0x02, MAYFLY,         5_000)).unwrap();
-    log.append(receipt([0xA3; 32], 0x03, MNEMOCHAIN_CARD,5_001)).unwrap();
-    log.append(receipt([0xA4; 32], 0x04, CHILDKEY_LETTER,5_002)).unwrap();
+    log.append(receipt([0xA1; 32], 0x01, SINGH_SABI, 5_000))
+        .unwrap();
+    log.append(receipt([0xA2; 32], 0x02, MAYFLY, 5_000))
+        .unwrap();
+    log.append(receipt([0xA3; 32], 0x03, MNEMOCHAIN_CARD, 5_001))
+        .unwrap();
+    log.append(receipt([0xA4; 32], 0x04, CHILDKEY_LETTER, 5_002))
+        .unwrap();
 
     // FELIX polls from 5_000.
     let stream = log.since(5_000);

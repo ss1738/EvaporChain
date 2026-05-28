@@ -171,9 +171,7 @@ mod tests {
     use std::sync::Arc;
 
     /// Mock chain that returns a fixed `nonce` for any address query.
-    async fn spawn_mock_chain(
-        fixed_nonce: u64,
-    ) -> (String, tokio::sync::oneshot::Sender<()>) {
+    async fn spawn_mock_chain(fixed_nonce: u64) -> (String, tokio::sync::oneshot::Sender<()>) {
         #[derive(serde::Serialize)]
         struct AddrResp {
             address: String,
@@ -272,9 +270,21 @@ mod tests {
         let m = crate::PaymasterMetrics::default();
         let r = run_one_cycle(&url, [1u8; 32], 7, &m).await.unwrap();
         assert!(matches!(r, NonceAlignment::Aligned { nonce: 7 }));
-        assert_eq!(m.last_chain_nonce.load(std::sync::atomic::Ordering::Relaxed), 7);
-        assert!(m.last_reconcile_unix_ms.load(std::sync::atomic::Ordering::Relaxed) > 0);
-        assert_eq!(m.drift_detections_total.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(
+            m.last_chain_nonce
+                .load(std::sync::atomic::Ordering::Relaxed),
+            7
+        );
+        assert!(
+            m.last_reconcile_unix_ms
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > 0
+        );
+        assert_eq!(
+            m.drift_detections_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 
     #[tokio::test]
@@ -283,9 +293,23 @@ mod tests {
         let m = crate::PaymasterMetrics::default();
         // Local at 12, chain at 5 → LocalAhead.
         let r = run_one_cycle(&url, [1u8; 32], 12, &m).await.unwrap();
-        assert!(matches!(r, NonceAlignment::LocalAhead { local: 12, chain: 5 }));
-        assert_eq!(m.drift_detections_total.load(std::sync::atomic::Ordering::Relaxed), 1);
-        assert_eq!(m.last_chain_nonce.load(std::sync::atomic::Ordering::Relaxed), 5);
+        assert!(matches!(
+            r,
+            NonceAlignment::LocalAhead {
+                local: 12,
+                chain: 5
+            }
+        ));
+        assert_eq!(
+            m.drift_detections_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            m.last_chain_nonce
+                .load(std::sync::atomic::Ordering::Relaxed),
+            5
+        );
     }
 
     #[tokio::test]
@@ -300,9 +324,21 @@ mod tests {
         assert!(r.is_err());
         // Gauges stayed at default (0); operator detects unreachable
         // chain by `last_reconcile_unix_ms` not advancing.
-        assert_eq!(m.last_chain_nonce.load(std::sync::atomic::Ordering::Relaxed), 0);
-        assert_eq!(m.last_reconcile_unix_ms.load(std::sync::atomic::Ordering::Relaxed), 0);
-        assert_eq!(m.drift_detections_total.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(
+            m.last_chain_nonce
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            m.last_reconcile_unix_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            m.drift_detections_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 
     /// T1.20 — check_alignment returns ReconcileError::BadStatus

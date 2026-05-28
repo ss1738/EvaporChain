@@ -341,13 +341,12 @@ fn lifecycle_hooks_execute_cleanly() {
 #[test]
 fn nft1_reserved_state_field_names_rejected_at_compile_time() {
     for reserved in &["owner", "caller", "epoch", "energy"] {
-        let src = format!(
-            "contract Bad {{ state {{ {reserved}: u64 = 0 }} fn foo() {{}} }}"
-        );
+        let src = format!("contract Bad {{ state {{ {reserved}: u64 = 0 }} fn foo() {{}} }}");
         let ast = parser::parse(&src)
             .unwrap_or_else(|e| panic!("parse must succeed for reserved-name test: {e:?}"));
-        let err = compiler::compile(&ast)
-            .expect_err(&format!("state field '{reserved}' must be rejected at compile time"));
+        let err = compiler::compile(&ast).expect_err(&format!(
+            "state field '{reserved}' must be rejected at compile time"
+        ));
         let msg = format!("{err:?}");
         assert!(
             msg.contains("reserved"),

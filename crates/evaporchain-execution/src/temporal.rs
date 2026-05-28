@@ -801,10 +801,7 @@ mod tests {
     fn t1_20_deferred_reject_empty_inner_tx() {
         let mut queue = DeferredQueue::new();
         let tx = make_deferred_tx(addr(1), vec![TemporalGuard::AfterEpoch(5)], vec![]);
-        assert!(matches!(
-            queue.submit(tx),
-            Err(TemporalError::EmptyInnerTx)
-        ));
+        assert!(matches!(queue.submit(tx), Err(TemporalError::EmptyInnerTx)));
     }
 
     /// T1.20 — exercise BeforeEpoch standalone guard with no
@@ -816,11 +813,7 @@ mod tests {
         let contract_engine = ContractEngine::new();
         let db = InMemoryStateDB::new();
 
-        let tx = make_deferred_tx(
-            addr(2),
-            vec![TemporalGuard::BeforeEpoch(10)],
-            vec![0xEF],
-        );
+        let tx = make_deferred_tx(addr(2), vec![TemporalGuard::BeforeEpoch(10)], vec![0xEF]);
         queue.submit(tx).unwrap();
 
         // Epoch 0: BeforeEpoch(10) passes, no AfterEpoch so earliest=0,

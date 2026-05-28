@@ -829,8 +829,7 @@ mod tests {
                 data_hash: [0xBBu8; 32],
             },
         ];
-        let nmt =
-            NamespaceMerkleTree::try_from_leaves(leaves).expect("valid leaves must accept");
+        let nmt = NamespaceMerkleTree::try_from_leaves(leaves).expect("valid leaves must accept");
         assert_eq!(nmt.blob_commitments().len(), 2);
         assert_eq!(nmt.root().min_namespace, [0x01; 8]);
         assert_eq!(nmt.root().max_namespace, [0x02; 8]);

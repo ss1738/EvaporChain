@@ -230,7 +230,10 @@ mod tests {
         let bytes = [0xffu8; EIP197_PROOF_BYTES];
         match eip197_bytes_to_proof(&bytes) {
             Err(Eip197DecodeError::NonCanonicalLimb { offset }) => {
-                assert_eq!(offset, 0, "first limb at offset 0 should be the failing one");
+                assert_eq!(
+                    offset, 0,
+                    "first limb at offset 0 should be the failing one"
+                );
             }
             other => panic!("expected NonCanonicalLimb at offset 0, got {other:?}"),
         }
@@ -302,7 +305,9 @@ mod tests {
 
     #[test]
     fn decode_error_displays_all_variants() {
-        assert!(Eip197DecodeError::WrongLength(100).to_string().contains("100"));
+        assert!(Eip197DecodeError::WrongLength(100)
+            .to_string()
+            .contains("100"));
         assert!(Eip197DecodeError::NonCanonicalLimb { offset: 64 }
             .to_string()
             .contains("64"));
@@ -343,11 +348,7 @@ mod tests {
         // Manually serialise the G2 generator's x.c1 in BE-32 and
         // confirm it matches bytes 64..96 (which is supposed to
         // hold x.c1, not x.c0).
-        let mut expected_xc1_be = G2Affine::generator()
-            .x
-            .c1
-            .into_bigint()
-            .to_bytes_le();
+        let mut expected_xc1_be = G2Affine::generator().x.c1.into_bigint().to_bytes_le();
         expected_xc1_be.resize(32, 0);
         expected_xc1_be.reverse();
 
@@ -358,11 +359,7 @@ mod tests {
         );
 
         // And bytes 96..128 must hold x.c0, NOT x.c1.
-        let mut expected_xc0_be = G2Affine::generator()
-            .x
-            .c0
-            .into_bigint()
-            .to_bytes_le();
+        let mut expected_xc0_be = G2Affine::generator().x.c0.into_bigint().to_bytes_le();
         expected_xc0_be.resize(32, 0);
         expected_xc0_be.reverse();
         assert_eq!(

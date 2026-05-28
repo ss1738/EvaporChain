@@ -173,13 +173,9 @@ impl AccountManager {
         secret_key: &[u8],
         address: AccountAddress,
     ) -> Result<AccountAddress, AccountError> {
-        let addr = self.keystore.import_key_with_address(
-            name,
-            password,
-            public_key,
-            secret_key,
-            address,
-        )?;
+        let addr = self
+            .keystore
+            .import_key_with_address(name, password, public_key, secret_key, address)?;
         if self.keystore.active.is_none() {
             self.keystore.active = Some(name.to_string());
         }
@@ -247,7 +243,8 @@ impl AccountManager {
 
     /// Get the address of the active account.
     pub fn active_address(&self) -> Option<AccountAddress> {
-        self.keystore.active
+        self.keystore
+            .active
             .as_ref()
             .and_then(|name| self.keystore.get_address(name))
     }
@@ -560,8 +557,7 @@ mod tests {
         mgr.save(&path).unwrap();
 
         let loaded =
-            AccountManager::load(&path, RpcClient::new("http://localhost:3000").unwrap())
-                .unwrap();
+            AccountManager::load(&path, RpcClient::new("http://localhost:3000").unwrap()).unwrap();
         assert_eq!(loaded.account_count(), 1);
         assert_eq!(loaded.active_name(), Some("alice"));
 

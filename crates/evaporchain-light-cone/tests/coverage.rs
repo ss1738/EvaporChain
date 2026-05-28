@@ -5,14 +5,13 @@
 
 use evaporchain_energy_kernel::{ChainLambda, Lambda};
 use evaporchain_light_cone::{
-    all_block_clocks, block_lamport_clock, causal_future, causal_past, closing_antichain,
-    closing_antichain_digest, comparable, digest_antichain, find_first_divergence, find_lca,
-    is_antichain, is_concurrent, precedes, time_arrow_holds_at,
-    block_path_from_to,
+    all_block_clocks, block_lamport_clock, block_path_from_to, causal_future, causal_past,
+    closing_antichain, closing_antichain_digest, comparable,
+    concurrency::MAX_ANTICHAIN_INPUT,
     dag::{LightConeError, MAX_PARENTS_PER_BLOCK},
     decay_lamport::ClockDerivationError,
-    concurrency::MAX_ANTICHAIN_INPUT,
-    Block, BlockId, LightCone,
+    digest_antichain, find_first_divergence, find_lca, is_antichain, is_concurrent, precedes,
+    time_arrow_holds_at, Block, BlockId, LightCone,
 };
 
 fn id(b: u8) -> BlockId {
@@ -27,7 +26,8 @@ fn diamond() -> LightCone {
     lc.insert(Block::new(id(0), vec![], 1_000, 0)).unwrap();
     lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
     lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
-    lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap();
+    lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2))
+        .unwrap();
     lc
 }
 
@@ -80,7 +80,9 @@ fn insert_at_exact_cap_succeeds() {
 #[test]
 fn missing_parent_error_carries_block_and_parent_ids() {
     let mut lc = LightCone::new();
-    let err = lc.insert(Block::new(id(5), vec![id(99)], 1, 1)).unwrap_err();
+    let err = lc
+        .insert(Block::new(id(5), vec![id(99)], 1, 1))
+        .unwrap_err();
     match err {
         LightConeError::MissingParent { block, parent } => {
             assert_eq!(block, id(5));
@@ -209,7 +211,10 @@ fn prune_before_epoch_drops_old_blocks_and_edges() {
     assert_eq!(past.len(), 2, "past names m's direct parents only");
     assert!(past.contains(&id(1)));
     assert!(past.contains(&id(2)));
-    assert!(!past.contains(&id(0)), "genesis no longer reachable through DAG");
+    assert!(
+        !past.contains(&id(0)),
+        "genesis no longer reachable through DAG"
+    );
 }
 
 #[test]
@@ -264,9 +269,7 @@ fn prune_orphan_branch_missing_tip_is_noop() {
 #[test]
 fn is_antichain_rejects_oversized_input() {
     let lc = diamond();
-    let oversized: Vec<BlockId> = (0..(MAX_ANTICHAIN_INPUT as u8 + 1))
-        .map(id)
-        .collect();
+    let oversized: Vec<BlockId> = (0..(MAX_ANTICHAIN_INPUT as u8 + 1)).map(id).collect();
     assert!(!is_antichain(&lc, &oversized));
 }
 
@@ -275,9 +278,7 @@ fn is_antichain_at_cap_size_processes_normally() {
     // 64 distinct random ids that aren't in the DAG — comparable() will
     // return false for unknown blocks → is_antichain returns true.
     let lc = diamond();
-    let at_cap: Vec<BlockId> = (10..(10 + MAX_ANTICHAIN_INPUT as u8))
-        .map(id)
-        .collect();
+    let at_cap: Vec<BlockId> = (10..(10 + MAX_ANTICHAIN_INPUT as u8)).map(id).collect();
     assert_eq!(at_cap.len(), MAX_ANTICHAIN_INPUT);
     assert!(is_antichain(&lc, &at_cap));
 }

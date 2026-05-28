@@ -54,9 +54,7 @@ impl LightClient {
         }
         let mut ingested = 0u64;
         for h in (start + 1)..=target {
-            let header = transport
-                .fetch_header_at(h)
-                .map_err(transport_err_to_sdk)?;
+            let header = transport.fetch_header_at(h).map_err(transport_err_to_sdk)?;
             self.ingest_block(header, current_time)?;
             ingested += 1;
         }
@@ -143,14 +141,7 @@ mod tests {
         let mut prev_hash = genesis.block_hash;
         for h in 2..=5 {
             let block_hash = [h as u8 + 0xa0; 32];
-            let header = make_signed_header(
-                h,
-                prev_hash,
-                block_hash,
-                vs.clone(),
-                &kps,
-                &[0, 1, 2],
-            );
+            let header = make_signed_header(h, prev_hash, block_hash, vs.clone(), &kps, &[0, 1, 2]);
             mock.insert_header(header);
             prev_hash = block_hash;
         }
@@ -171,14 +162,7 @@ mod tests {
         let mut prev_hash = genesis.block_hash;
         for h in 2..=8 {
             let block_hash = [h as u8 + 0xa0; 32];
-            let header = make_signed_header(
-                h,
-                prev_hash,
-                block_hash,
-                vs.clone(),
-                &kps,
-                &[0, 1, 2],
-            );
+            let header = make_signed_header(h, prev_hash, block_hash, vs.clone(), &kps, &[0, 1, 2]);
             mock.insert_header(header);
             prev_hash = block_hash;
         }
@@ -199,7 +183,12 @@ mod tests {
         // Block 2: good.
         let h2_hash = [0xb2; 32];
         mock.insert_header(make_signed_header(
-            2, prev_hash, h2_hash, vs.clone(), &kps, &[0, 1, 2],
+            2,
+            prev_hash,
+            h2_hash,
+            vs.clone(),
+            &kps,
+            &[0, 1, 2],
         ));
         prev_hash = h2_hash;
         // Block 3: bad — only 1 of 4 signers (below quorum).

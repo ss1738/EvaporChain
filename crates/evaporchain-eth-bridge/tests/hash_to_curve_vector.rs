@@ -41,9 +41,10 @@ fn g2_to_eip2537(p: G2Affine) -> [u8; 256] {
 }
 
 fn rust_hash_to_g2(msg: &[u8]) -> [u8; 256] {
-    let p: G2Projective = <G2Projective as HashToCurve<
-        ExpandMsgXmd<sha2_old_for_bls::Sha256>,
-    >>::hash_to_curve(msg, BLS_DST);
+    let p: G2Projective =
+        <G2Projective as HashToCurve<ExpandMsgXmd<sha2_old_for_bls::Sha256>>>::hash_to_curve(
+            msg, BLS_DST,
+        );
     let aff: G2Affine = p.into();
     g2_to_eip2537(aff)
 }
@@ -67,5 +68,9 @@ fn rust_matches_solidity_hello_evaporchain() {
     let rust = rust_hash_to_g2(b"hello evaporchain");
     let sol = hex::decode(SOL_HELLO_EVAPORCHAIN).unwrap();
     assert_eq!(sol.len(), 256);
-    assert_eq!(rust.to_vec(), sol, "Rust hash_to_g2 disagrees with Solidity");
+    assert_eq!(
+        rust.to_vec(),
+        sol,
+        "Rust hash_to_g2 disagrees with Solidity"
+    );
 }

@@ -88,14 +88,8 @@ mod tests {
         let h2 = neptune_hash_primary(&[PrimaryScalar::from(2u64)]);
         assert_ne!(h1, h2, "distinct inputs must hash distinctly");
 
-        let h_seq_a = neptune_hash_primary(&[
-            PrimaryScalar::from(1u64),
-            PrimaryScalar::from(2u64),
-        ]);
-        let h_seq_b = neptune_hash_primary(&[
-            PrimaryScalar::from(2u64),
-            PrimaryScalar::from(1u64),
-        ]);
+        let h_seq_a = neptune_hash_primary(&[PrimaryScalar::from(1u64), PrimaryScalar::from(2u64)]);
+        let h_seq_b = neptune_hash_primary(&[PrimaryScalar::from(2u64), PrimaryScalar::from(1u64)]);
         assert_ne!(
             h_seq_a, h_seq_b,
             "order must matter (sponge is not commutative)"
@@ -175,11 +169,11 @@ mod tests {
     #[test]
     fn pinned_section_2_primary_minimal_absorb_sequence() {
         let inputs = vec![
-            PrimaryScalar::ZERO,         // pp.digest (placeholder)
-            PrimaryScalar::from(1u64),   // num_steps
-            PrimaryScalar::ZERO,         // z0[0]
-            PrimaryScalar::from(1u64),   // zi[0]
-            PrimaryScalar::ZERO,         // ri_primary
+            PrimaryScalar::ZERO,       // pp.digest (placeholder)
+            PrimaryScalar::from(1u64), // num_steps
+            PrimaryScalar::ZERO,       // z0[0]
+            PrimaryScalar::from(1u64), // zi[0]
+            PrimaryScalar::ZERO,       // ri_primary
         ];
         let h = neptune_hash_primary(&inputs);
         const EXPECTED_LE: [u8; 32] = [

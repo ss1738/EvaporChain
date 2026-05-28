@@ -515,12 +515,12 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "compute_demurrage" => {
-            let balance =
-                validate_amount_field(args, "balance", MAX_TOKEN_AMOUNT).map_err(|e| e.to_string())?;
+            let balance = validate_amount_field(args, "balance", MAX_TOKEN_AMOUNT)
+                .map_err(|e| e.to_string())?;
             let last_touched_epoch = validate_block_height_field(args, "last_touched_epoch")
                 .map_err(|e| e.to_string())?;
-            let current_epoch = validate_block_height_field(args, "current_epoch")
-                .map_err(|e| e.to_string())?;
+            let current_epoch =
+                validate_block_height_field(args, "current_epoch").map_err(|e| e.to_string())?;
             let lambda_base_ppm = args
                 .get("lambda_base_ppm")
                 .and_then(|v| v.as_u64())
@@ -554,10 +554,9 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "check_annealing_temperature" => {
-            let lambda_half_life = validate_half_life_field(args, "lambda_half_life")
-                .map_err(|e| e.to_string())?;
-            let epoch =
-                validate_block_height_field(args, "epoch").map_err(|e| e.to_string())?;
+            let lambda_half_life =
+                validate_half_life_field(args, "lambda_half_life").map_err(|e| e.to_string())?;
+            let epoch = validate_block_height_field(args, "epoch").map_err(|e| e.to_string())?;
             let body = json!({
                 "lambda_half_life": lambda_half_life,
                 "beta_mb": 1000u64,
@@ -608,10 +607,10 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             if !blocks.is_array() {
                 return Err("'blocks' must be a JSON array".into());
             }
-            let evaluated_at_epoch =
-                validate_block_height_field(args, "evaluated_at_epoch").map_err(|e| e.to_string())?;
-            let threshold =
-                validate_amount_field(args, "threshold", MAX_TOKEN_AMOUNT).map_err(|e| e.to_string())?;
+            let evaluated_at_epoch = validate_block_height_field(args, "evaluated_at_epoch")
+                .map_err(|e| e.to_string())?;
+            let threshold = validate_amount_field(args, "threshold", MAX_TOKEN_AMOUNT)
+                .map_err(|e| e.to_string())?;
             let lambda_epochs =
                 validate_half_life_field(args, "lambda_epochs").map_err(|e| e.to_string())?;
             let body = json!({

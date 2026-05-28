@@ -69,8 +69,10 @@ mod press_claim_tests {
     //! 3. **Canonicality** — an unsorted or duplicated fork-witness
     //!    list is rejected at build time before a root is produced.
 
-    use crate::{build_attestation, verify_attestation, AttestationError, EvaporatedForkWitnessRef,
-        FinalityAttestation};
+    use crate::{
+        build_attestation, verify_attestation, AttestationError, EvaporatedForkWitnessRef,
+        FinalityAttestation,
+    };
 
     fn att(
         block_byte: u8,
@@ -85,7 +87,13 @@ mod press_claim_tests {
         causal_root[0] = causal_byte;
         let mut bell_seed = [0u8; 32];
         bell_seed[0] = bell_byte;
-        FinalityAttestation { block_hash, finalised_at_epoch: epoch, causal_root, bell_seed, evaporated_forks: forks }
+        FinalityAttestation {
+            block_hash,
+            finalised_at_epoch: epoch,
+            causal_root,
+            bell_seed,
+            evaporated_forks: forks,
+        }
     }
 
     fn fwr(root_byte: u8, witness_byte: u8) -> EvaporatedForkWitnessRef {
@@ -100,7 +108,13 @@ mod press_claim_tests {
 
     #[test]
     fn well_formed_attestation_round_trips() {
-        let a = att(0x01, 100, 0xCA, 0xBE, vec![fwr(0x10, 0xAA), fwr(0x20, 0xBB)]);
+        let a = att(
+            0x01,
+            100,
+            0xCA,
+            0xBE,
+            vec![fwr(0x10, 0xAA), fwr(0x20, 0xBB)],
+        );
         let root = build_attestation(&a).unwrap();
         verify_attestation(&a, &root).unwrap();
     }
@@ -109,16 +123,46 @@ mod press_claim_tests {
 
     #[test]
     fn tamper_any_field_invalidates_root() {
-        let a = att(0x01, 100, 0xCA, 0xBE, vec![fwr(0x10, 0xAA), fwr(0x20, 0xBB)]);
+        let a = att(
+            0x01,
+            100,
+            0xCA,
+            0xBE,
+            vec![fwr(0x10, 0xAA), fwr(0x20, 0xBB)],
+        );
         let root = build_attestation(&a).unwrap();
 
         for tampered in [
-            { let mut t = a.clone(); t.block_hash[0] ^= 1; t },
-            { let mut t = a.clone(); t.finalised_at_epoch += 1; t },
-            { let mut t = a.clone(); t.causal_root[0] ^= 1; t },
-            { let mut t = a.clone(); t.bell_seed[0] ^= 1; t },
-            { let mut t = a.clone(); t.evaporated_forks[0].witness[0] ^= 1; t },
-            { let mut t = a.clone(); t.evaporated_forks.pop(); t },
+            {
+                let mut t = a.clone();
+                t.block_hash[0] ^= 1;
+                t
+            },
+            {
+                let mut t = a.clone();
+                t.finalised_at_epoch += 1;
+                t
+            },
+            {
+                let mut t = a.clone();
+                t.causal_root[0] ^= 1;
+                t
+            },
+            {
+                let mut t = a.clone();
+                t.bell_seed[0] ^= 1;
+                t
+            },
+            {
+                let mut t = a.clone();
+                t.evaporated_forks[0].witness[0] ^= 1;
+                t
+            },
+            {
+                let mut t = a.clone();
+                t.evaporated_forks.pop();
+                t
+            },
         ] {
             let err = verify_attestation(&tampered, &root).unwrap_err();
             assert!(
@@ -133,7 +177,10 @@ mod press_claim_tests {
     #[test]
     fn unsorted_fork_list_rejected_before_root_produced() {
         let a = att(0x01, 50, 0x00, 0x00, vec![fwr(0x20, 0x00), fwr(0x10, 0x00)]);
-        assert_eq!(build_attestation(&a).unwrap_err(), AttestationError::UnsortedForks);
+        assert_eq!(
+            build_attestation(&a).unwrap_err(),
+            AttestationError::UnsortedForks
+        );
     }
 
     #[test]

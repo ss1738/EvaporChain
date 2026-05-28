@@ -66,5 +66,8 @@ fn cone_intersection_smoke() {
     let a_inside = a_remaining >= 100;
     let b_inside = b_remaining >= 600;
     assert!(a_inside, "A must be inside at epoch=200 (long λ)");
-    assert!(!b_inside, "B must be outside at epoch=200 (short λ + high threshold)");
+    assert!(
+        !b_inside,
+        "B must be outside at epoch=200 (short λ + high threshold)"
+    );
 }

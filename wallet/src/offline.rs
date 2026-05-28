@@ -253,7 +253,8 @@ mod tests {
     fn test_sign_create_object_offline() {
         let signer = make_signer();
         let obj_id = [3u8; 32];
-        let signed = OfflineSigner::sign_create_object(&signer, &obj_id, 1000, 100, vec![0u8; 10], "");
+        let signed =
+            OfflineSigner::sign_create_object(&signer, &obj_id, 1000, 100, vec![0u8; 10], "");
 
         assert_eq!(signed.tx_type, "CreateObject");
         assert!(signed.extra.is_some());

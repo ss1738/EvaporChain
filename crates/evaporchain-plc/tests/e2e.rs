@@ -42,8 +42,8 @@
 //!
 //! INVENTION_STACK §4.3: PLC (Topological Light Clients, derives from EFH §9).
 
-use evaporchain_plc::{Bar, Barcode, BlockHeader, LightClient, LightClientError};
 use evaporchain_plc::barcode::INF_DEATH;
+use evaporchain_plc::{Bar, Barcode, BlockHeader, LightClient, LightClientError};
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -111,9 +111,16 @@ fn fixture_adversarial_extra_bar_exceeds_bound() {
     let err = lc.ingest(&adv_header, adv).unwrap_err();
 
     match err {
-        LightClientError::StabilityBoundViolated { height, observed, bd_max } => {
+        LightClientError::StabilityBoundViolated {
+            height,
+            observed,
+            bd_max,
+        } => {
             assert_eq!(height, 4);
-            assert!(observed > 5, "adversarial d_B={observed} must exceed bd_max=5");
+            assert!(
+                observed > 5,
+                "adversarial d_B={observed} must exceed bd_max=5"
+            );
             assert_eq!(bd_max, 5);
         }
         other => panic!("expected StabilityBoundViolated, got {other:?}"),
@@ -138,7 +145,10 @@ fn fixture_bd_max_zero_pins_barcode() {
     let perturbed = make_barcode(vec![b(10, 21)]);
     let h2 = header_for(2, &perturbed, 0);
     let err = lc.ingest(&h2, perturbed).unwrap_err();
-    assert!(matches!(err, LightClientError::StabilityBoundViolated { .. }));
+    assert!(matches!(
+        err,
+        LightClientError::StabilityBoundViolated { .. }
+    ));
     // Height pinned at 1.
     assert_eq!(lc.current_height(), 1);
 }
@@ -174,7 +184,7 @@ fn doctrine_tampered_hash_mismatch() {
     match err {
         LightClientError::BarcodeHashMismatch { expected, actual } => {
             assert_eq!(expected, [0xAB; 32], "expected = tampered header hash");
-            assert_eq!(actual,   real_hash,  "actual = real barcode hash");
+            assert_eq!(actual, real_hash, "actual = real barcode hash");
         }
         other => panic!("expected BarcodeHashMismatch, got {other:?}"),
     }
@@ -206,18 +216,26 @@ fn adversarial_non_monotone_height_rejected() {
 
     // Same height.
     let next = make_barcode(vec![b(10, 21)]);
-    let err = lc.ingest(&header_for(5, &next, 2), next.clone()).unwrap_err();
+    let err = lc
+        .ingest(&header_for(5, &next, 2), next.clone())
+        .unwrap_err();
     match err {
         LightClientError::NonMonotoneHeight { incoming, current } => {
             assert_eq!(incoming, 5);
-            assert_eq!(current,  5);
+            assert_eq!(current, 5);
         }
         other => panic!("expected NonMonotoneHeight, got {other:?}"),
     }
 
     // Strictly lower height.
     let err2 = lc.ingest(&header_for(3, &next, 2), next).unwrap_err();
-    assert!(matches!(err2, LightClientError::NonMonotoneHeight { incoming: 3, current: 5 }));
+    assert!(matches!(
+        err2,
+        LightClientError::NonMonotoneHeight {
+            incoming: 3,
+            current: 5
+        }
+    ));
 
     // State unchanged.
     assert_eq!(lc.current_height(), 5);
@@ -255,7 +273,10 @@ fn adversarial_unequal_infinite_bar_count_gives_large_distance() {
     let err = lc.ingest(&h1, with_inf).unwrap_err();
     match err {
         LightClientError::StabilityBoundViolated { observed, .. } => {
-            assert_eq!(observed, INF_DEATH, "unequal inf count -> INF_DEATH bottleneck");
+            assert_eq!(
+                observed, INF_DEATH,
+                "unequal inf count -> INF_DEATH bottleneck"
+            );
         }
         other => panic!("expected StabilityBoundViolated, got {other:?}"),
     }

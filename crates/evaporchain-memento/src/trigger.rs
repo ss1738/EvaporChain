@@ -93,11 +93,12 @@ impl MementoTrigger {
             MementoTrigger::BlockHeightReached(target) => Ok(observation.current_epoch >= *target),
 
             MementoTrigger::OwnerInactiveSince { min_idle_epochs } => {
-                let last_active = observation
-                    .owner_last_active_epoch
-                    .ok_or(TriggerError::MissingChainData(
-                        "owner_last_active_epoch (needed by OwnerInactiveSince)",
-                    ))?;
+                let last_active =
+                    observation
+                        .owner_last_active_epoch
+                        .ok_or(TriggerError::MissingChainData(
+                            "owner_last_active_epoch (needed by OwnerInactiveSince)",
+                        ))?;
                 // Idle window starts at max(sealed_at, last_active) —
                 // the contract cannot count idle epochs before it
                 // even existed. If the owner sent a tx after sealing,
@@ -120,12 +121,11 @@ impl MementoTrigger {
                 // The signature itself is verified by the chain
                 // *before* invoking this trigger; the trigger just
                 // checks whether the chain witnessed a valid one.
-                let signed = observation
-                    .owner_signed_reveal_for
-                    .as_ref()
-                    .ok_or(TriggerError::MissingChainData(
+                let signed = observation.owner_signed_reveal_for.as_ref().ok_or(
+                    TriggerError::MissingChainData(
                         "owner_signed_reveal_for (needed by OwnerSignedReveal)",
-                    ))?;
+                    ),
+                )?;
                 // Caller passes the commitment they're attempting to
                 // reveal. If the signature was for the same commitment
                 // and from the owner, accept.
@@ -133,10 +133,7 @@ impl MementoTrigger {
             }
 
             MementoTrigger::AttesterApproval { attester } => {
-                let approved_by = observation
-                    .attester_approvals
-                    .iter()
-                    .any(|a| a == attester);
+                let approved_by = observation.attester_approvals.iter().any(|a| a == attester);
                 Ok(approved_by)
             }
         }

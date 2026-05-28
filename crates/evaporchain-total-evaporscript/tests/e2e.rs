@@ -91,8 +91,7 @@ fn auction_settlement_program(n: i64, fee_divisor: i64, step: i64) -> Term {
 #[test]
 fn auction_settlement_certifies_as_total() {
     let prog = auction_settlement_program(10, 100, 5);
-    let cert = check_total(&prog)
-        .expect("auction settlement must be certifiable as total");
+    let cert = check_total(&prog).expect("auction settlement must be certifiable as total");
     // Certificate exists (non-empty — unit type witnesses totality)
     let _ = cert;
 }
@@ -103,8 +102,7 @@ fn auction_settlement_various_sizes_all_certify() {
     // structure, not values).
     for n in [0, 1, 5, 100, 1000] {
         let prog = auction_settlement_program(n, 50, 1);
-        check_total(&prog)
-            .unwrap_or_else(|e| panic!("n={n}: unexpected rejection: {e:?}"));
+        check_total(&prog).unwrap_or_else(|e| panic!("n={n}: unexpected rejection: {e:?}"));
     }
 }
 

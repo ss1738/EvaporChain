@@ -66,10 +66,10 @@ fn epoch_archive_full_lifecycle() {
 #[test]
 fn strong_triangle_inequality_concrete() {
     // §A1.4 — d(4,12) = 3 ≥ min(d(4,8), d(8,12)) = min(2,2) = 2
-    let d48  = ultrametric_distance::<2>(EP4,  EP8);  // v_2(|4-8|)  = v_2(4)  = 2
-    let d812 = ultrametric_distance::<2>(EP8,  EP12); // v_2(|8-12|) = v_2(4)  = 2
-    let d412 = ultrametric_distance::<2>(EP4,  EP12); // v_2(|4-12|) = v_2(8)  = 3
-    assert_eq!(d48,  2, "d(4,8) must be 2");
+    let d48 = ultrametric_distance::<2>(EP4, EP8); // v_2(|4-8|)  = v_2(4)  = 2
+    let d812 = ultrametric_distance::<2>(EP8, EP12); // v_2(|8-12|) = v_2(4)  = 2
+    let d412 = ultrametric_distance::<2>(EP4, EP12); // v_2(|4-12|) = v_2(8)  = 3
+    assert_eq!(d48, 2, "d(4,8) must be 2");
     assert_eq!(d812, 2, "d(8,12) must be 2");
     assert_eq!(d412, 3, "d(4,12) must be 3");
     assert!(d412 >= d48.min(d812), "strong triangle violated");
@@ -79,11 +79,11 @@ fn strong_triangle_inequality_concrete() {
 fn isosceles_property() {
     // §A1.4 — when two sides are equal in ultrametric distance, the "outlier"
     // side must be strictly greater (isosceles theorem for p-adic balls).
-    let d48  = ultrametric_distance::<2>(EP4,  EP8);
-    let d812 = ultrametric_distance::<2>(EP8,  EP12);
-    let d412 = ultrametric_distance::<2>(EP4,  EP12);
+    let d48 = ultrametric_distance::<2>(EP4, EP8);
+    let d812 = ultrametric_distance::<2>(EP8, EP12);
+    let d412 = ultrametric_distance::<2>(EP4, EP12);
     assert_eq!(d48, d812, "d(4,8) = d(8,12): two equal sides");
-    assert!(d412 > d48,   "outlier side must be strictly larger");
+    assert!(d412 > d48, "outlier side must be strictly larger");
 }
 
 #[test]
@@ -103,14 +103,17 @@ fn ultrametric_clustering_matches_tree_topology() {
     // §A1.4 — EP4/EP12 are "closer" than EP4/EP8 in the 2-adic metric;
     // EP16/EP32 are closer still.  The ordering d(4,8) < d(4,12) < d(16,32)
     // means EP16 and EP32 share MORE low-order sub-tree levels.
-    let d4_8   = ultrametric_distance::<2>(EP4,  EP8);   // 2
-    let d4_12  = ultrametric_distance::<2>(EP4,  EP12);  // 3
-    let d16_32 = ultrametric_distance::<2>(EP16, EP32);  // 4
-    assert!(d4_8 < d4_12,   "EP4↔EP8 less close than EP4↔EP12");
+    let d4_8 = ultrametric_distance::<2>(EP4, EP8); // 2
+    let d4_12 = ultrametric_distance::<2>(EP4, EP12); // 3
+    let d16_32 = ultrametric_distance::<2>(EP16, EP32); // 4
+    assert!(d4_8 < d4_12, "EP4↔EP8 less close than EP4↔EP12");
     assert!(d4_12 < d16_32, "EP4↔EP12 less close than EP16↔EP32");
     // Triangle for the wider triple:
     let d4_32 = ultrametric_distance::<2>(EP4, EP32); // v_2(28) = v_2(4*7) = 2
-    assert!(d4_32 >= d4_8.min(d16_32), "triangle: d(4,32) >= min(d(4,8),d(16,32))");
+    assert!(
+        d4_32 >= d4_8.min(d16_32),
+        "triangle: d(4,32) >= min(d(4,8),d(16,32))"
+    );
 }
 
 #[test]
@@ -121,16 +124,19 @@ fn tamper_wrong_value_rejected() {
     let proof = t.prove(k2(EP8)).unwrap();
     let wrong = epoch_root(EP8 + 1);
     let err = verify_inclusion::<2>(root, k2(EP8), &wrong, &proof).unwrap_err();
-    assert!(matches!(err, ProofError::RootMismatch { .. }), "wrong value → RootMismatch");
+    assert!(
+        matches!(err, ProofError::RootMismatch { .. }),
+        "wrong value → RootMismatch"
+    );
 }
 
 #[test]
 fn absent_epoch_no_proof() {
     // §A1.4 — epochs never inserted must return None from prove
     let t = archive();
-    assert!(t.prove(k2(1)).is_none(),  "ep=1 not inserted");
+    assert!(t.prove(k2(1)).is_none(), "ep=1 not inserted");
     assert!(t.prove(k2(99)).is_none(), "ep=99 not inserted");
-    assert!(t.prove(k2(5)).is_none(),  "ep=5 not inserted");
+    assert!(t.prove(k2(5)).is_none(), "ep=5 not inserted");
 }
 
 #[test]
@@ -138,9 +144,13 @@ fn insertion_order_invariant() {
     // §A1.4 — the Merkle root must be deterministic regardless of insertion order
     let epochs = [EP0, EP4, EP8, EP12, EP16, EP24, EP32];
     let mut fwd = PAdicMerkleTree::<2>::new(8).unwrap();
-    for &ep in &epochs { fwd.insert(k2(ep), &epoch_root(ep)); }
+    for &ep in &epochs {
+        fwd.insert(k2(ep), &epoch_root(ep));
+    }
     let mut rev = PAdicMerkleTree::<2>::new(8).unwrap();
-    for &ep in epochs.iter().rev() { rev.insert(k2(ep), &epoch_root(ep)); }
+    for &ep in epochs.iter().rev() {
+        rev.insert(k2(ep), &epoch_root(ep));
+    }
     assert_eq!(fwd.root(), rev.root(), "root must be order-invariant");
 }
 
@@ -159,9 +169,9 @@ fn cross_prime_p3_archive() {
             .unwrap_or_else(|e| panic!("p=3 proof for ep={ep} failed: {e:?}"));
     }
     // p=3 triangle: d(1,9)=1, d(9,27)=2, d(1,27)=1; triangle holds (1 >= min(1,2)=1)
-    let d19  = ultrametric_distance::<3>(1, 9);   // v_3(8) = 0 (8 = 2^3, no 3 factors)
-    let d927 = ultrametric_distance::<3>(9, 27);  // v_3(18) = 2
-    let d127 = ultrametric_distance::<3>(1, 27);  // v_3(26) = 0
+    let d19 = ultrametric_distance::<3>(1, 9); // v_3(8) = 0 (8 = 2^3, no 3 factors)
+    let d927 = ultrametric_distance::<3>(9, 27); // v_3(18) = 2
+    let d127 = ultrametric_distance::<3>(1, 27); // v_3(26) = 0
     assert!(d127 >= d19.min(d927), "p=3 triangle violated");
 }
 
@@ -183,7 +193,8 @@ fn proof_depth_equals_tree_depth() {
     t.insert(k2(EP8), &epoch_root(EP8));
     let proof = t.prove(k2(EP4)).unwrap();
     assert_eq!(
-        proof.levels.len() as u32, depth,
+        proof.levels.len() as u32,
+        depth,
         "proof must have exactly {depth} levels"
     );
 }
@@ -201,14 +212,14 @@ fn ultrametric_doctrine_sub_tree_sharing() {
             .unwrap_or_else(|e| panic!("doctrine proof for ep={ep} failed: {e:?}"));
     }
     // Ultrametric witnesses the sub-tree relationship
-    let d_4_8  = ultrametric_distance::<2>(EP4, EP8);
+    let d_4_8 = ultrametric_distance::<2>(EP4, EP8);
     let d_4_12 = ultrametric_distance::<2>(EP4, EP12);
     let d_8_12 = ultrametric_distance::<2>(EP8, EP12);
     // d(4,12) = 3 is the "longest" pair → 4 and 12 share the deepest common ancestor
-    assert!(d_4_12 > d_4_8,  "d(4,12) must exceed d(4,8)");
+    assert!(d_4_12 > d_4_8, "d(4,12) must exceed d(4,8)");
     assert!(d_4_12 > d_8_12, "d(4,12) must exceed d(8,12)");
     // All three satisfy the strong triangle inequality
     assert!(d_4_12 >= d_4_8.min(d_8_12));
-    assert!(d_4_8  >= d_4_12.min(d_8_12));
+    assert!(d_4_8 >= d_4_12.min(d_8_12));
     assert!(d_8_12 >= d_4_8.min(d_4_12));
 }

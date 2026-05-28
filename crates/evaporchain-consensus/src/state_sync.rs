@@ -226,7 +226,10 @@ impl StateSyncManager {
     /// Start the sync process by requesting tips from peers.
     pub fn start(&mut self) -> Vec<SyncAction> {
         self.phase = SyncPhase::DiscoveringTip;
-        info!(local_height = self.local_height, "STATE-SYNC start: broadcasting TipRequest");
+        info!(
+            local_height = self.local_height,
+            "STATE-SYNC start: broadcasting TipRequest"
+        );
         vec![SyncAction::Broadcast {
             message: SyncMessage::TipRequest,
         }]
@@ -445,7 +448,11 @@ impl StateSyncManager {
                     return vec![];
                 }
             }
-            self.light_client = Some(LightClientVerifier::new(header.clone(), current_time, &self.chain_id));
+            self.light_client = Some(LightClientVerifier::new(
+                header.clone(),
+                current_time,
+                &self.chain_id,
+            ));
             info!(
                 height = target,
                 has_checkpoint = self.genesis_checkpoint.is_some(),
@@ -785,9 +792,7 @@ impl SnapshotProvider {
                 // panic into a silent drop — the requesting peer
                 // re-requests from another responder. Client-side already
                 // validates `index < total_chunks` (handle_chunk_response).
-                if *chunk_index >= meta.chunk_hashes.len()
-                    || *chunk_index >= meta.total_chunks
-                {
+                if *chunk_index >= meta.chunk_hashes.len() || *chunk_index >= meta.total_chunks {
                     return None;
                 }
                 Some(SyncMessage::ChunkResponse {
@@ -1067,7 +1072,10 @@ mod tests {
             50,
             [0u8; 32],
         );
-        assert!(resp_no_data.is_none(), "missing chunk_data must also yield None");
+        assert!(
+            resp_no_data.is_none(),
+            "missing chunk_data must also yield None"
+        );
     }
 
     #[test]
@@ -1228,7 +1236,10 @@ mod tests {
         // is a SnapshotMetadataRequest at the agreed height.
         assert!(matches!(
             sync.phase(),
-            SyncPhase::DownloadingSnapshot { target_height: 100, .. }
+            SyncPhase::DownloadingSnapshot {
+                target_height: 100,
+                ..
+            }
         ));
         assert!(matches!(
             actions.as_slice(),
@@ -1438,7 +1449,9 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             &actions[0],
-            SyncAction::Broadcast { message: SyncMessage::TipRequest }
+            SyncAction::Broadcast {
+                message: SyncMessage::TipRequest
+            }
         ));
         assert_eq!(sync.phase(), &SyncPhase::DiscoveringTip);
     }
@@ -1453,7 +1466,10 @@ mod tests {
         let sync = StateSyncManager::with_checkpoint(50, cp.clone());
         assert_eq!(sync.local_height, 50);
         assert_eq!(sync.genesis_checkpoint.as_ref().unwrap().height, 100);
-        assert_eq!(sync.genesis_checkpoint.as_ref().unwrap().state_root, cp.state_root);
+        assert_eq!(
+            sync.genesis_checkpoint.as_ref().unwrap().state_root,
+            cp.state_root
+        );
     }
 
     #[test]
@@ -1469,7 +1485,13 @@ mod tests {
         let r2 = sync.on_message(1, SyncMessage::HeaderRequest { height: 100 });
         assert!(r2.is_empty());
 
-        let r3 = sync.on_message(1, SyncMessage::ChunkRequest { height: 100, chunk_index: 0 });
+        let r3 = sync.on_message(
+            1,
+            SyncMessage::ChunkRequest {
+                height: 100,
+                chunk_index: 0,
+            },
+        );
         assert!(r3.is_empty());
     }
 
@@ -1480,7 +1502,10 @@ mod tests {
         sync.start();
         let actions = sync.on_message(
             1,
-            SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] },
+            SyncMessage::TipResponse {
+                height: 100_000,
+                block_hash: [1u8; 32],
+            },
         );
         assert!(actions.is_empty());
         assert_eq!(sync.phase(), &SyncPhase::DiscoveringTip);
@@ -1492,11 +1517,29 @@ mod tests {
         let mut sync = StateSyncManager::new(0);
         sync.start();
         // Advance to DownloadingSnapshot via 2 agreeing tip responses.
-        sync.on_message(1, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
-        sync.on_message(2, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 100_000,
+                block_hash: [1u8; 32],
+            },
+        );
+        sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 100_000,
+                block_hash: [1u8; 32],
+            },
+        );
         // Now in DownloadingSnapshot — further tip response must be ignored.
         assert!(!matches!(sync.phase(), SyncPhase::DiscoveringTip));
-        let actions = sync.on_message(3, SyncMessage::TipResponse { height: 200_000, block_hash: [2u8; 32] });
+        let actions = sync.on_message(
+            3,
+            SyncMessage::TipResponse {
+                height: 200_000,
+                block_hash: [2u8; 32],
+            },
+        );
         assert!(actions.is_empty());
     }
 
@@ -1505,8 +1548,20 @@ mod tests {
         // Peer tip <= local_height → no sync action even with 2 peers agreeing.
         let mut sync = StateSyncManager::new(100_000);
         sync.start();
-        sync.on_message(1, SyncMessage::TipResponse { height: 90_000, block_hash: [1u8; 32] });
-        let actions = sync.on_message(2, SyncMessage::TipResponse { height: 90_000, block_hash: [1u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 90_000,
+                block_hash: [1u8; 32],
+            },
+        );
+        let actions = sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 90_000,
+                block_hash: [1u8; 32],
+            },
+        );
         assert!(actions.is_empty());
         assert_eq!(sync.phase(), &SyncPhase::DiscoveringTip);
     }
@@ -1520,8 +1575,20 @@ mod tests {
         // Serve the real chunk to a sync manager up to the metadata stage.
         let mut sync = StateSyncManager::new(0);
         sync.start();
-        sync.on_message(1, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
-        sync.on_message(2, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 100_000,
+                block_hash: [1u8; 32],
+            },
+        );
+        sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 100_000,
+                block_hash: [1u8; 32],
+            },
+        );
         sync.peer_tips.insert(1, (100, [100u8; 32]));
         sync.target_height = Some(100);
         sync.snapshot_meta = Some(meta.clone());
@@ -1563,10 +1630,15 @@ mod tests {
             height: 200,
             index: 0,
             total: meta.total_chunks,
-            data: vec![0xDEu8; 200], // tampered
+            data: vec![0xDEu8; 200],    // tampered
             hash: meta.chunk_hashes[0], // original hash, data doesn't match
         };
-        let actions = sync.on_message(1, SyncMessage::ChunkResponse { chunk: corrupt_chunk });
+        let actions = sync.on_message(
+            1,
+            SyncMessage::ChunkResponse {
+                chunk: corrupt_chunk,
+            },
+        );
         assert!(actions.is_empty(), "hash-mismatch chunk must be rejected");
         assert_eq!(sync.received_chunks.len(), 0);
     }
@@ -1639,7 +1711,10 @@ mod tests {
         p.create_snapshot(100, 1, [0u8; 32], &[0u8; 100]);
         // chunk_index = 99 is past chunk_hashes.len() — must return None (not panic).
         let result = p.handle_request(
-            &SyncMessage::ChunkRequest { height: 100, chunk_index: 99 },
+            &SyncMessage::ChunkRequest {
+                height: 100,
+                chunk_index: 99,
+            },
             100,
             [0u8; 32],
         );
@@ -1663,7 +1738,12 @@ mod tests {
             chunk_hashes: vec![[0u8; 32]],
             total_size: 64,
         };
-        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: wrong_meta });
+        let actions = sync.on_message(
+            1,
+            SyncMessage::SnapshotMetadataResponse {
+                metadata: wrong_meta,
+            },
+        );
         assert!(actions.is_empty());
     }
 
@@ -1681,11 +1761,14 @@ mod tests {
             height: 100,
             epoch: 1,
             state_root: [0u8; 32],
-            total_chunks: 3,        // claims 3 chunks
+            total_chunks: 3,               // claims 3 chunks
             chunk_hashes: vec![[0u8; 32]], // but only 1 hash
             total_size: 64,
         };
-        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: bad_meta });
+        let actions = sync.on_message(
+            1,
+            SyncMessage::SnapshotMetadataResponse { metadata: bad_meta },
+        );
         assert!(actions.is_empty(), "hash count mismatch must be rejected");
     }
 
@@ -1724,8 +1807,20 @@ mod tests {
         // Two peers agree on tip → target_height is set.
         let mut sync = StateSyncManager::new(0);
         sync.start();
-        sync.on_message(1, SyncMessage::TipResponse { height: 100, block_hash: [10u8; 32] });
-        sync.on_message(2, SyncMessage::TipResponse { height: 100, block_hash: [10u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [10u8; 32],
+            },
+        );
+        sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [10u8; 32],
+            },
+        );
         // Phase is now DownloadingSnapshot{target_height=100, total_chunks=0, ...}
 
         let data = vec![0xABu8; 64];
@@ -1739,10 +1834,7 @@ mod tests {
             total_size: 64,
         };
 
-        let actions = sync.on_message(
-            1,
-            SyncMessage::SnapshotMetadataResponse { metadata: meta },
-        );
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: meta });
         assert!(
             !actions.is_empty(),
             "valid metadata must emit chunk-request actions"
@@ -1765,8 +1857,20 @@ mod tests {
         sync.start();
 
         // Two peers agree on height=200.
-        sync.on_message(1, SyncMessage::TipResponse { height: 200, block_hash: [1u8; 32] });
-        sync.on_message(2, SyncMessage::TipResponse { height: 200, block_hash: [1u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 200,
+                block_hash: [1u8; 32],
+            },
+        );
+        sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 200,
+                block_hash: [1u8; 32],
+            },
+        );
         // Phase = DownloadingSnapshot{target=200, total=0, received=0}
 
         // Valid 1-chunk metadata.
@@ -1838,17 +1942,27 @@ mod tests {
         assert_eq!(p.snapshot_count(), 3);
         // Prune to 1: heights 1 and 2 should be removed including their chunks.
         p.prune(1);
-        assert_eq!(p.snapshot_count(), 1, "only 1 snapshot must remain after prune");
+        assert_eq!(
+            p.snapshot_count(),
+            1,
+            "only 1 snapshot must remain after prune"
+        );
         // The remaining snapshot must serve a ChunkRequest.
         let resp = p.handle_request(
-            &SyncMessage::ChunkRequest { height: 3, chunk_index: 0 },
+            &SyncMessage::ChunkRequest {
+                height: 3,
+                chunk_index: 0,
+            },
             3,
             [0u8; 32],
         );
         assert!(resp.is_some(), "surviving snapshot must still serve chunks");
         // Pruned snapshots must not serve chunks.
         let resp_old = p.handle_request(
-            &SyncMessage::ChunkRequest { height: 1, chunk_index: 0 },
+            &SyncMessage::ChunkRequest {
+                height: 1,
+                chunk_index: 0,
+            },
             1,
             [0u8; 32],
         );
@@ -1860,8 +1974,20 @@ mod tests {
         // Metadata height ≠ target_height → ignored even after tip agreement.
         let mut sync = StateSyncManager::new(0);
         sync.start();
-        sync.on_message(1, SyncMessage::TipResponse { height: 100, block_hash: [5u8; 32] });
-        sync.on_message(2, SyncMessage::TipResponse { height: 100, block_hash: [5u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [5u8; 32],
+            },
+        );
+        sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [5u8; 32],
+            },
+        );
         // target_height = Some(100)
 
         let meta = SnapshotMetadata {
@@ -1879,7 +2005,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn t1_20_tip_response_same_peer_updates_and_builds_consensus() {
         // Peer 1 first reports height 50, then updates to height 200.
@@ -1888,11 +2013,29 @@ mod tests {
         let _ = sync.start();
 
         // Peer 1 first report
-        sync.on_message(1, SyncMessage::TipResponse { height: 50, block_hash: [50u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 50,
+                block_hash: [50u8; 32],
+            },
+        );
         // Peer 1 updates to 200
-        sync.on_message(1, SyncMessage::TipResponse { height: 200, block_hash: [200u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 200,
+                block_hash: [200u8; 32],
+            },
+        );
         // Peer 2 agrees at 200 → agreement
-        let actions = sync.on_message(2, SyncMessage::TipResponse { height: 200, block_hash: [200u8; 32] });
+        let actions = sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 200,
+                block_hash: [200u8; 32],
+            },
+        );
         assert!(
             actions.iter().any(|a| matches!(
                 a,
@@ -1920,7 +2063,10 @@ mod tests {
         let mut sync = StateSyncManager::new(0);
         sync.start(); // DiscoveringTip phase
         let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
-        assert!(actions.is_empty(), "HeaderResponse in wrong phase should be ignored");
+        assert!(
+            actions.is_empty(),
+            "HeaderResponse in wrong phase should be ignored"
+        );
     }
 
     #[test]
@@ -1962,16 +2108,25 @@ mod tests {
         sync.target_height = Some(100);
         sync.peer_tips.insert(1, (100, [0u8; 32]));
         let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
-        assert!(!sync.is_failed(), "bootstrap without checkpoint should succeed");
-        assert!(sync.light_client.is_some(), "light client should be initialized");
+        assert!(
+            !sync.is_failed(),
+            "bootstrap without checkpoint should succeed"
+        );
+        assert!(
+            sync.light_client.is_some(),
+            "light client should be initialized"
+        );
         // Should emit SnapshotMetadataRequest to peer 1
-        assert!(actions.iter().any(|a| matches!(
-            a,
-            SyncAction::SendToPeer {
-                peer_id: 1,
-                message: SyncMessage::SnapshotMetadataRequest { height: 100 }
-            }
-        )), "should request snapshot metadata after bootstrap");
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                SyncAction::SendToPeer {
+                    peer_id: 1,
+                    message: SyncMessage::SnapshotMetadataRequest { height: 100 }
+                }
+            )),
+            "should request snapshot metadata after bootstrap"
+        );
     }
 
     #[test]
@@ -2019,7 +2174,10 @@ mod tests {
         sync.target_height = Some(100);
         let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
         assert!(actions.is_empty());
-        assert!(sync.is_failed(), "state root mismatch with checkpoint must fail");
+        assert!(
+            sync.is_failed(),
+            "state root mismatch with checkpoint must fail"
+        );
     }
 
     #[test]
@@ -2109,16 +2267,24 @@ mod tests {
         sync.target_height = Some(101);
         sync.peer_tips.insert(1, (101, [0u8; 32]));
         sync.light_client = Some(lc);
-        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header: next_header });
+        let actions = sync.on_message(
+            1,
+            SyncMessage::HeaderResponse {
+                header: next_header,
+            },
+        );
         assert!(!sync.is_failed(), "valid sequential header should succeed");
         // Should emit SnapshotMetadataRequest
-        assert!(actions.iter().any(|a| matches!(
-            a,
-            SyncAction::SendToPeer {
-                message: SyncMessage::SnapshotMetadataRequest { .. },
-                ..
-            }
-        )), "valid verification should request snapshot");
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                SyncAction::SendToPeer {
+                    message: SyncMessage::SnapshotMetadataRequest { .. },
+                    ..
+                }
+            )),
+            "valid verification should request snapshot"
+        );
     }
 
     #[test]
@@ -2140,11 +2306,14 @@ mod tests {
         let actions = sync.on_message(1, SyncMessage::HeaderResponse { header: far_header });
         // Should request the midpoint header for bisection
         assert!(!actions.is_empty(), "bisection should produce a request");
-        assert!(actions.iter().any(|a| matches!(
-            a,
-            SyncAction::SendToPeer { message: SyncMessage::HeaderRequest { height: h }, .. }
-            if *h == mid
-        )), "should request mid-point header");
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                SyncAction::SendToPeer { message: SyncMessage::HeaderRequest { height: h }, .. }
+                if *h == mid
+            )),
+            "should request mid-point header"
+        );
     }
 
     #[test]

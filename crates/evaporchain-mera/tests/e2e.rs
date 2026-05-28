@@ -68,7 +68,10 @@ fn commitment_is_deterministic() {
     let energies: Vec<u64> = (0..16u64).map(|i| 500 + i * 100).collect();
     let (c1, _) = commit(&energies, 100, 50);
     let (c2, _) = commit(&energies, 100, 50);
-    assert_eq!(c1.root_hash, c2.root_hash, "commitment must be deterministic");
+    assert_eq!(
+        c1.root_hash, c2.root_hash,
+        "commitment must be deterministic"
+    );
 }
 
 #[test]
@@ -77,16 +80,21 @@ fn different_energies_produce_different_commitments() {
     let e2: Vec<u64> = vec![2_000; 8];
     let (c1, _) = commit(&e1, 100, 50);
     let (c2, _) = commit(&e2, 100, 50);
-    assert_ne!(c1.root_hash, c2.root_hash, "different energies must produce different roots");
+    assert_ne!(
+        c1.root_hash, c2.root_hash,
+        "different energies must produce different roots"
+    );
 }
 
 #[test]
 fn different_lambda_produces_different_commitment() {
     let energies: Vec<u64> = vec![1_000; 8];
-    let (c_fast, _) = commit(&energies, 50,  25);
+    let (c_fast, _) = commit(&energies, 50, 25);
     let (c_slow, _) = commit(&energies, 200, 100);
-    assert_ne!(c_fast.root_hash, c_slow.root_hash,
-        "different λ must produce different commitments");
+    assert_ne!(
+        c_fast.root_hash, c_slow.root_hash,
+        "different λ must produce different commitments"
+    );
 }
 
 #[test]
@@ -131,6 +139,8 @@ fn mera_gate_postmortem_full_arc() {
     assert_eq!(verified, energies.len(), "all account proofs must verify");
 
     // Gate-failure is documented and stable.
-    assert!(KNOWN_MAX_R2_ON_REAL_ETHEREUM < DOCTRINE_THRESHOLD_R2,
-        "gate result must remain FAILED");
+    assert!(
+        KNOWN_MAX_R2_ON_REAL_ETHEREUM < DOCTRINE_THRESHOLD_R2,
+        "gate result must remain FAILED"
+    );
 }

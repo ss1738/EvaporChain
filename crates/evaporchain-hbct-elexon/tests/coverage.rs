@@ -71,7 +71,11 @@ fn settlement_periods_step_at_30_minutes() {
     // 00:00 → SP 1, 00:30 → SP 2, 01:00 → SP 3, ...
     for half_hour in 0..48u64 {
         let s = epoch_to_elexon_slot(half_hour * 1_800, 1, 0);
-        assert_eq!(s.period, (half_hour + 1) as u8, "SP at +{half_hour} half-hours");
+        assert_eq!(
+            s.period,
+            (half_hour + 1) as u8,
+            "SP at +{half_hour} half-hours"
+        );
     }
 }
 
@@ -141,9 +145,18 @@ fn one_epoch_at_zero_duration_is_no_op() {
 
 #[test]
 fn elexon_slot_eq_and_debug() {
-    let a = ElexonSlot { date: "2024-01-01".into(), period: 5 };
-    let b = ElexonSlot { date: "2024-01-01".into(), period: 5 };
-    let c = ElexonSlot { date: "2024-01-01".into(), period: 6 };
+    let a = ElexonSlot {
+        date: "2024-01-01".into(),
+        period: 5,
+    };
+    let b = ElexonSlot {
+        date: "2024-01-01".into(),
+        period: 5,
+    };
+    let c = ElexonSlot {
+        date: "2024-01-01".into(),
+        period: 6,
+    };
     assert_eq!(a, b);
     assert_ne!(a, c);
     // Debug renders without panic.

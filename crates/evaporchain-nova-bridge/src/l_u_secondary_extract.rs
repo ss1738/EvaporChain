@@ -71,7 +71,9 @@ pub enum ExtractError {
     /// The JSON tree did not have the expected
     /// `l_u_secondary.X[..]` path. Likely a nova-snark version bump
     /// that renamed something.
-    #[error("expected JSON path `l_u_secondary.X` missing or wrong shape (nova-snark layout drift?)")]
+    #[error(
+        "expected JSON path `l_u_secondary.X` missing or wrong shape (nova-snark layout drift?)"
+    )]
     MissingPath,
 
     /// `X` had fewer than 2 entries. The Section 2 contract
@@ -208,9 +210,7 @@ impl SectionBPiBundle {
     /// Trivial 1:1 field copy — the two structs were intentionally
     /// designed to match (one is the off-chain extraction format,
     /// the other is the in-circuit PI bundle).
-    pub fn into_section_b_pis(
-        self,
-    ) -> crate::recursion_decider_circuit::SectionBPublicInputs {
+    pub fn into_section_b_pis(self) -> crate::recursion_decider_circuit::SectionBPublicInputs {
         crate::recursion_decider_circuit::SectionBPublicInputs {
             hash_secondary_claimed: self.hash_secondary_claimed,
             hash_primary_reinterp: self.hash_primary_reinterp,
@@ -232,10 +232,7 @@ impl SectionBPiBundle {
 /// primary parser via primary_to_ark_fr in scalar_adapter — for now
 /// we route both through secondary_to_ark_fr_lossy since the bit-
 /// pattern reinterpretation is what the in-circuit hash expects).
-fn parse_primary_or_lossy_scalar(
-    s: Option<&str>,
-    index: usize,
-) -> Result<ArkFr, ExtractError> {
+fn parse_primary_or_lossy_scalar(s: Option<&str>, index: usize) -> Result<ArkFr, ExtractError> {
     // Many fields on RecursiveSNARK serialize identically (32-byte
     // LE hex). The lossy reinterpret is intentional for fields the
     // hash gate will absorb as "opaque Bn254 Fr" — exactly what
@@ -250,12 +247,12 @@ fn parse_primary_or_lossy_scalar(
 /// absorbs these as opaque Bn254 Fr).
 fn decompress_comm_w_as_fr(s: Option<&str>) -> Result<(ArkFr, ArkFr), ExtractError> {
     use ark_ff::PrimeField as ArkPrimeField;
-    use halo2curves::group::GroupEncoding;
     use halo2curves::bn256::G1Affine as Bn256Affine;
+    use halo2curves::group::GroupEncoding;
 
-    let s = s.ok_or_else(|| ExtractError::MissingField(
-        "r_U_primary.comm_W.comm (compressed point hex)".into(),
-    ))?;
+    let s = s.ok_or_else(|| {
+        ExtractError::MissingField("r_U_primary.comm_W.comm (compressed point hex)".into())
+    })?;
     let stripped = s.strip_prefix("0x").unwrap_or(s);
     let bytes = hex::decode(stripped).map_err(|e| ExtractError::HexParseFailed {
         index: 999,
@@ -270,11 +267,12 @@ fn decompress_comm_w_as_fr(s: Option<&str>) -> Result<(ArkFr, ArkFr), ExtractErr
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     let repr: <Bn256Affine as GroupEncoding>::Repr = arr.into();
-    let a = Option::<Bn256Affine>::from(Bn256Affine::from_bytes(&repr))
-        .ok_or_else(|| ExtractError::HexParseFailed {
+    let a = Option::<Bn256Affine>::from(Bn256Affine::from_bytes(&repr)).ok_or_else(|| {
+        ExtractError::HexParseFailed {
             index: 999,
             reason: "could not decompress bn256-G1 comm_W".into(),
-        })?;
+        }
+    })?;
 
     // Reinterpret each Fq coord as ArkFr via 32-byte LE round-trip.
     // For the in-circuit hash this is the byte-level absorption
@@ -391,8 +389,7 @@ where
 
     // 3. Extract PIs from cs JSON. Same field paths as RecursiveSNARK
     //    for the bits we care about.
-    let v = serde_json::to_value(cs)
-        .map_err(|e| ExtractError::Serialize(e.to_string()))?;
+    let v = serde_json::to_value(cs).map_err(|e| ExtractError::Serialize(e.to_string()))?;
 
     let x = v
         .get("l_u_secondary")
@@ -405,10 +402,8 @@ where
     let hash_primary_reinterp = parse_primary_or_lossy_scalar(x[0].as_str(), 0)?;
     let hash_secondary_claimed = parse_primary_or_lossy_scalar(x[1].as_str(), 1)?;
 
-    let ri_secondary = parse_primary_or_lossy_scalar(
-        v.get("ri_secondary").and_then(|x| x.as_str()),
-        2,
-    )?;
+    let ri_secondary =
+        parse_primary_or_lossy_scalar(v.get("ri_secondary").and_then(|x| x.as_str()), 2)?;
 
     let r_u_p = v.get("r_U_primary").ok_or(ExtractError::MissingPath)?;
     let comm_w = r_u_p
@@ -429,8 +424,7 @@ where
     // 4. zn from the verifier (authoritative). z0 is caller-supplied
     //    (CompressedSNARK doesn't store z0 in its serialization).
     let z0_bundle = z0_ark.to_vec();
-    let zn_bundle: Vec<ArkFr> =
-        zn_nova.iter().copied().map(primary_to_ark_fr).collect();
+    let zn_bundle: Vec<ArkFr> = zn_nova.iter().copied().map(primary_to_ark_fr).collect();
 
     Ok(SectionBPiBundle {
         hash_primary_reinterp,
@@ -452,8 +446,7 @@ pub fn extract_section_b_pi_bundle(
     pp_digest: ArkFr,
     num_steps: u64,
 ) -> Result<SectionBPiBundle, ExtractError> {
-    let v = serde_json::to_value(rs)
-        .map_err(|e| ExtractError::Serialize(e.to_string()))?;
+    let v = serde_json::to_value(rs).map_err(|e| ExtractError::Serialize(e.to_string()))?;
 
     // 1. l_u_secondary.X[0..2] — the two output hashes.
     let x = v
@@ -468,26 +461,20 @@ pub fn extract_section_b_pi_bundle(
     let hash_secondary_claimed = parse_primary_or_lossy_scalar(x[1].as_str(), 1)?;
 
     // 2. ri_secondary.
-    let ri_secondary = parse_primary_or_lossy_scalar(
-        v.get("ri_secondary").and_then(|x| x.as_str()),
-        2,
-    )?;
+    let ri_secondary =
+        parse_primary_or_lossy_scalar(v.get("ri_secondary").and_then(|x| x.as_str()), 2)?;
 
     // 3. r_U_primary.comm_W.comm (compressed point) + X[0..2].
     //    The comm is serialized as ONE 32-byte hex string (nova's
     //    bn256::Affine GroupEncoding), not separate x/y JSON fields.
     //    Decompress then byte-reinterpret each Fq coord as Fr
     //    (the in-circuit hash absorbs them as "opaque Bn254 Fr").
-    let r_u_p = v
-        .get("r_U_primary")
-        .ok_or(ExtractError::MissingPath)?;
+    let r_u_p = v.get("r_U_primary").ok_or(ExtractError::MissingPath)?;
     let comm_w = r_u_p
         .get("comm_W")
         .ok_or_else(|| ExtractError::MissingField("r_U_primary.comm_W".into()))?;
     let (r_U_primary_comm_x, r_U_primary_comm_y) =
-        decompress_comm_w_as_fr(
-            comm_w.get("comm").and_then(|s| s.as_str()),
-        )?;
+        decompress_comm_w_as_fr(comm_w.get("comm").and_then(|s| s.as_str()))?;
     let r_u_p_x = r_u_p
         .get("X")
         .and_then(|x| x.as_array())
@@ -558,12 +545,10 @@ pub(crate) fn parse_secondary_scalar_hex(
     let mut bytes_le_arr = [0u8; 32];
     bytes_le_arr.copy_from_slice(&bytes_le);
     let repr = <SecondaryScalar as PrimeField>::Repr::from(bytes_le_arr);
-    SecondaryScalar::from_repr_vartime(repr).ok_or_else(|| {
-        ExtractError::HexParseFailed {
-            index,
-            reason: "bytes do not canonicalise to a valid grumpkin scalar (try byte-reverse)"
-                .to_string(),
-        }
+    SecondaryScalar::from_repr_vartime(repr).ok_or_else(|| ExtractError::HexParseFailed {
+        index,
+        reason: "bytes do not canonicalise to a valid grumpkin scalar (try byte-reverse)"
+            .to_string(),
     })
 }
 
@@ -609,22 +594,23 @@ mod tests {
         use crate::recursive_snark_fixture::{Scalar1, E1 as _E1, E2 as _E2};
         use ff::Field;
         use nova_snark::nova::PublicParams;
-        use nova_snark::spartan::ppsnark::RelaxedR1CSSNARK;
-        use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
         use nova_snark::provider::hyperkzg::EvaluationEngine;
         use nova_snark::provider::ipa_pc::EvaluationEngine as IpaEE;
+        use nova_snark::spartan::ppsnark::RelaxedR1CSSNARK;
+        use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
 
         let circuit = TrivialIncrementCircuit;
         type S1 = RelaxedR1CSSNARK<_E1, EvaluationEngine<_E1>>;
         type S2 = RelaxedR1CSSNARK<_E2, IpaEE<_E2>>;
         let pp = PublicParams::<_E1, _E2, TrivialIncrementCircuit>::setup(
-            &circuit, &*S1::ck_floor(), &*S2::ck_floor(),
-        ).expect("pp setup");
+            &circuit,
+            &*S1::ck_floor(),
+            &*S2::ck_floor(),
+        )
+        .expect("pp setup");
         let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
-        let mut rs =
-            RecursiveSNARK::<_E1, _E2, TrivialIncrementCircuit>::new(
-                &pp, &circuit, &z0,
-            ).expect("rs new");
+        let mut rs = RecursiveSNARK::<_E1, _E2, TrivialIncrementCircuit>::new(&pp, &circuit, &z0)
+            .expect("rs new");
         for _ in 0..num_steps {
             rs.prove_step(&pp, &circuit).expect("prove_step");
         }
@@ -638,8 +624,7 @@ mod tests {
         // z0 for TrivialIncrementCircuit is [0]. Use ArkFr.
         let z0 = vec![ArkFr::from(0u64)];
 
-        let bundle =
-            assemble_section_b_pi_bundle(&pp, &rs, 2, &z0).expect("assemble");
+        let bundle = assemble_section_b_pi_bundle(&pp, &rs, 2, &z0).expect("assemble");
 
         // pp_digest is exact (not lossy) and must be non-zero for a
         // real fixture.
@@ -652,8 +637,7 @@ mod tests {
         assert_eq!(bundle.num_steps, ArkFr::from(2u64));
 
         // Parity vs the raw extractor on the two output hashes.
-        let (h0, h1) =
-            extract_committed_hashes_via_serde(&rs).expect("legacy extract");
+        let (h0, h1) = extract_committed_hashes_via_serde(&rs).expect("legacy extract");
         assert_eq!(bundle.hash_primary_reinterp, h0);
         assert_eq!(bundle.hash_secondary_claimed, h1);
 
@@ -663,8 +647,11 @@ mod tests {
         assert_eq!(bundle.zn.len(), 1, "zn arity = 1");
         // TrivialIncrementCircuit: z_{i+1} = z_i + 1, so zn after
         // 2 steps starting at z0=[0] should be [2].
-        assert_eq!(bundle.zn[0], ArkFr::from(2u64),
-            "TrivialIncrementCircuit z2 must be 2 from z0=0");
+        assert_eq!(
+            bundle.zn[0],
+            ArkFr::from(2u64),
+            "TrivialIncrementCircuit z2 must be 2 from z0=0"
+        );
 
         eprintln!(
             "ADAPTER_BUNDLE_VERIFIED pp_digest={} num_steps={} zn[0]={}",
@@ -712,47 +699,53 @@ mod tests {
         // 1. (pp, rs) build (~tens of seconds for pp).
         let circuit = TrivialIncrementCircuit;
         let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
-            &circuit, &*S1::ck_floor(), &*S2::ck_floor(),
-        ).expect("pp setup");
+            &circuit,
+            &*S1::ck_floor(),
+            &*S2::ck_floor(),
+        )
+        .expect("pp setup");
         let z0_nova: Vec<Scalar1> = vec![Scalar1::ZERO];
         let mut rs =
-            RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
-                &pp, &circuit, &z0_nova,
-            ).expect("rs new");
+            RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(&pp, &circuit, &z0_nova)
+                .expect("rs new");
         for _ in 0..2 {
             rs.prove_step(&pp, &circuit).expect("prove_step");
         }
         eprintln!("compressedsnark-adapter: 2-step rs built");
 
         // 2. Compress (~minutes — this is the heavy part).
-        let (pk_cs, vk_cs) =
-            CompressedSNARK::<_, _, _, S1, S2>::setup(&pp).expect("cs setup");
+        let (pk_cs, vk_cs) = CompressedSNARK::<_, _, _, S1, S2>::setup(&pp).expect("cs setup");
         eprintln!("compressedsnark-adapter: setup done");
-        let cs = CompressedSNARK::<_, _, _, S1, S2>::prove(&pp, &pk_cs, &rs)
-            .expect("cs prove");
+        let cs = CompressedSNARK::<_, _, _, S1, S2>::prove(&pp, &pk_cs, &rs).expect("cs prove");
         eprintln!("compressedsnark-adapter: prove done");
 
         // 3. Adapter: verify gate (B+C+D) → extract PIs.
         let z0_ark = vec![ArkFr::from(0u64)];
-        let bundle = assemble_section_b_pi_bundle_from_compressed_snark(
-            &pp, &vk_cs, &cs, 2, &z0_ark,
-        ).expect("assemble from cs");
+        let bundle =
+            assemble_section_b_pi_bundle_from_compressed_snark(&pp, &vk_cs, &cs, 2, &z0_ark)
+                .expect("assemble from cs");
 
         // Sanity: pp_digest non-zero, num_steps echoed, zn[0]=2.
         assert!(bundle.pp_digest != ArkFr::from(0u64));
         assert_eq!(bundle.num_steps, ArkFr::from(2u64));
-        assert_eq!(bundle.zn[0], ArkFr::from(2u64),
-            "TrivialIncrementCircuit zn[0] must be 2 after 2 steps from z0=0");
+        assert_eq!(
+            bundle.zn[0],
+            ArkFr::from(2u64),
+            "TrivialIncrementCircuit zn[0] must be 2 after 2 steps from z0=0"
+        );
 
         // Parity: hashes from CompressedSNARK extraction must equal
         // hashes from the source RecursiveSNARK extraction (both
         // proofs reference the same l_u_secondary).
-        let (h0, h1) =
-            extract_committed_hashes_via_serde(&rs).expect("legacy extract");
-        assert_eq!(bundle.hash_primary_reinterp, h0,
-            "CompressedSNARK hash_primary must match RecursiveSNARK X[0]");
-        assert_eq!(bundle.hash_secondary_claimed, h1,
-            "CompressedSNARK hash_secondary must match RecursiveSNARK X[1]");
+        let (h0, h1) = extract_committed_hashes_via_serde(&rs).expect("legacy extract");
+        assert_eq!(
+            bundle.hash_primary_reinterp, h0,
+            "CompressedSNARK hash_primary must match RecursiveSNARK X[0]"
+        );
+        assert_eq!(
+            bundle.hash_secondary_claimed, h1,
+            "CompressedSNARK hash_secondary must match RecursiveSNARK X[1]"
+        );
 
         eprintln!(
             "COMPRESSED_BUNDLE_VERIFIED pp_digest={} num_steps={} zn[0]={}",
@@ -788,9 +781,8 @@ mod tests {
     fn extract_section_b_pi_bundle_real_fixture() {
         let rs = generate_fixture(2).expect("fixture");
         let pp_digest_placeholder = ArkFr::from(1234u64);
-        let bundle = extract_section_b_pi_bundle(
-            &rs, pp_digest_placeholder, 2,
-        ).expect("extract bundle");
+        let bundle =
+            extract_section_b_pi_bundle(&rs, pp_digest_placeholder, 2).expect("extract bundle");
 
         // Sanity: arities + caller-supplied values.
         assert_eq!(bundle.num_steps, ArkFr::from(2u64), "num_steps echoed back");
@@ -819,8 +811,7 @@ mod tests {
         );
 
         // Parity with the original 2-hash extractor.
-        let (h0, h1) =
-            extract_committed_hashes_via_serde(&rs).expect("legacy extract");
+        let (h0, h1) = extract_committed_hashes_via_serde(&rs).expect("legacy extract");
         assert_eq!(
             bundle.hash_primary_reinterp, h0,
             "bundle.hash_primary_reinterp must equal legacy l_u_secondary.X[0]"
@@ -834,11 +825,16 @@ mod tests {
         // count matches SectionBPublicInputs::pi_count() = 9 + |z0|
         // + |zn| = 9 + 1 + 1 = 11.
         let expected_pi_count = 9 + bundle.z0.len() + bundle.zn.len();
-        assert_eq!(expected_pi_count, 11, "TrivialIncrementCircuit gives 11 Section B PIs");
+        assert_eq!(
+            expected_pi_count, 11,
+            "TrivialIncrementCircuit gives 11 Section B PIs"
+        );
 
         eprintln!(
             "SECTION_B_BUNDLE_EXTRACTED: 9 fixed + |z0|={} + |zn|={} = {} PIs",
-            bundle.z0.len(), bundle.zn.len(), expected_pi_count
+            bundle.z0.len(),
+            bundle.zn.len(),
+            expected_pi_count
         );
     }
 
@@ -925,8 +921,8 @@ mod tests {
     #[test]
     fn parse_secondary_scalar_hex_accepts_0x_prefix() {
         let zero_hex_prefixed = format!("0x{}", "00".repeat(32));
-        let s = parse_secondary_scalar_hex(Some(&zero_hex_prefixed), 0)
-            .expect("zero scalar parses");
+        let s =
+            parse_secondary_scalar_hex(Some(&zero_hex_prefixed), 0).expect("zero scalar parses");
         assert_eq!(s, SecondaryScalar::ZERO);
     }
 
@@ -940,17 +936,32 @@ mod tests {
 
     #[test]
     fn extract_error_displays_all_variants() {
-        assert!(ExtractError::Serialize("x".into()).to_string().contains("serde_json"));
-        assert!(ExtractError::MissingPath.to_string().contains("l_u_secondary"));
+        assert!(ExtractError::Serialize("x".into())
+            .to_string()
+            .contains("serde_json"));
+        assert!(ExtractError::MissingPath
+            .to_string()
+            .contains("l_u_secondary"));
         assert!(ExtractError::TooFewHashes(1).to_string().contains("1"));
-        assert!(ExtractError::HexParseFailed { index: 0, reason: "r".into() }
+        assert!(ExtractError::HexParseFailed {
+            index: 0,
+            reason: "r".into()
+        }
+        .to_string()
+        .contains("hex scalar"));
+        assert!(ExtractError::SerdeError("e".into())
             .to_string()
-            .contains("hex scalar"));
-        assert!(ExtractError::SerdeError("e".into()).to_string().contains("serde"));
-        assert!(ExtractError::MissingField("f".into()).to_string().contains("malformed"));
-        assert!(ExtractError::ShapeTooLarge { name: "num_cons", value: 999, cap: 1 }
+            .contains("serde"));
+        assert!(ExtractError::MissingField("f".into())
             .to_string()
-            .contains("num_cons"));
+            .contains("malformed"));
+        assert!(ExtractError::ShapeTooLarge {
+            name: "num_cons",
+            value: 999,
+            cap: 1
+        }
+        .to_string()
+        .contains("num_cons"));
     }
 
     #[test]

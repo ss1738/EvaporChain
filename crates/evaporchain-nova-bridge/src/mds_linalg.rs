@@ -60,7 +60,12 @@ pub fn vec_add(a: &[Fr], b: &[Fr]) -> Vec<Fr> {
 pub fn matrix_mul(a: &[Vec<Fr>], b: &[Vec<Fr>]) -> Vec<Vec<Fr>> {
     assert!(!a.is_empty() && !b.is_empty(), "matrices must be non-empty");
     let inner = a[0].len();
-    assert_eq!(inner, b.len(), "matrix_mul: a.cols ({inner}) ≠ b.rows ({})", b.len());
+    assert_eq!(
+        inner,
+        b.len(),
+        "matrix_mul: a.cols ({inner}) ≠ b.rows ({})",
+        b.len()
+    );
     let cols = b[0].len();
     let mut out: Vec<Vec<Fr>> = Vec::with_capacity(a.len());
     for row in a {
@@ -141,7 +146,10 @@ mod tests {
         let v = vec![Fr::from(5u64), Fr::from(7u64)];
         let result = left_apply_matrix(&m, &v);
         assert_eq!(result.len(), 3);
-        assert_eq!(result, vec![Fr::from(5u64), Fr::from(7u64), Fr::from(12u64)]);
+        assert_eq!(
+            result,
+            vec![Fr::from(5u64), Fr::from(7u64), Fr::from(12u64)]
+        );
     }
 
     /// Empty matrix rejection. (Useful regression catch — neptune's
@@ -252,7 +260,11 @@ mod tests {
         let m_hat = extract_mds_m_hat(dump_path).expect("m_hat");
         let m_hat_inv = extract_mds_m_hat_inv(dump_path).expect("m_hat_inv");
         let product_hat = matrix_mul(&m_hat, &m_hat_inv);
-        assert_eq!(product_hat, identity_matrix(24), "m_hat · m_hat_inv must be I");
+        assert_eq!(
+            product_hat,
+            identity_matrix(24),
+            "m_hat · m_hat_inv must be I"
+        );
     }
 
     /// **Real-data test.** Multiply the extracted neptune MDS by

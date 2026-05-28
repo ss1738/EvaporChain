@@ -119,12 +119,7 @@ pub fn fold_cf_step(
 /// `crate::s4_msm_gadget::pedersen_msm_grumpkin`. Used by the
 /// homomorphism test to commit synthetic witnesses; in 3b, replaced
 /// by nova-snark's `CommitmentEngine<GrumpkinEngine>`.
-pub fn pedersen_commit_grumpkin(
-    ck: &[GComm],
-    w: &[Bn254Fq],
-    h: &GComm,
-    r_blind: Bn254Fq,
-) -> GComm {
+pub fn pedersen_commit_grumpkin(ck: &[GComm], w: &[Bn254Fq], h: &GComm, r_blind: Bn254Fq) -> GComm {
     assert_eq!(ck.len(), w.len(), "ck and w must have same length");
     let mut acc = GComm::zero();
     for (g, s) in ck.iter().zip(w.iter()) {
@@ -159,12 +154,9 @@ mod tests {
         let mut rng = test_rng();
         let n = 16; // homomorphism is a general property — small n suffices
         let ck = random_ck(n);
-        let h = GComm::from(GrumpkinConfig::GENERATOR)
-            * Bn254Fq::from(7u64);
-        let w_a: Vec<Bn254Fq> =
-            (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
-        let w_b: Vec<Bn254Fq> =
-            (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
+        let h = GComm::from(GrumpkinConfig::GENERATOR) * Bn254Fq::from(7u64);
+        let w_a: Vec<Bn254Fq> = (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
+        let w_b: Vec<Bn254Fq> = (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
         let r = Bn254Fq::rand(&mut rng);
 
         // commit(W_a) + r · commit(W_b)
@@ -201,10 +193,8 @@ mod tests {
         // Running (relaxed) — synthesize from W_R.
         let w_r: Vec<Bn254Fq> = (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
         let comm_w_r = pedersen_commit_grumpkin(&ck, &w_r, &h, Bn254Fq::from(0u64));
-        let x_r: Vec<Bn254Fq> =
-            (0..io_len).map(|_| Bn254Fq::rand(&mut rng)).collect();
-        let comm_e_r = GComm::from(GrumpkinConfig::GENERATOR)
-            * Bn254Fq::rand(&mut rng);
+        let x_r: Vec<Bn254Fq> = (0..io_len).map(|_| Bn254Fq::rand(&mut rng)).collect();
+        let comm_e_r = GComm::from(GrumpkinConfig::GENERATOR) * Bn254Fq::rand(&mut rng);
         let u_r = Bn254Fq::rand(&mut rng);
         let running = CycleFoldRunningInstance {
             comm_w: comm_w_r,
@@ -216,8 +206,7 @@ mod tests {
         // Incoming (non-relaxed, u_I=1) — synthesize from W_I.
         let w_i: Vec<Bn254Fq> = (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
         let comm_w_i = pedersen_commit_grumpkin(&ck, &w_i, &h, Bn254Fq::from(0u64));
-        let x_i: Vec<Bn254Fq> =
-            (0..io_len).map(|_| Bn254Fq::rand(&mut rng)).collect();
+        let x_i: Vec<Bn254Fq> = (0..io_len).map(|_| Bn254Fq::rand(&mut rng)).collect();
         let incoming = CycleFoldIncomingInstance {
             comm_w: comm_w_i,
             x: x_i.clone(),
@@ -227,8 +216,7 @@ mod tests {
         // is computed from the cross-term polynomial; for this test
         // it just must be SOME group element — the fold mechanic
         // doesn't depend on its specific value.)
-        let comm_t =
-            GComm::from(GrumpkinConfig::GENERATOR) * Bn254Fq::rand(&mut rng);
+        let comm_t = GComm::from(GrumpkinConfig::GENERATOR) * Bn254Fq::rand(&mut rng);
         let r = Bn254Fq::rand(&mut rng);
 
         // Folded via fold_cf_step.
@@ -241,8 +229,7 @@ mod tests {
             .zip(w_i.iter())
             .map(|(a, b)| *a + r * *b)
             .collect();
-        let comm_w_expected =
-            pedersen_commit_grumpkin(&ck, &w_folded, &h, Bn254Fq::from(0u64));
+        let comm_w_expected = pedersen_commit_grumpkin(&ck, &w_folded, &h, Bn254Fq::from(0u64));
         assert_eq!(
             folded.comm_w.into_affine(),
             comm_w_expected.into_affine(),
@@ -261,11 +248,7 @@ mod tests {
 
         // x_i' must equal x_R[i] + r·x_I[i] (definitional).
         for i in 0..io_len {
-            assert_eq!(
-                folded.x[i],
-                x_r[i] + r * x_i[i],
-                "x[{i}] mismatch"
-            );
+            assert_eq!(folded.x[i], x_r[i] + r * x_i[i], "x[{i}] mismatch");
         }
     }
 
@@ -288,18 +271,14 @@ mod tests {
         let mut w_accum: Vec<Bn254Fq> = vec![Bn254Fq::from(0u64); n];
 
         for _ in 0..3 {
-            let w_i: Vec<Bn254Fq> =
-                (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
-            let comm_w_i =
-                pedersen_commit_grumpkin(&ck, &w_i, &h, Bn254Fq::from(0u64));
-            let x_i: Vec<Bn254Fq> =
-                (0..io_len).map(|_| Bn254Fq::rand(&mut rng)).collect();
+            let w_i: Vec<Bn254Fq> = (0..n).map(|_| Bn254Fq::rand(&mut rng)).collect();
+            let comm_w_i = pedersen_commit_grumpkin(&ck, &w_i, &h, Bn254Fq::from(0u64));
+            let x_i: Vec<Bn254Fq> = (0..io_len).map(|_| Bn254Fq::rand(&mut rng)).collect();
             let incoming = CycleFoldIncomingInstance {
                 comm_w: comm_w_i,
                 x: x_i,
             };
-            let comm_t = GComm::from(GrumpkinConfig::GENERATOR)
-                * Bn254Fq::rand(&mut rng);
+            let comm_t = GComm::from(GrumpkinConfig::GENERATOR) * Bn254Fq::rand(&mut rng);
             let r = Bn254Fq::rand(&mut rng);
 
             // Step the running instance.
@@ -310,8 +289,7 @@ mod tests {
             }
 
             // Cross-check this step's comm_w against direct commit.
-            let comm_w_direct =
-                pedersen_commit_grumpkin(&ck, &w_accum, &h, Bn254Fq::from(0u64));
+            let comm_w_direct = pedersen_commit_grumpkin(&ck, &w_accum, &h, Bn254Fq::from(0u64));
             assert_eq!(
                 running.comm_w.into_affine(),
                 comm_w_direct.into_affine(),

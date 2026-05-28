@@ -13,11 +13,19 @@
 use evaporchain_energy_kernel::{ChainLambda, Lambda};
 use evaporchain_prp::{prove_retention, verify_retention_proof, RetentionProofError};
 
-fn lambda100() -> ChainLambda { ChainLambda::new(Lambda::from_epochs(100)) }
-fn lambda500() -> ChainLambda { ChainLambda::new(Lambda::from_epochs(500)) }
+fn lambda100() -> ChainLambda {
+    ChainLambda::new(Lambda::from_epochs(100))
+}
+fn lambda500() -> ChainLambda {
+    ChainLambda::new(Lambda::from_epochs(500))
+}
 
-fn regulator_state() -> [u8; 32] { [0x4E; 32] }
-fn oscar_state()     -> [u8; 32] { [0x0C; 32] }
+fn regulator_state() -> [u8; 32] {
+    [0x4E; 32]
+}
+fn oscar_state() -> [u8; 32] {
+    [0x0C; 32]
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -47,28 +55,35 @@ fn verify_at_exact_retained_until_passes() {
 fn query_one_past_window_rejected() {
     let proof = prove_retention(regulator_state(), 50_000, lambda100(), 0, 100);
     let err = verify_retention_proof(&proof, proof.retained_until_epoch + 1).unwrap_err();
-    assert!(matches!(err, RetentionProofError::QueryAfterRetention {
+    assert!(
+        matches!(err, RetentionProofError::QueryAfterRetention {
         query, retained_until
     } if query == proof.retained_until_epoch + 1 && retained_until == proof.retained_until_epoch),
-        "error must carry query and retained_until: {:?}", err);
+        "error must carry query and retained_until: {:?}",
+        err
+    );
 }
 
 #[test]
 fn higher_committed_energy_extends_retention() {
-    let low  = prove_retention(regulator_state(), 1_000,       lambda100(), 0, 1);
-    let high = prove_retention(regulator_state(), 1_000_000,   lambda100(), 0, 1);
-    assert!(high.retained_until_epoch > low.retained_until_epoch,
-        "more committed energy must extend the retention window");
+    let low = prove_retention(regulator_state(), 1_000, lambda100(), 0, 1);
+    let high = prove_retention(regulator_state(), 1_000_000, lambda100(), 0, 1);
+    assert!(
+        high.retained_until_epoch > low.retained_until_epoch,
+        "more committed energy must extend the retention window"
+    );
 }
 
 #[test]
 fn higher_floor_shortens_retention() {
     // Floor acts as the minimum survivable energy — a higher floor
     // means the state expires sooner.
-    let low_floor  = prove_retention(regulator_state(), 10_000, lambda100(), 0, 1);
+    let low_floor = prove_retention(regulator_state(), 10_000, lambda100(), 0, 1);
     let high_floor = prove_retention(regulator_state(), 10_000, lambda100(), 0, 5_000);
-    assert!(low_floor.retained_until_epoch >= high_floor.retained_until_epoch,
-        "higher floor must not extend retention");
+    assert!(
+        low_floor.retained_until_epoch >= high_floor.retained_until_epoch,
+        "higher floor must not extend retention"
+    );
 }
 
 #[test]
@@ -76,8 +91,10 @@ fn slower_lambda_extends_retention() {
     // A slower decay (longer half-life) keeps energy above floor for longer.
     let fast = prove_retention(regulator_state(), 10_000, lambda100(), 0, 10);
     let slow = prove_retention(regulator_state(), 10_000, lambda500(), 0, 10);
-    assert!(slow.retained_until_epoch >= fast.retained_until_epoch,
-        "slower λ must not shorten the retention window");
+    assert!(
+        slow.retained_until_epoch >= fast.retained_until_epoch,
+        "slower λ must not shorten the retention window"
+    );
 }
 
 #[test]
@@ -93,8 +110,11 @@ fn tampered_witness_rejected() {
     let mut proof = prove_retention(oscar_state(), 10_000, lambda100(), 0, 10);
     proof.witness[0] ^= 0xFF;
     let err = verify_retention_proof(&proof, 0).unwrap_err();
-    assert!(matches!(err, RetentionProofError::WitnessMismatch { .. }),
-        "tampered witness must be rejected: {:?}", err);
+    assert!(
+        matches!(err, RetentionProofError::WitnessMismatch { .. }),
+        "tampered witness must be rejected: {:?}",
+        err
+    );
 }
 
 #[test]
@@ -102,8 +122,11 @@ fn tampered_committed_energy_rejected() {
     let mut proof = prove_retention(oscar_state(), 10_000, lambda100(), 0, 10);
     proof.committed_energy = 999_999_999;
     let err = verify_retention_proof(&proof, 0).unwrap_err();
-    assert!(matches!(err, RetentionProofError::WitnessMismatch { .. }),
-        "inflated committed_energy must break witness: {:?}", err);
+    assert!(
+        matches!(err, RetentionProofError::WitnessMismatch { .. }),
+        "inflated committed_energy must break witness: {:?}",
+        err
+    );
 }
 
 #[test]
@@ -111,8 +134,11 @@ fn tampered_retained_until_epoch_rejected() {
     let mut proof = prove_retention(oscar_state(), 10_000, lambda100(), 0, 10);
     proof.retained_until_epoch += 1_000_000; // extend window without paying
     let err = verify_retention_proof(&proof, 0).unwrap_err();
-    assert!(matches!(err, RetentionProofError::WitnessMismatch { .. }),
-        "extended retained_until must break witness: {:?}", err);
+    assert!(
+        matches!(err, RetentionProofError::WitnessMismatch { .. }),
+        "extended retained_until must break witness: {:?}",
+        err
+    );
 }
 
 #[test]
@@ -122,8 +148,10 @@ fn proof_carries_all_input_fields() {
     assert_eq!(proof.state_id, state_id);
     assert_eq!(proof.activated_epoch, 200);
     assert_eq!(proof.committed_energy, 50_000);
-    assert!(proof.retained_until_epoch >= 200,
-        "retained_until must be ≥ activated_epoch");
+    assert!(
+        proof.retained_until_epoch >= 200,
+        "retained_until must be ≥ activated_epoch"
+    );
 }
 
 #[test]
@@ -131,7 +159,10 @@ fn serde_round_trip() {
     let proof = prove_retention(regulator_state(), 100_000, lambda100(), 0, 1);
     let json = serde_json::to_string(&proof).unwrap();
     let back = serde_json::from_str(&json).unwrap();
-    assert_eq!(proof, back, "RetentionProof must serialise/deserialise exactly");
+    assert_eq!(
+        proof, back,
+        "RetentionProof must serialise/deserialise exactly"
+    );
 }
 
 #[test]
@@ -151,12 +182,17 @@ fn mica_compliance_full_arc() {
 
     // One epoch past the window fails closed.
     let err = verify_retention_proof(&proof, window + 1).unwrap_err();
-    assert!(matches!(err, RetentionProofError::QueryAfterRetention { .. }),
-        "one past the window must fail: {:?}", err);
+    assert!(
+        matches!(err, RetentionProofError::QueryAfterRetention { .. }),
+        "one past the window must fail: {:?}",
+        err
+    );
 
     // OSCAR's forgery fails.
     let mut forged = proof.clone();
     forged.retained_until_epoch = u64::MAX;
-    assert!(verify_retention_proof(&forged, u64::MAX / 2).is_err(),
-        "forged infinite window must be rejected");
+    assert!(
+        verify_retention_proof(&forged, u64::MAX / 2).is_err(),
+        "forged infinite window must be rejected"
+    );
 }

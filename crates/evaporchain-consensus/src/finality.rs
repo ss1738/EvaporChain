@@ -908,7 +908,7 @@ mod tests {
     #[test]
     fn audit_c2_has_supermajority_no_overflow_near_u64_max() {
         let total: u64 = u64::MAX / 2 + 1; // above the old overflow boundary
-        // 2/3 of total (rounded up) — just enough for supermajority
+                                           // 2/3 of total (rounded up) — just enough for supermajority
         let attested: u64 = (total as u128 * 2).div_ceil(3) as u64;
         let dummy_cert = make_cert(1, [0u8; 32], vec![]);
         let rec = FinalityRecord {
@@ -923,9 +923,14 @@ mod tests {
             total_stake: total,
             da_confirmed: false,
         };
-        assert!(rec.has_supermajority(), "2/3 threshold of near-max stake must pass");
-        let rec2 = FinalityRecord { signing_stake: attested - 1, ..rec };
+        assert!(
+            rec.has_supermajority(),
+            "2/3 threshold of near-max stake must pass"
+        );
+        let rec2 = FinalityRecord {
+            signing_stake: attested - 1,
+            ..rec
+        };
         assert!(!rec2.has_supermajority(), "just below 2/3 must not pass");
     }
-
 }

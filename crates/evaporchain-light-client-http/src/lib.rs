@@ -134,7 +134,8 @@ impl HttpTransport {
         format!(
             "{}{}",
             self.base_url,
-            self.header_path_template.replace("{height}", &height.to_string())
+            self.header_path_template
+                .replace("{height}", &height.to_string())
         )
     }
 
@@ -168,10 +169,7 @@ impl HttpTransport {
     /// Send a GET request and deserialize the JSON response into
     /// `T`. Maps `ureq` and `serde` errors into
     /// [`TransportError`].
-    fn get_json<T: serde::de::DeserializeOwned>(
-        &self,
-        url: &str,
-    ) -> Result<T, TransportError> {
+    fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, TransportError> {
         let mut req = self.agent.get(url);
         if let Some(ref token) = self.bearer_token {
             req = req.set("Authorization", &format!("Bearer {token}"));
@@ -285,7 +283,10 @@ mod tests {
     #[test]
     fn default_paths_match_chain_endpoints() {
         let t = HttpTransport::new("http://localhost:8080");
-        assert_eq!(t.header_url(42), "http://localhost:8080/api/light_header/42");
+        assert_eq!(
+            t.header_url(42),
+            "http://localhost:8080/api/light_header/42"
+        );
         assert_eq!(
             t.latest_header_url(),
             "http://localhost:8080/api/light_header/latest"
@@ -313,10 +314,7 @@ mod tests {
             "/v2/nova/instance",
             "/v2/nova/vk",
         );
-        assert_eq!(
-            t.header_url(7),
-            "https://gateway.example.com/v2/headers/7"
-        );
+        assert_eq!(t.header_url(7), "https://gateway.example.com/v2/headers/7");
         assert_eq!(
             t.latest_header_url(),
             "https://gateway.example.com/v2/headers/latest"

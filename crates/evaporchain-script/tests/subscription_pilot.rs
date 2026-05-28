@@ -39,10 +39,9 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("Subscription failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("Subscription failed to compile: {e:?}"))
+    let ast =
+        parser::parse(SOURCE).unwrap_or_else(|e| panic!("Subscription failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("Subscription failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -185,7 +184,11 @@ fn pay_increments_counters() {
         &ctx(subscriber, subscriber, 200, 10_000),
     )
     .expect("first pay must succeed");
-    assert_eq!(p1.return_value, Value::U64(100), "pay returns period_amount");
+    assert_eq!(
+        p1.return_value,
+        Value::U64(100),
+        "pay returns period_amount"
+    );
 
     let p2 = EvaporVM::execute(
         &bc,
@@ -402,7 +405,9 @@ fn on_evaporate_lapses_uncancelled_subscription() {
         panic!("lapsed field not set");
     }
     assert!(
-        evap.events.iter().any(|e| e.contains("evaporated") || e.contains("ends")),
+        evap.events
+            .iter()
+            .any(|e| e.contains("evaporated") || e.contains("ends")),
         "evap must emit lapse event"
     );
 }

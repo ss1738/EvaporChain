@@ -51,11 +51,19 @@ use evaporchain_singh_inequality_v2::{
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 fn cv(lo: u64, hi: u64, energy: u64, variance_proxy: u128) -> ContributorWithVariance {
-    ContributorWithVariance { lo, hi, energy, variance_proxy }
+    ContributorWithVariance {
+        lo,
+        hi,
+        energy,
+        variance_proxy,
+    }
 }
 
 fn committee_uniform(energies: &[u64; 5], variance_proxy: u128) -> Vec<ContributorWithVariance> {
-    energies.iter().map(|&e| cv(0, 100, e, variance_proxy)).collect()
+    energies
+        .iter()
+        .map(|&e| cv(0, 100, e, variance_proxy))
+        .collect()
 }
 
 // ── Non-trivial fixture ───────────────────────────────────────────────────
@@ -65,13 +73,17 @@ fn scenario_a_max_variance_v2_equals_v1() {
     // Scenario A: variance_proxy = range² = 10_000 → V2 coincides with V1.
     let committee = committee_uniform(&[1_000, 1_000, 1_000, 1_000, 1_000], 10_000);
     let v2_var = singh_bernstein_variance(&committee).unwrap();
-    assert_eq!(v2_var, 50_000,
-        "V2 σ²_SB at max-variance: 5 × 10_000 = 50_000");
+    assert_eq!(
+        v2_var, 50_000,
+        "V2 σ²_SB at max-variance: 5 × 10_000 = 50_000"
+    );
 
     // bernstein_strictly_tighter confirms variance bounds coincide.
     let adv = bernstein_strictly_tighter(200, &committee, 1).unwrap();
-    assert_eq!(adv.v1_variance_bound, adv.v2_variance_bound,
-        "at variance_proxy == range² the two bounds must coincide");
+    assert_eq!(
+        adv.v1_variance_bound, adv.v2_variance_bound,
+        "at variance_proxy == range² the two bounds must coincide"
+    );
 }
 
 #[test]
@@ -85,24 +97,28 @@ fn scenario_b_concentrated_v2_strictly_tighter() {
     // V1 bound (via BernsteinAdvantage) = 50_000.
     let adv = bernstein_strictly_tighter(80, &committee, 1).unwrap();
     assert_eq!(adv.v1_variance_bound, 50_000, "V1 ignores variance proxy");
-    assert!(adv.v2_variance_bound < adv.v1_variance_bound,
-        "V2 bound must be strictly smaller when variance_proxy << range²");
+    assert!(
+        adv.v2_variance_bound < adv.v1_variance_bound,
+        "V2 bound must be strictly smaller when variance_proxy << range²"
+    );
 }
 
 #[test]
 fn scenario_c_concentrated_plus_decay_further_shrinks_v2() {
     // Scenario C: V3,V4,V5 decayed to 10% energy.
     let committee = vec![
-        cv(0, 100, 1_000, 100),  // V1 — fresh
-        cv(0, 100, 1_000, 100),  // V2 — fresh
-        cv(0, 100,   100, 100),  // V3 — decayed
-        cv(0, 100,   100, 100),  // V4 — decayed
-        cv(0, 100,   100, 100),  // V5 — decayed
+        cv(0, 100, 1_000, 100), // V1 — fresh
+        cv(0, 100, 1_000, 100), // V2 — fresh
+        cv(0, 100, 100, 100),   // V3 — decayed
+        cv(0, 100, 100, 100),   // V4 — decayed
+        cv(0, 100, 100, 100),   // V5 — decayed
     ];
 
     let v2_var = singh_bernstein_variance(&committee).unwrap();
-    assert_eq!(v2_var, 203,
-        "V2 σ²_SB: 2×100 + 3×1 = 203 (decayed weight = (100/1000)² = 0.01)");
+    assert_eq!(
+        v2_var, 203,
+        "V2 σ²_SB: 2×100 + 3×1 = 203 (decayed weight = (100/1000)² = 0.01)"
+    );
 
     let adv = bernstein_strictly_tighter(100, &committee, 1).unwrap();
     assert_eq!(adv.v1_variance_bound, 20_300);
@@ -111,7 +127,10 @@ fn scenario_c_concentrated_plus_decay_further_shrinks_v2() {
     // σ²_C (203) < σ²_B (500): decay made V2 even tighter.
     let committee_b = committee_uniform(&[1_000, 1_000, 1_000, 1_000, 1_000], 100);
     let v2_b = singh_bernstein_variance(&committee_b).unwrap();
-    assert!(v2_var < v2_b, "decay shrinks V2 variance beyond concentration alone");
+    assert!(
+        v2_var < v2_b,
+        "decay shrinks V2 variance beyond concentration alone"
+    );
 }
 
 // ── Doctrine tests ────────────────────────────────────────────────────────
@@ -134,7 +153,10 @@ fn doctrine_concentrated_v2_also_rejects_implausible_claims_scenario_b() {
     // 3·6241=18_723 < 6·500+2·100·79=18_800 → V2 REJECTS.
     let committee = committee_uniform(&[1_000, 1_000, 1_000, 1_000, 1_000], 100);
     let admits = passes_singh_bernstein_gate(79, &committee, 1).unwrap();
-    assert!(!admits, "V2 must REJECT ε=79 (not enough to dominate Bernstein denominator)");
+    assert!(
+        !admits,
+        "V2 must REJECT ε=79 (not enough to dominate Bernstein denominator)"
+    );
 }
 
 #[test]
@@ -145,9 +167,9 @@ fn doctrine_concentrated_decay_v2_admits_when_v1_rejects_scenario_c() {
     let committee = vec![
         cv(0, 100, 1_000, 100),
         cv(0, 100, 1_000, 100),
-        cv(0, 100,   100, 100),
-        cv(0, 100,   100, 100),
-        cv(0, 100,   100, 100),
+        cv(0, 100, 100, 100),
+        cv(0, 100, 100, 100),
+        cv(0, 100, 100, 100),
     ];
     let adv = bernstein_strictly_tighter(100, &committee, 1).unwrap();
 
@@ -160,17 +182,18 @@ fn doctrine_v2_leq_v1_across_all_scenarios() {
     // V2 σ²_SB ≤ V1 σ²_H for any combination of variance and energy.
     for (energies, var_proxy) in [
         ([1_000, 1_000, 1_000, 1_000, 1_000], 10_000), // max variance
-        ([1_000, 1_000, 1_000, 1_000, 1_000],    100), // concentrated
-        ([1_000, 1_000,   100,    10,     0],    100),  // decayed + concentrated
-        ([1_000, 1_000,     0,     0,     0],      0),  // all-zero variance
-        ([  500,   300,   200,   100,    50],   2_500), // mixed energies, mid variance
+        ([1_000, 1_000, 1_000, 1_000, 1_000], 100),    // concentrated
+        ([1_000, 1_000, 100, 10, 0], 100),             // decayed + concentrated
+        ([1_000, 1_000, 0, 0, 0], 0),                  // all-zero variance
+        ([500, 300, 200, 100, 50], 2_500),             // mixed energies, mid variance
     ] {
         let committee = committee_uniform(&energies, var_proxy);
         let adv = bernstein_strictly_tighter(50, &committee, 1).unwrap();
         assert!(
             adv.v2_variance_bound <= adv.v1_variance_bound,
             "V2 ({}) must be ≤ V1 ({}) for energies={energies:?}, var={var_proxy}",
-            adv.v2_variance_bound, adv.v1_variance_bound,
+            adv.v2_variance_bound,
+            adv.v1_variance_bound,
         );
     }
 }
@@ -182,8 +205,10 @@ fn doctrine_max_variance_both_agree_on_admission() {
     let committee = committee_uniform(&[1_000, 1_000, 1_000, 1_000, 1_000], 10_000);
 
     let adv_big = bernstein_strictly_tighter(1_000, &committee, 1).unwrap();
-    assert_eq!(adv_big.v1_variance_bound, adv_big.v2_variance_bound,
-        "variance bounds coincide at max variance");
+    assert_eq!(
+        adv_big.v1_variance_bound, adv_big.v2_variance_bound,
+        "variance bounds coincide at max variance"
+    );
 
     // Both should handle the same input consistently (not necessarily same gate behavior
     // due to different formulas, but variance bounds must match).
@@ -201,14 +226,16 @@ fn decay_monotonically_shrinks_v2_variance() {
         // V1 fresh at E_max; V2 at energy=e; V3-V5 fixed.
         let committee = vec![
             cv(0, 100, 1_000, 100),
-            cv(0, 100, e,     100),
-            cv(0, 100,   200, 100),
-            cv(0, 100,   200, 100),
-            cv(0, 100,   200, 100),
+            cv(0, 100, e, 100),
+            cv(0, 100, 200, 100),
+            cv(0, 100, 200, 100),
+            cv(0, 100, 200, 100),
         ];
         let var = singh_bernstein_variance(&committee).unwrap();
-        assert!(var <= prev,
-            "V2 σ²_SB must be non-increasing as V2 energy drops (e={e})");
+        assert!(
+            var <= prev,
+            "V2 σ²_SB must be non-increasing as V2 energy drops (e={e})"
+        );
         prev = var;
     }
 }
@@ -255,7 +282,11 @@ fn adversarial_invalid_range_lo_gt_hi_rejected() {
     let bad = vec![cv(100, 10, 1_000, 0)]; // lo=100 > hi=10
     assert!(matches!(
         singh_bernstein_variance(&bad).unwrap_err(),
-        BernsteinError::InvalidRange { lo: 100, hi: 10, .. }
+        BernsteinError::InvalidRange {
+            lo: 100,
+            hi: 10,
+            ..
+        }
     ));
 }
 
@@ -313,7 +344,10 @@ fn adversarial_zero_energy_contributor_contributes_nothing_when_another_fresh() 
     // Fresh: e=1000 → weight 1 → contributes variance_proxy.
     let mixed = vec![cv(0, 100, 0, 100), cv(0, 100, 1_000, 100)];
     let var = singh_bernstein_variance(&mixed).unwrap();
-    assert_eq!(var, 100, "fully-decayed contributor contributes 0 to V2 variance");
+    assert_eq!(
+        var, 100,
+        "fully-decayed contributor contributes 0 to V2 variance"
+    );
 }
 
 #[test]

@@ -33,11 +33,11 @@
 //!
 //! INVENTION_STACK §A5.2: Singh Skill Half-Life Market.
 
+use evaporchain_shlm::market::CandidateBid;
 use evaporchain_shlm::{
     freshness_score, post_bounty, settle_bounty, Bounty, BountyError, Credential, CredentialError,
     SkillClass,
 };
-use evaporchain_shlm::market::CandidateBid;
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -79,26 +79,26 @@ fn cobol_class() -> SkillClass {
 
 fn python_bounty() -> Bounty {
     Bounty::post(
-        id(0xB1),    // bounty id
-        id(0xF1),    // employer
-        id(0x01),    // Python class id
-        120_000,     // salary_cap
-        600,         // min_freshness
-        700,         // min_level
-        0,           // posted_at
+        id(0xB1), // bounty id
+        id(0xF1), // employer
+        id(0x01), // Python class id
+        120_000,  // salary_cap
+        600,      // min_freshness
+        700,      // min_level
+        0,        // posted_at
     )
     .unwrap()
 }
 
 fn cobol_bounty() -> Bounty {
     Bounty::post(
-        id(0xB2),    // bounty id
-        id(0xF2),    // employer
-        id(0x02),    // COBOL class id
-        200_000,     // salary_cap
-        100,         // min_freshness
-        300,         // min_level
-        0,           // posted_at
+        id(0xB2), // bounty id
+        id(0xF2), // employer
+        id(0x02), // COBOL class id
+        200_000,  // salary_cap
+        100,      // min_freshness
+        300,      // min_level
+        0,        // posted_at
     )
     .unwrap()
 }
@@ -256,10 +256,16 @@ fn doctrine_python_decays_10x_faster_than_cobol() {
     let cobol_score = freshness_score(&cobol, &cobol_cred, elapsed);
 
     let py_expected = expected_freshness(level, PYTHON_HL, elapsed); // 500
-    let co_expected = expected_freshness(level, COBOL_HL, elapsed);  // 950
+    let co_expected = expected_freshness(level, COBOL_HL, elapsed); // 950
 
-    assert_eq!(python_score, py_expected, "Python freshness at elapsed={elapsed}");
-    assert_eq!(cobol_score, co_expected, "COBOL freshness at elapsed={elapsed}");
+    assert_eq!(
+        python_score, py_expected,
+        "Python freshness at elapsed={elapsed}"
+    );
+    assert_eq!(
+        cobol_score, co_expected,
+        "COBOL freshness at elapsed={elapsed}"
+    );
     assert!(
         cobol_score > python_score,
         "COBOL must retain more freshness than Python after the same elapsed time: \
@@ -280,11 +286,11 @@ fn freshness_score_monotone_decreasing_with_staleness() {
     let alice = alice_cred();
     let bob = bob_cred();
 
-    let score_alice = freshness_score(&python, &alice, 50);  // elapsed=50
-    let score_bob = freshness_score(&python, &bob, 150);     // elapsed=150
+    let score_alice = freshness_score(&python, &alice, 50); // elapsed=50
+    let score_bob = freshness_score(&python, &bob, 150); // elapsed=150
 
-    let expected_alice = expected_freshness(1000, PYTHON_HL, 50);  // 750
-    let expected_bob = expected_freshness(1000, PYTHON_HL, 150);   // 375
+    let expected_alice = expected_freshness(1000, PYTHON_HL, 50); // 750
+    let expected_bob = expected_freshness(1000, PYTHON_HL, 150); // 375
 
     assert_eq!(score_alice, expected_alice);
     assert_eq!(score_bob, expected_bob);
@@ -334,7 +340,10 @@ fn credential_refresh_restores_eligibility_for_stale_candidate() {
 
     // Confirm stale before refresh.
     let stale_score = freshness_score(&python, &bob, 150);
-    assert!(stale_score < 600, "Bob must be stale (score={stale_score}) before refresh");
+    assert!(
+        stale_score < 600,
+        "Bob must be stale (score={stale_score}) before refresh"
+    );
 
     // Refresh at epoch 160.
     bob.refresh(900, 160).unwrap();
@@ -373,17 +382,27 @@ fn adversarial_refresh_backdating_rejected() {
     let mut alice = alice_cred(); // attested_at=0
     alice.refresh(900, 50).unwrap(); // advance to epoch 50
 
-    let err = alice
-        .refresh(1000, 30)
-        .unwrap_err(); // try to backdate to epoch 30
+    let err = alice.refresh(1000, 30).unwrap_err(); // try to backdate to epoch 30
 
     assert!(
-        matches!(err, CredentialError::RefreshGoingBackwards { refresh_at: 30, attested_at: 50 }),
+        matches!(
+            err,
+            CredentialError::RefreshGoingBackwards {
+                refresh_at: 30,
+                attested_at: 50
+            }
+        ),
         "backdating refresh must be rejected, got {err:?}"
     );
     // Credential state must be unchanged on failure.
-    assert_eq!(alice.level, 900, "level must be unchanged after failed refresh");
-    assert_eq!(alice.attested_at_epoch, 50, "attested_at must be unchanged after failed refresh");
+    assert_eq!(
+        alice.level, 900,
+        "level must be unchanged after failed refresh"
+    );
+    assert_eq!(
+        alice.attested_at_epoch, 50,
+        "attested_at must be unchanged after failed refresh"
+    );
 }
 
 #[test]
@@ -422,13 +441,17 @@ fn adversarial_zero_salary_bounty_rejected() {
         id(0xB9),
         id(0xF9),
         id(0x01),
-        0,       // zero salary_cap — adversarial
+        0, // zero salary_cap — adversarial
         600,
         700,
         0,
     )
     .unwrap_err();
-    assert_eq!(err, BountyError::ZeroSalary, "zero salary_cap must be rejected");
+    assert_eq!(
+        err,
+        BountyError::ZeroSalary,
+        "zero salary_cap must be rejected"
+    );
 }
 
 #[test]
@@ -441,9 +464,13 @@ fn adversarial_zero_min_level_bounty_rejected() {
         id(0x01),
         100_000,
         600,
-        0,       // zero min_level — adversarial
+        0, // zero min_level — adversarial
         0,
     )
     .unwrap_err();
-    assert_eq!(err, BountyError::ZeroMinLevel, "zero min_level must be rejected");
+    assert_eq!(
+        err,
+        BountyError::ZeroMinLevel,
+        "zero min_level must be rejected"
+    );
 }

@@ -37,21 +37,26 @@ fn block_evaporation_sweep() {
 
     let causes = [
         (addr(1), 1_000u64, CauseOfDeath::Evaporated),
-        (addr(2), 0,        CauseOfDeath::ForgottenViaDecayProof),
-        (addr(3), 500,      CauseOfDeath::SlashedToZero),
-        (addr(4), 200,      CauseOfDeath::RentExhausted),
-        (addr(5), 50,       CauseOfDeath::Other(7)),
+        (addr(2), 0, CauseOfDeath::ForgottenViaDecayProof),
+        (addr(3), 500, CauseOfDeath::SlashedToZero),
+        (addr(4), 200, CauseOfDeath::RentExhausted),
+        (addr(5), 50, CauseOfDeath::Other(7)),
     ];
 
     let mut prev_root = trie.root();
 
     for (a, balance, cause) in &causes {
         let tombstone = mint(*a, *balance, EPOCH, *cause);
-        trie.insert(*a, tombstone).expect("first insert must succeed");
+        trie.insert(*a, tombstone)
+            .expect("first insert must succeed");
 
         // Root changes with every insertion.
         let new_root = trie.root();
-        assert_ne!(new_root, prev_root, "root unchanged after insert of addr {:?}", a);
+        assert_ne!(
+            new_root, prev_root,
+            "root unchanged after insert of addr {:?}",
+            a
+        );
         prev_root = new_root;
     }
 
@@ -100,7 +105,9 @@ fn double_evaporation_rejected() {
 
     trie.insert(a, stone).expect("first insert must succeed");
 
-    let err = trie.insert(a, stone).expect_err("duplicate insert must fail");
+    let err = trie
+        .insert(a, stone)
+        .expect_err("duplicate insert must fail");
     assert!(
         matches!(err, TombstoneError::AlreadyMemorialised(_)),
         "expected AlreadyMemorialised, got {err:?}"
@@ -126,5 +133,8 @@ fn different_epoch_different_commitment() {
     let a = addr(0x22);
     let t1 = mint(a, 0, 100, CauseOfDeath::Evaporated);
     let t2 = mint(a, 0, 200, CauseOfDeath::Evaporated);
-    assert_ne!(t1.commitment, t2.commitment, "epoch must be bound into commitment");
+    assert_ne!(
+        t1.commitment, t2.commitment,
+        "epoch must be bound into commitment"
+    );
 }

@@ -72,13 +72,14 @@ fn main() {
     let g3 = g2 + g;
     let g5 = g3 + g2;
     let h = g + g + g + g + g + g + g; // 7G
-    let bases: Vec<_> =
-        [g, g2, g3, g5].into_iter().map(|p| p.into_affine()).collect();
+    let bases: Vec<_> = [g, g2, g3, g5]
+        .into_iter()
+        .map(|p| p.into_affine())
+        .collect();
     let h_aff = h.into_affine();
 
     eprintln!("recursion-decider-fixture-emit: setup_recursion_decider (n=4)…");
-    let (pk, vk) =
-        setup_recursion_decider(bases.clone(), h_aff, &mut rng).expect("setup");
+    let (pk, vk) = setup_recursion_decider(bases.clone(), h_aff, &mut rng).expect("setup");
     eprintln!(
         "recursion-decider-fixture-emit: ic.len()={} (1 + num_public_inputs = 1 + 0)",
         vk.gamma_abc_g1.len()
@@ -92,14 +93,9 @@ fn main() {
         Bn254Fq::from(7u64),
     ];
     let blind = Bn254Fq::from(11u64);
-    let claimed = g * scalars[0]
-        + g2 * scalars[1]
-        + g3 * scalars[2]
-        + g5 * scalars[3]
-        + h * blind;
+    let claimed = g * scalars[0] + g2 * scalars[1] + g3 * scalars[2] + g5 * scalars[3] + h * blind;
 
-    let circuit =
-        RecursionDeciderCircuit::section_a_only(scalars, bases, blind, h_aff, claimed);
+    let circuit = RecursionDeciderCircuit::section_a_only(scalars, bases, blind, h_aff, claimed);
 
     eprintln!("recursion-decider-fixture-emit: prove …");
     let proof = prove_recursion_decider(&pk, circuit, &mut rng).expect("prove");
@@ -108,11 +104,7 @@ fn main() {
     // Section A binds only via witness-commit ⇒ zero public inputs.
     let pi_arr: Vec<String> = vec![];
 
-    let ic_arr: Vec<String> = vk
-        .gamma_abc_g1
-        .iter()
-        .map(|p| hex(&g1_bytes(p)))
-        .collect();
+    let ic_arr: Vec<String> = vk.gamma_abc_g1.iter().map(|p| hex(&g1_bytes(p))).collect();
 
     let json = serde_json::json!({
         "proof": hex(&proof_bytes),
@@ -127,8 +119,7 @@ fn main() {
     });
 
     let out_path = "ethereum-bridge/contracts/fixtures/recursion_decider_smoke.json";
-    std::fs::write(out_path, serde_json::to_string_pretty(&json).unwrap())
-        .expect("write fixture");
+    std::fs::write(out_path, serde_json::to_string_pretty(&json).unwrap()).expect("write fixture");
     eprintln!("recursion-decider-fixture-emit: wrote {out_path}");
     eprintln!(
         "recursion-decider-fixture-emit: proof_bytes={} public_inputs={} ic={}",

@@ -263,11 +263,12 @@ fn dos_v3_single_sender_capped_below_global_max() {
 //     passed without a nonce supplied. Confirms attackers cannot
 //     keep stale commitments alive forever in the pool.
 
-use evaporchain_consensus::encrypted_mempool::{
-    encrypt_transaction, EncryptedMempool, MevError,
-};
+use evaporchain_consensus::encrypted_mempool::{encrypt_transaction, EncryptedMempool, MevError};
 
-fn make_encrypted(nonce_byte: u8, submitted_epoch: u64) -> evaporchain_consensus::encrypted_mempool::EncryptedTransaction {
+fn make_encrypted(
+    nonce_byte: u8,
+    submitted_epoch: u64,
+) -> evaporchain_consensus::encrypted_mempool::EncryptedTransaction {
     let tx = make_transfer(1, nonce_byte as u64);
     let nonce = [nonce_byte; 32];
     encrypt_transaction(&tx, &nonce, submitted_epoch)

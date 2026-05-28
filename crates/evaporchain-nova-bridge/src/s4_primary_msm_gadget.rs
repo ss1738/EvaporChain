@@ -226,10 +226,7 @@ impl G1ProjVar {
 /// bn256 b=3 ⇒ b3=9). Exception-free: correct for any P,Q incl.
 /// identity and P=Q. ("Complete addition formulas for prime order
 /// elliptic curves", Renes–Costello–Batina 2016, Alg. 7.)
-pub fn g1_add_complete(
-    p: &G1ProjVar,
-    q: &G1ProjVar,
-) -> Result<G1ProjVar, SynthesisError> {
+pub fn g1_add_complete(p: &G1ProjVar, q: &G1ProjVar) -> Result<G1ProjVar, SynthesisError> {
     let b3 = FqV::constant(Bn254Fq::from(9u64));
     let (x1, y1, z1) = (&p.x, &p.y, &p.z);
     let (x2, y2, z2) = (&q.x, &q.y, &q.z);
@@ -267,7 +264,11 @@ pub fn g1_add_complete(
     let t0 = &t0 * &t3;
     let z3 = &z3 * &t4;
     let z3 = &z3 + &t0;
-    Ok(G1ProjVar { x: x3, y: y3, z: z3 })
+    Ok(G1ProjVar {
+        x: x3,
+        y: y3,
+        z: z3,
+    })
 }
 
 /// Edge-safe `k·base` for an ARBITRARY native `FpVar<Fr>` scalar
@@ -297,8 +298,7 @@ mod tests {
     use super::*;
     use ark_ec::{short_weierstrass::Projective, AffineRepr, CurveGroup};
     use ark_r1cs_std::{
-        alloc::AllocVar, boolean::Boolean, convert::ToBitsGadget,
-        fields::fp::FpVar, GR1CSVar,
+        alloc::AllocVar, boolean::Boolean, convert::ToBitsGadget, fields::fp::FpVar, GR1CSVar,
     };
     use ark_relations::gr1cs::ConstraintSystem;
 
@@ -316,7 +316,10 @@ mod tests {
         let mkfq = |v: Bn254Fq| FqV::new_witness(cs.clone(), || Ok(v)).unwrap();
         let gx = g_aff.x().unwrap();
         let gy = g_aff.y().unwrap();
-        let gp = G1AffineVar { x: mkfq(gx), y: mkfq(gy) };
+        let gp = G1AffineVar {
+            x: mkfq(gx),
+            y: mkfq(gy),
+        };
 
         // double: 2G
         let d = g1_double(&gp).expect("g1_double");
@@ -327,7 +330,10 @@ mod tests {
         };
         let s = g1_add(&gp, &twog_v).expect("g1_add");
 
-        assert!(cs.is_satisfied().expect("is_satisfied"), "CS must be satisfied");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "CS must be satisfied"
+        );
         assert_eq!(d.x.value().unwrap(), two_g.x().unwrap(), "2G.x");
         assert_eq!(d.y.value().unwrap(), two_g.y().unwrap(), "2G.y");
         assert_eq!(s.x.value().unwrap(), three_g.x().unwrap(), "3G.x");
@@ -354,16 +360,18 @@ mod tests {
         };
 
         // Scalar from a real native FpVar<Fr> witness → bits.
-        let kv = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k)))
-            .unwrap();
+        let kv = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k))).unwrap();
         let bits_le = kv.to_bits_le().unwrap(); // LSB-first
-        // k=5 fits in 3 bits; take low 3, reverse → MSB-first [1,0,1].
+                                                // k=5 fits in 3 bits; take low 3, reverse → MSB-first [1,0,1].
         let mut msb: Vec<Boolean<Bn254Fr>> = bits_le[..3].to_vec();
         msb.reverse();
 
         let out = g1_scalar_mul(&gp, &msb).expect("g1_scalar_mul");
 
-        assert!(cs.is_satisfied().expect("is_satisfied"), "CS must be satisfied");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "CS must be satisfied"
+        );
         assert_eq!(out.x.value().unwrap(), expected.x().unwrap(), "5G.x");
         assert_eq!(out.y.value().unwrap(), expected.y().unwrap(), "5G.y");
     }
@@ -379,10 +387,10 @@ mod tests {
         let g = Projective::from(g_aff);
         let two_g = (g + g).into_affine();
         let three_g = (g + g + g).into_affine();
-        let expected =
-            (g * Bn254Fr::from(4u64) + (g + g) * Bn254Fr::from(5u64)
-                + (g + g + g) * Bn254Fr::from(7u64))
-            .into_affine();
+        let expected = (g * Bn254Fr::from(4u64)
+            + (g + g) * Bn254Fr::from(5u64)
+            + (g + g + g) * Bn254Fr::from(7u64))
+        .into_affine();
 
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         let mkfq = |v: Bn254Fq| FqV::new_witness(cs.clone(), || Ok(v)).unwrap();
@@ -392,9 +400,7 @@ mod tests {
         };
         // MSB-first 3-bit vec from a real native FpVar<Fr> witness.
         let bits3 = |k: u64| -> Vec<Boolean<Bn254Fr>> {
-            let kv =
-                FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k)))
-                    .unwrap();
+            let kv = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k))).unwrap();
             let mut b = kv.to_bits_le().unwrap()[..3].to_vec();
             b.reverse();
             b
@@ -408,9 +414,20 @@ mod tests {
         let out = pedersen_msm_bn256_g1(&scalar_bits, &bases, &blind_bits, &h_v)
             .expect("pedersen_msm_bn256_g1");
 
-        assert!(cs.is_satisfied().expect("is_satisfied"), "CS must be satisfied");
-        assert_eq!(out.x.value().unwrap(), expected.x().unwrap(), "MSM.x = 35G.x");
-        assert_eq!(out.y.value().unwrap(), expected.y().unwrap(), "MSM.y = 35G.y");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "CS must be satisfied"
+        );
+        assert_eq!(
+            out.x.value().unwrap(),
+            expected.x().unwrap(),
+            "MSM.x = 35G.x"
+        );
+        assert_eq!(
+            out.y.value().unwrap(),
+            expected.y().unwrap(),
+            "MSM.y = 35G.y"
+        );
     }
 
     /// THE B.2-HARDENING PROOF: complete-formula scalar mul is correct
@@ -431,9 +448,7 @@ mod tests {
                 x: mkfq(g_aff.x().unwrap()),
                 y: mkfq(g_aff.y().unwrap()),
             };
-            let kv =
-                FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k)))
-                    .unwrap();
+            let kv = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k))).unwrap();
             let mut msb = kv.to_bits_le().unwrap(); // full 254-bit, LSB-first
             msb.reverse(); // → MSB-first
 

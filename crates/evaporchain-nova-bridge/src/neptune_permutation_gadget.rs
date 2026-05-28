@@ -55,13 +55,13 @@ use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 /// `state.len()` must equal `post_ark.len()` must equal
 /// `mds.len()` must equal `mds[0].len()` (square matrix matching
 /// the state width).
-pub fn neptune_full_round_native<F: PrimeField>(
-    state: &mut [F],
-    post_ark: &[F],
-    mds: &[Vec<F>],
-) {
+pub fn neptune_full_round_native<F: PrimeField>(state: &mut [F], post_ark: &[F], mds: &[Vec<F>]) {
     let width = state.len();
-    assert_eq!(post_ark.len(), width, "post_ark length must match state width");
+    assert_eq!(
+        post_ark.len(),
+        width,
+        "post_ark length must match state width"
+    );
     assert_eq!(mds.len(), width, "mds row count must match state width");
     for row in mds.iter() {
         assert_eq!(row.len(), width, "mds row width must match state width");
@@ -104,7 +104,11 @@ pub fn enforce_neptune_full_round<F: PrimeField>(
     mds: &[Vec<F>],
 ) -> Result<(), SynthesisError> {
     let width = state.len();
-    assert_eq!(post_ark.len(), width, "post_ark length must match state width");
+    assert_eq!(
+        post_ark.len(),
+        width,
+        "post_ark length must match state width"
+    );
     assert_eq!(mds.len(), width, "mds row count must match state width");
     for row in mds.iter() {
         assert_eq!(row.len(), width, "mds row width must match state width");
@@ -158,11 +162,7 @@ pub fn enforce_neptune_full_round<F: PrimeField>(
 /// `post_ark` is a single scalar (vs the full round's vector) —
 /// neptune's compressed round constants emit ONE entry per
 /// partial round, not `width` entries.
-pub fn neptune_partial_round_native<F: PrimeField>(
-    state: &mut [F],
-    post_ark: F,
-    mds: &[Vec<F>],
-) {
+pub fn neptune_partial_round_native<F: PrimeField>(state: &mut [F], post_ark: F, mds: &[Vec<F>]) {
     let width = state.len();
     assert_eq!(mds.len(), width, "mds row count must match state width");
     for row in mds.iter() {
@@ -494,11 +494,12 @@ impl<F: PrimeField> NeptuneParams<F> {
 /// - `half_full - 1 < current_round < half_full + partial_rounds`
 ///   → `sparse_matrices[current_round - half_full]`
 /// - otherwise → `plain_mds`
-pub fn neptune_permute_native<F: PrimeField>(
-    state: &mut [F],
-    params: &NeptuneParams<F>,
-) {
-    assert_eq!(state.len(), params.width, "state width must match params.width");
+pub fn neptune_permute_native<F: PrimeField>(state: &mut [F], params: &NeptuneParams<F>) {
+    assert_eq!(
+        state.len(),
+        params.width,
+        "state width must match params.width"
+    );
     params.validate().expect("invalid neptune params");
 
     let half_full = params.half_full();
@@ -564,11 +565,7 @@ pub fn neptune_permute_native<F: PrimeField>(
 /// Single full-round step (native): for each cell, `state[i] :=
 /// state[i]^5 + post_ark[i]` if `!last_round`; otherwise just
 /// `state[i] := state[i]^5` (no post-key).
-fn full_round_native_step<F: PrimeField>(
-    state: &mut [F],
-    post_ark: &[F],
-    last_round: bool,
-) {
+fn full_round_native_step<F: PrimeField>(state: &mut [F], post_ark: &[F], last_round: bool) {
     if !last_round {
         assert_eq!(
             post_ark.len(),
@@ -672,20 +669,14 @@ pub fn params_from_dump_path<P: AsRef<std::path::Path>>(
 
 /// Apply the correct MDS matrix for `current_round` per neptune's
 /// `round_product_mds` selection rule.
-fn apply_mds_step<F: PrimeField>(
-    state: &mut [F],
-    params: &NeptuneParams<F>,
-    current_round: usize,
-) {
+fn apply_mds_step<F: PrimeField>(state: &mut [F], params: &NeptuneParams<F>, current_round: usize) {
     let half_full = params.half_full();
     let sparse_offset = half_full - 1;
 
     if current_round == sparse_offset {
         // Boundary round — use pre_sparse_matrix.
         apply_plain_mds(state, &params.pre_sparse_mds);
-    } else if current_round > sparse_offset
-        && current_round < half_full + params.partial_rounds
-    {
+    } else if current_round > sparse_offset && current_round < half_full + params.partial_rounds {
         // Partial-round zone — use sparse matrix.
         let index = current_round - sparse_offset - 1;
         apply_sparse_mds(state, &params.sparse_matrices[index]);
@@ -735,7 +726,11 @@ pub fn enforce_neptune_permute<F: PrimeField>(
     state: &mut Vec<FpVar<F>>,
     params: &NeptuneParams<F>,
 ) -> Result<(), SynthesisError> {
-    assert_eq!(state.len(), params.width, "state width must match params.width");
+    assert_eq!(
+        state.len(),
+        params.width,
+        "state width must match params.width"
+    );
     params.validate().expect("invalid neptune params");
 
     let half_full = params.half_full();
@@ -843,9 +838,7 @@ fn enforce_mds_step<F: PrimeField>(
 
     if current_round == sparse_offset {
         enforce_plain_mds(state, &params.pre_sparse_mds)?;
-    } else if current_round > sparse_offset
-        && current_round < half_full + params.partial_rounds
-    {
+    } else if current_round > sparse_offset && current_round < half_full + params.partial_rounds {
         let index = current_round - sparse_offset - 1;
         enforce_sparse_mds(state, &params.sparse_matrices[index])?;
     } else {
@@ -905,7 +898,11 @@ pub fn enforce_state_eq<F: PrimeField>(
     a: &[FpVar<F>],
     b: &[FpVar<F>],
 ) -> Result<(), SynthesisError> {
-    assert_eq!(a.len(), b.len(), "state widths must match for equality check");
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "state widths must match for equality check"
+    );
     for (x, y) in a.iter().zip(b.iter()) {
         x.enforce_equal(y)?;
     }
@@ -926,12 +923,28 @@ mod tests {
     /// SBOX recurrence is loud.
     #[test]
     fn native_full_round_identity_mds_zero_ark_is_pure_pow5() {
-        let mut state = vec![Bn254Fr::from(0u64), Bn254Fr::from(1u64), Bn254Fr::from(2u64)];
+        let mut state = vec![
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+        ];
         let ark = vec![Bn254Fr::from(0u64); 3];
         let identity_mds = vec![
-            vec![Bn254Fr::from(1u64), Bn254Fr::from(0u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(0u64), Bn254Fr::from(1u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(0u64), Bn254Fr::from(0u64), Bn254Fr::from(1u64)],
+            vec![
+                Bn254Fr::from(1u64),
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(1u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(1u64),
+            ],
         ];
 
         neptune_full_round_native(&mut state, &ark, &identity_mds);
@@ -946,12 +959,32 @@ mod tests {
     ///   after MDS × 2: [14, 24, 90].
     #[test]
     fn native_full_round_scaled_mds_with_nonzero_ark() {
-        let mut state = vec![Bn254Fr::from(0u64), Bn254Fr::from(1u64), Bn254Fr::from(2u64)];
-        let ark = vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64), Bn254Fr::from(13u64)];
+        let mut state = vec![
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+        ];
+        let ark = vec![
+            Bn254Fr::from(7u64),
+            Bn254Fr::from(11u64),
+            Bn254Fr::from(13u64),
+        ];
         let scaled_mds = vec![
-            vec![Bn254Fr::from(2u64), Bn254Fr::from(0u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(0u64), Bn254Fr::from(2u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(0u64), Bn254Fr::from(0u64), Bn254Fr::from(2u64)],
+            vec![
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(2u64),
+            ],
         ];
 
         neptune_full_round_native(&mut state, &ark, &scaled_mds);
@@ -965,12 +998,32 @@ mod tests {
     /// must produce witnesses bit-equal to the native reference.
     #[test]
     fn gadget_matches_native_on_width_3() {
-        let init_state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
-        let post_ark = vec![Bn254Fr::from(11u64), Bn254Fr::from(13u64), Bn254Fr::from(17u64)];
+        let init_state = vec![
+            Bn254Fr::from(3u64),
+            Bn254Fr::from(5u64),
+            Bn254Fr::from(7u64),
+        ];
+        let post_ark = vec![
+            Bn254Fr::from(11u64),
+            Bn254Fr::from(13u64),
+            Bn254Fr::from(17u64),
+        ];
         let mds = vec![
-            vec![Bn254Fr::from(2u64), Bn254Fr::from(3u64), Bn254Fr::from(5u64)],
-            vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64), Bn254Fr::from(13u64)],
-            vec![Bn254Fr::from(17u64), Bn254Fr::from(19u64), Bn254Fr::from(23u64)],
+            vec![
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(3u64),
+                Bn254Fr::from(5u64),
+            ],
+            vec![
+                Bn254Fr::from(7u64),
+                Bn254Fr::from(11u64),
+                Bn254Fr::from(13u64),
+            ],
+            vec![
+                Bn254Fr::from(17u64),
+                Bn254Fr::from(19u64),
+                Bn254Fr::from(23u64),
+            ],
         ];
 
         // Native reference.
@@ -1036,10 +1089,7 @@ mod tests {
 
         for (i, (var, expected)) in state_vars.iter().zip(native.iter()).enumerate() {
             let v = var.value().expect("witness value");
-            assert_eq!(
-                v, *expected,
-                "gadget state[{i}] != native at width 25"
-            );
+            assert_eq!(v, *expected, "gadget state[{i}] != native at width 25");
         }
         assert!(cs.is_satisfied().expect("is_satisfied"));
     }
@@ -1050,11 +1100,27 @@ mod tests {
     ///   After identity MDS: unchanged.
     #[test]
     fn native_partial_round_identity_mds_only_state_0_changes() {
-        let mut state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let mut state = vec![
+            Bn254Fr::from(3u64),
+            Bn254Fr::from(5u64),
+            Bn254Fr::from(7u64),
+        ];
         let identity_mds = vec![
-            vec![Bn254Fr::from(1u64), Bn254Fr::from(0u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(0u64), Bn254Fr::from(1u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(0u64), Bn254Fr::from(0u64), Bn254Fr::from(1u64)],
+            vec![
+                Bn254Fr::from(1u64),
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(1u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(1u64),
+            ],
         ];
 
         neptune_partial_round_native(&mut state, Bn254Fr::from(11u64), &identity_mds);
@@ -1072,11 +1138,27 @@ mod tests {
     ///   MDS row 2: [1, 1, 1] → 254 + 5 + 7 = 266
     #[test]
     fn native_partial_round_mds_mixes_state_0_into_other_cells() {
-        let mut state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let mut state = vec![
+            Bn254Fr::from(3u64),
+            Bn254Fr::from(5u64),
+            Bn254Fr::from(7u64),
+        ];
         let mds = vec![
-            vec![Bn254Fr::from(2u64), Bn254Fr::from(0u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(0u64), Bn254Fr::from(3u64), Bn254Fr::from(0u64)],
-            vec![Bn254Fr::from(1u64), Bn254Fr::from(1u64), Bn254Fr::from(1u64)],
+            vec![
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(3u64),
+                Bn254Fr::from(0u64),
+            ],
+            vec![
+                Bn254Fr::from(1u64),
+                Bn254Fr::from(1u64),
+                Bn254Fr::from(1u64),
+            ],
         ];
 
         neptune_partial_round_native(&mut state, Bn254Fr::from(11u64), &mds);
@@ -1092,12 +1174,28 @@ mod tests {
     /// **Bit-correctness pin** for partial round at width 3.
     #[test]
     fn partial_gadget_matches_native_on_width_3() {
-        let init_state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let init_state = vec![
+            Bn254Fr::from(3u64),
+            Bn254Fr::from(5u64),
+            Bn254Fr::from(7u64),
+        ];
         let post_ark = Bn254Fr::from(11u64);
         let mds = vec![
-            vec![Bn254Fr::from(2u64), Bn254Fr::from(3u64), Bn254Fr::from(5u64)],
-            vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64), Bn254Fr::from(13u64)],
-            vec![Bn254Fr::from(17u64), Bn254Fr::from(19u64), Bn254Fr::from(23u64)],
+            vec![
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(3u64),
+                Bn254Fr::from(5u64),
+            ],
+            vec![
+                Bn254Fr::from(7u64),
+                Bn254Fr::from(11u64),
+                Bn254Fr::from(13u64),
+            ],
+            vec![
+                Bn254Fr::from(17u64),
+                Bn254Fr::from(19u64),
+                Bn254Fr::from(23u64),
+            ],
         ];
 
         let mut native = init_state.clone();
@@ -1169,9 +1267,17 @@ mod tests {
     ///   out[2] = 7 + 11·254 = 7 + 2794 = 2801
     #[test]
     fn native_partial_round_sparse_hand_computed() {
-        let mut state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let mut state = vec![
+            Bn254Fr::from(3u64),
+            Bn254Fr::from(5u64),
+            Bn254Fr::from(7u64),
+        ];
         let sparse = NeptuneSparseMatrix::new(
-            vec![Bn254Fr::from(2u64), Bn254Fr::from(3u64), Bn254Fr::from(5u64)],
+            vec![
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(3u64),
+                Bn254Fr::from(5u64),
+            ],
             vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64)],
         );
         neptune_partial_round_sparse_native(&mut state, Bn254Fr::from(11u64), &sparse);
@@ -1183,10 +1289,18 @@ mod tests {
     /// **Bit-correctness pin** for sparse-MDS partial round at width 3.
     #[test]
     fn sparse_gadget_matches_native_on_width_3() {
-        let init_state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let init_state = vec![
+            Bn254Fr::from(3u64),
+            Bn254Fr::from(5u64),
+            Bn254Fr::from(7u64),
+        ];
         let post_ark = Bn254Fr::from(11u64);
         let sparse = NeptuneSparseMatrix::new(
-            vec![Bn254Fr::from(2u64), Bn254Fr::from(3u64), Bn254Fr::from(5u64)],
+            vec![
+                Bn254Fr::from(2u64),
+                Bn254Fr::from(3u64),
+                Bn254Fr::from(5u64),
+            ],
             vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64)],
         );
 
@@ -1354,7 +1468,9 @@ mod tests {
         let sparse_matrices: Vec<NeptuneSparseMatrix<Bn254Fr>> = (0..partial_rounds)
             .map(|r| {
                 NeptuneSparseMatrix::new(
-                    (0..width).map(|i| next_fr(300 + (r * width + i) as u64)).collect(),
+                    (0..width)
+                        .map(|i| next_fr(300 + (r * width + i) as u64))
+                        .collect(),
                     (0..width - 1)
                         .map(|i| next_fr(400 + (r * (width - 1) + i) as u64))
                         .collect(),
@@ -1401,7 +1517,11 @@ mod tests {
     #[test]
     fn native_permute_consumes_all_ark_entries() {
         let p = make_test_params_width_3();
-        let mut state = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+        let mut state = vec![
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(3u64),
+        ];
         // If the offset accounting is wrong, validate's assert at the end
         // would panic. If it doesn't, we consumed exactly 17 entries.
         neptune_permute_native(&mut state, &p);
@@ -1412,7 +1532,11 @@ mod tests {
     #[test]
     fn permute_gadget_matches_native_on_width_3() {
         let params = make_test_params_width_3();
-        let init = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+        let init = vec![
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(3u64),
+        ];
 
         let mut native = init.clone();
         neptune_permute_native(&mut native, &params);
@@ -1422,8 +1546,7 @@ mod tests {
             .iter()
             .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
             .collect();
-        enforce_neptune_permute(cs.clone(), &mut state_vars, &params)
-            .expect("synthesize permute");
+        enforce_neptune_permute(cs.clone(), &mut state_vars, &params).expect("synthesize permute");
 
         for (i, (var, expected)) in state_vars.iter().zip(native.iter()).enumerate() {
             let v = var.value().expect("witness value");
@@ -1440,8 +1563,16 @@ mod tests {
     #[test]
     fn permute_is_input_sensitive() {
         let params = make_test_params_width_3();
-        let init_a = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
-        let init_b = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(4u64)];
+        let init_a = vec![
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(3u64),
+        ];
+        let init_b = vec![
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(4u64),
+        ];
 
         let mut a = init_a;
         let mut b = init_b;
@@ -1462,15 +1593,18 @@ mod tests {
     #[test]
     fn permute_constraint_count_is_dominated_by_sbox() {
         let params = make_test_params_width_3();
-        let init = [Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+        let init = [
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(3u64),
+        ];
 
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         let mut state_vars: Vec<FpVar<Bn254Fr>> = init
             .iter()
             .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
             .collect();
-        enforce_neptune_permute(cs.clone(), &mut state_vars, &params)
-            .expect("synthesize");
+        enforce_neptune_permute(cs.clone(), &mut state_vars, &params).expect("synthesize");
 
         let constraints = cs.num_constraints();
         eprintln!("width-3 permute constraints: {constraints}");
@@ -1527,8 +1661,8 @@ mod tests {
     #[test]
     #[ignore = "requires /tmp/neptune-bn256-standard.json from dump-neptune-constants"]
     fn real_chain_permute_produces_deterministic_output() {
-        let params = params_from_dump_path("/tmp/neptune-bn256-standard.json")
-            .expect("load params");
+        let params =
+            params_from_dump_path("/tmp/neptune-bn256-standard.json").expect("load params");
 
         // Fixed input: state[i] = i + 1 for i in 0..25. Easy to read,
         // easy to reproduce by hand if needed.

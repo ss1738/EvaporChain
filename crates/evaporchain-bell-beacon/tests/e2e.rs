@@ -45,26 +45,32 @@ fn beacon_session_exactly_3_of_5_windows_certified() {
     //   Window 4: Bell state,          S=2828 — certified (Tsirelson's bound)
     //   Window 5: strong quantum,      S=2650 — certified
     let windows: &[(i64, i64, i64, i64)] = &[
-        ( 900, -900,    0,    0), // W1: S=1800
-        (1000,-1000,    0,    0), // W2: S=2000
-        ( 501, -501,  500,  501), // W3: S=2003
-        ( 707, -707,  707,  707), // W4: S=2828 (Bell state)
-        ( 663, -663,  663,  661), // W5: S=2650
+        (900, -900, 0, 0),     // W1: S=1800
+        (1000, -1000, 0, 0),   // W2: S=2000
+        (501, -501, 500, 501), // W3: S=2003
+        (707, -707, 707, 707), // W4: S=2828 (Bell state)
+        (663, -663, 663, 661), // W5: S=2650
     ];
 
-    let certified_count = windows.iter().filter(|(a, b, c, d)| {
-        let s_val = chsh_s_value(*a, *b, *c, *d).unwrap();
-        bell_certified(s_val, LOCAL_REALISM_S_MILLI)
-    }).count();
+    let certified_count = windows
+        .iter()
+        .filter(|(a, b, c, d)| {
+            let s_val = chsh_s_value(*a, *b, *c, *d).unwrap();
+            bell_certified(s_val, LOCAL_REALISM_S_MILLI)
+        })
+        .count();
 
-    assert_eq!(certified_count, 3, "exactly 3 of 5 windows must be beacon-eligible");
+    assert_eq!(
+        certified_count, 3,
+        "exactly 3 of 5 windows must be beacon-eligible"
+    );
 
     // Spot-check the S values.
-    assert_eq!(s( 900, -900,   0,   0), 1800);
-    assert_eq!(s(1000,-1000,   0,   0), 2000);
-    assert_eq!(s( 501, -501, 500, 501), 2003);
-    assert_eq!(s( 707, -707, 707, 707), 2828);
-    assert_eq!(s( 663, -663, 663, 661), 2650);
+    assert_eq!(s(900, -900, 0, 0), 1800);
+    assert_eq!(s(1000, -1000, 0, 0), 2000);
+    assert_eq!(s(501, -501, 500, 501), 2003);
+    assert_eq!(s(707, -707, 707, 707), 2828);
+    assert_eq!(s(663, -663, 663, 661), 2650);
 }
 
 #[test]
@@ -131,9 +137,12 @@ fn doctrine_quantum_exceeds_classical_by_at_least_40_percent() {
 fn s_value_is_absolute_symmetric_around_zero() {
     // The S value takes the absolute value of the signed sum. Negating
     // all four correlations produces the same |S|.
-    let s_positive = s(707, -707, 707, 707);   // Bell state, normal orientation
+    let s_positive = s(707, -707, 707, 707); // Bell state, normal orientation
     let s_negative = s(-707, 707, -707, -707); // all negated → same |S|
-    assert_eq!(s_positive, s_negative, "|S| must be symmetric: same value for negated correlations");
+    assert_eq!(
+        s_positive, s_negative,
+        "|S| must be symmetric: same value for negated correlations"
+    );
     assert_eq!(s_positive, 2828);
 }
 
@@ -170,7 +179,7 @@ fn adversarial_tightened_threshold_rejects_marginal_signal() {
     // S > 2500 (25% above the classical boundary). This rejects
     // weak quantum signals while still admitting Tsirelson-grade ones.
     let tight_threshold: u64 = 2500;
-    let marginal   = s(600, -600, 500, 501); // S = |600+600+500+501| = 2201
+    let marginal = s(600, -600, 500, 501); // S = |600+600+500+501| = 2201
     let bell_state = s(707, -707, 707, 707); // S = 2828
 
     assert!(

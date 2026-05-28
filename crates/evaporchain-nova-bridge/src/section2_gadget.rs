@@ -344,7 +344,10 @@ mod tests {
             .map(|i| FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(Bn254Fr::from(i))).unwrap())
             .collect();
         let out = enforce_poseidon_primary(cs.clone(), &config, &inputs).expect("synthesize");
-        assert!(!matches!(out, FpVar::Constant(_)), "squeezed output must be a variable");
+        assert!(
+            !matches!(out, FpVar::Constant(_)),
+            "squeezed output must be a variable"
+        );
         let nc = cs.num_constraints();
         // Width-25 + rate-24 + 6 absorbs: the rate-24 buffer never
         // fills (would need 24 absorbs), so only the squeeze
@@ -384,9 +387,8 @@ mod tests {
         let zi_0 = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(Bn254Fr::from(1u64))).unwrap();
         // Single placeholder instance scalar — Section 3 will
         // expand this to the real (comm_W, comm_E, u, X[..]) vector.
-        let instance = vec![
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap(),
-        ];
+        let instance =
+            vec![FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap()];
         let ri_primary =
             FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap();
 
@@ -424,7 +426,11 @@ mod tests {
                 })
                 .collect();
             let _ = enforce_poseidon_primary(cs.clone(), &config, &inputs).unwrap();
-            (cs.num_instance_variables(), cs.num_witness_variables(), cs.num_constraints())
+            (
+                cs.num_instance_variables(),
+                cs.num_witness_variables(),
+                cs.num_constraints(),
+            )
         };
         let a = mk();
         let b = mk();
@@ -472,8 +478,7 @@ mod tests {
             .into_iter()
             .map(|v| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(v))).unwrap())
             .collect();
-        let hash_var =
-            enforce_neptune_sponge_primary(cs.clone(), &params, &inputs).expect("synth");
+        let hash_var = enforce_neptune_sponge_primary(cs.clone(), &params, &inputs).expect("synth");
         let gadget_out: Bn254Fr = hash_var.value().expect("witness value");
         let gadget_bigint = ark_ff::PrimeField::into_bigint(gadget_out);
         let gadget_bytes = ark_ff::BigInteger::to_bytes_le(&gadget_bigint);
@@ -487,7 +492,8 @@ mod tests {
         eprintln!("gadget   bytes LE: {gadget_bytes_le:?}");
 
         assert_eq!(
-            gadget_bytes_le, neptune_bytes_le,
+            gadget_bytes_le,
+            neptune_bytes_le,
             "enforce_neptune_sponge_primary must match neptune byte-for-byte.\n\
              If this fails: pre_sparse_mds transpose regression or CRC drift.\n\
              gadget[0..8]={:?}  neptune[0..8]={:?}",
@@ -589,9 +595,7 @@ mod tests {
 
         let nc6 = cs_a.num_constraints();
         let nc25 = cs_b.num_constraints();
-        eprintln!(
-            "width-25 cost: 6 absorbs → {nc6} constraints, 25 absorbs → {nc25} constraints"
-        );
+        eprintln!("width-25 cost: 6 absorbs → {nc6} constraints, 25 absorbs → {nc25} constraints");
 
         // 25-absorb must cost MORE than 6-absorb (extra permutation
         // from buffer flush) but no more than 3× (1 extra
@@ -627,16 +631,16 @@ mod tests {
     #[test]
     fn placeholder_gadget_diverges_from_neptune_oracle() {
         use crate::neptune_reference::{neptune_hash_primary, PrimaryScalar};
-        use ff::{Field as _, PrimeField as _};
         use ark_r1cs_std::GR1CSVar;
+        use ff::{Field as _, PrimeField as _};
 
         // Neptune-side: the pinned minimal absorb (PR #77).
         let neptune_inputs = vec![
-            PrimaryScalar::ZERO,        // pp.digest
-            PrimaryScalar::from(1u64),  // num_steps
-            PrimaryScalar::ZERO,        // z0[0]
-            PrimaryScalar::from(1u64),  // zi[0]
-            PrimaryScalar::ZERO,        // ri_primary
+            PrimaryScalar::ZERO,       // pp.digest
+            PrimaryScalar::from(1u64), // num_steps
+            PrimaryScalar::ZERO,       // z0[0]
+            PrimaryScalar::from(1u64), // zi[0]
+            PrimaryScalar::ZERO,       // ri_primary
         ];
         let neptune_out = neptune_hash_primary(&neptune_inputs);
         let neptune_bytes_le: [u8; 32] = neptune_out.to_repr().into();
@@ -649,11 +653,12 @@ mod tests {
             FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap();
         let num_steps =
             FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(1u64))).unwrap();
-        let z0 = vec![FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap()];
-        let zi = vec![FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(1u64))).unwrap()];
+        let z0 =
+            vec![FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap()];
+        let zi =
+            vec![FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(1u64))).unwrap()];
         let instance: Vec<FpVar<Bn254Fr>> = vec![];
-        let ri =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap();
+        let ri = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap();
         let hash_var = enforce_section_2_primary(
             cs.clone(),
             &config,
@@ -722,8 +727,7 @@ mod tests {
             .into_iter()
             .map(|v| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(v))).unwrap())
             .collect();
-        let hash_var =
-            enforce_neptune_sponge_primary(cs.clone(), &params, &inputs).expect("synth");
+        let hash_var = enforce_neptune_sponge_primary(cs.clone(), &params, &inputs).expect("synth");
         let gadget_out: Bn254Fr = hash_var.value().expect("witness value");
         let gadget_bigint = ark_ff::PrimeField::into_bigint(gadget_out);
         let gadget_bytes = ark_ff::BigInteger::to_bytes_le(&gadget_bigint);
@@ -736,7 +740,8 @@ mod tests {
         eprintln!("gadget  LE: {gadget_le:?}");
 
         assert_eq!(
-            gadget_le, native_le,
+            gadget_le,
+            native_le,
             "in-circuit sponge must match native for [42,7,99] after 250-bit mask.\n\
              gadget[0..8]={:?}  native[0..8]={:?}",
             &gadget_le[..8],

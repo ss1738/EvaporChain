@@ -11,8 +11,7 @@
 //! of PQ signatures; BLAKE3 is deterministic and distinct from Poseidon.
 
 use evaporchain_crypto::{
-    blake3_hash, poseidon_hash, HybridKeypair, HybridVerifier,
-    signatures::Signer,
+    blake3_hash, poseidon_hash, signatures::Signer, HybridKeypair, HybridVerifier,
 };
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -20,49 +19,57 @@ use evaporchain_crypto::{
 #[test]
 fn hybrid_sign_verify_round_trip() {
     // Honest path: sign then verify over a consensus vote message.
-    let kp  = HybridKeypair::generate();
-    let pk  = kp.public_key_bytes();
+    let kp = HybridKeypair::generate();
+    let pk = kp.public_key_bytes();
     let msg = b"vote:block:10003:0xAA";
     let sig = kp.sign(msg);
-    assert!(HybridVerifier::verify_hybrid(msg, &sig, &pk),
-        "freshly signed message must verify");
+    assert!(
+        HybridVerifier::verify_hybrid(msg, &sig, &pk),
+        "freshly signed message must verify"
+    );
 }
 
 #[test]
 fn tampered_ecdsa_component_rejected() {
     // IVAN flips a byte in the ECDSA half of the signature.
     // The hybrid verifier must reject — ECDSA alone is not sufficient.
-    let kp  = HybridKeypair::generate();
-    let pk  = kp.public_key_bytes();
+    let kp = HybridKeypair::generate();
+    let pk = kp.public_key_bytes();
     let msg = b"prevote:round:7";
     let mut sig = kp.sign(msg);
     // Byte 1 is inside the ECDSA component (byte 0 = hybrid tag).
     sig[1] ^= 0xFF;
-    assert!(!HybridVerifier::verify_hybrid(msg, &sig, &pk),
-        "tampered ECDSA component must be rejected");
+    assert!(
+        !HybridVerifier::verify_hybrid(msg, &sig, &pk),
+        "tampered ECDSA component must be rejected"
+    );
 }
 
 #[test]
 fn tampered_mldsa_component_rejected() {
     // IVAN flips the last byte (deep in the ML-DSA component).
-    let kp  = HybridKeypair::generate();
-    let pk  = kp.public_key_bytes();
+    let kp = HybridKeypair::generate();
+    let pk = kp.public_key_bytes();
     let msg = b"precommit:height:50000";
     let mut sig = kp.sign(msg);
     let last = sig.len() - 1;
     sig[last] ^= 0xFF;
-    assert!(!HybridVerifier::verify_hybrid(msg, &sig, &pk),
-        "tampered ML-DSA component must be rejected");
+    assert!(
+        !HybridVerifier::verify_hybrid(msg, &sig, &pk),
+        "tampered ML-DSA component must be rejected"
+    );
 }
 
 #[test]
 fn wrong_message_rejected() {
     // Valid signature, wrong message → verification fails.
-    let kp  = HybridKeypair::generate();
-    let pk  = kp.public_key_bytes();
+    let kp = HybridKeypair::generate();
+    let pk = kp.public_key_bytes();
     let sig = kp.sign(b"real-message");
-    assert!(!HybridVerifier::verify_hybrid(b"forged-message", &sig, &pk),
-        "signature for different message must be rejected");
+    assert!(
+        !HybridVerifier::verify_hybrid(b"forged-message", &sig, &pk),
+        "signature for different message must be rejected"
+    );
 }
 
 #[test]
@@ -72,22 +79,28 @@ fn wrong_public_key_rejected() {
     let kp2 = HybridKeypair::generate();
     let msg = b"consensus-message";
     let sig = kp1.sign(msg);
-    assert!(!HybridVerifier::verify_hybrid(msg, &sig, &kp2.public_key_bytes()),
-        "valid sig checked against wrong pubkey must be rejected");
+    assert!(
+        !HybridVerifier::verify_hybrid(msg, &sig, &kp2.public_key_bytes()),
+        "valid sig checked against wrong pubkey must be rejected"
+    );
 }
 
 #[test]
 fn truncated_signature_not_hybrid() {
     // Dropping the hybrid tag byte makes the verifier reject without panic.
-    let kp  = HybridKeypair::generate();
-    let pk  = kp.public_key_bytes();
+    let kp = HybridKeypair::generate();
+    let pk = kp.public_key_bytes();
     let msg = b"header-vote";
     let sig = kp.sign(msg);
     let truncated = &sig[1..];
-    assert!(!HybridVerifier::is_hybrid_sig(truncated),
-        "sig without tag byte must not be detected as hybrid");
-    assert!(!HybridVerifier::verify_hybrid(msg, truncated, &pk),
-        "truncated sig must be rejected");
+    assert!(
+        !HybridVerifier::is_hybrid_sig(truncated),
+        "sig without tag byte must not be detected as hybrid"
+    );
+    assert!(
+        !HybridVerifier::verify_hybrid(msg, truncated, &pk),
+        "truncated sig must be rejected"
+    );
 }
 
 #[test]
@@ -100,17 +113,30 @@ fn two_validators_same_message_different_signatures() {
     let msg = b"same-consensus-message";
     let sig1 = kp1.sign(msg);
     let sig2 = kp2.sign(msg);
-    assert_ne!(sig1, sig2,
-        "independent keypairs must produce different signatures");
-    assert!(HybridVerifier::verify_hybrid(msg, &sig1, &kp1.public_key_bytes()));
-    assert!(HybridVerifier::verify_hybrid(msg, &sig2, &kp2.public_key_bytes()));
+    assert_ne!(
+        sig1, sig2,
+        "independent keypairs must produce different signatures"
+    );
+    assert!(HybridVerifier::verify_hybrid(
+        msg,
+        &sig1,
+        &kp1.public_key_bytes()
+    ));
+    assert!(HybridVerifier::verify_hybrid(
+        msg,
+        &sig2,
+        &kp2.public_key_bytes()
+    ));
 }
 
 #[test]
 fn blake3_is_deterministic() {
     let msg = b"evaporchain-epoch-10003";
-    assert_eq!(blake3_hash(msg), blake3_hash(msg),
-        "BLAKE3 must be deterministic");
+    assert_eq!(
+        blake3_hash(msg),
+        blake3_hash(msg),
+        "BLAKE3 must be deterministic"
+    );
 }
 
 #[test]
@@ -124,10 +150,12 @@ fn blake3_distinct_inputs_produce_distinct_outputs() {
 fn blake3_and_poseidon_disagree_on_same_input() {
     // The two hash functions must not be substitutable for each other.
     let input = b"evaporchain-verkle-leaf";
-    let b3  = blake3_hash(input);
+    let b3 = blake3_hash(input);
     let pos = poseidon_hash(input);
-    assert_ne!(b3, pos,
-        "BLAKE3 and Poseidon must produce distinct digests for the same input");
+    assert_ne!(
+        b3, pos,
+        "BLAKE3 and Poseidon must produce distinct digests for the same input"
+    );
 }
 
 #[test]
@@ -143,7 +171,10 @@ fn meera_validator_lifecycle() {
     ];
     for msg in messages {
         let sig = kp.sign(msg);
-        assert!(HybridVerifier::verify_hybrid(msg, &sig, &pk),
-            "all consensus messages must verify: {:?}", msg);
+        assert!(
+            HybridVerifier::verify_hybrid(msg, &sig, &pk),
+            "all consensus messages must verify: {:?}",
+            msg
+        );
     }
 }

@@ -87,8 +87,14 @@ fn fee_params_default_equals_genesis() {
 #[test]
 fn base_fee_at_or_below_target_returns_floor() {
     let p = default_params();
-    assert_eq!(base_fee(&FeeState::new(p.target_energy), &p), p.base_fee_floor);
-    assert_eq!(base_fee(&FeeState::new(p.target_energy - 1), &p), p.base_fee_floor);
+    assert_eq!(
+        base_fee(&FeeState::new(p.target_energy), &p),
+        p.base_fee_floor
+    );
+    assert_eq!(
+        base_fee(&FeeState::new(p.target_energy - 1), &p),
+        p.base_fee_floor
+    );
     assert_eq!(base_fee(&FeeState::new(0), &p), p.base_fee_floor);
 }
 
@@ -97,7 +103,10 @@ fn base_fee_increases_above_target() {
     let p = default_params();
     let at_target = base_fee(&FeeState::new(p.target_energy), &p);
     let above = base_fee(&FeeState::new(p.target_energy + 1_000_000), &p);
-    assert!(above >= at_target, "above-target fee must be at-or-above floor");
+    assert!(
+        above >= at_target,
+        "above-target fee must be at-or-above floor"
+    );
 }
 
 // =================================================================
@@ -134,7 +143,10 @@ fn step_decays_displacement_toward_target() {
     // After one half-life, |diff| should be ~ halved; energy converges
     // toward target.
     assert!(new_s.energy < s.energy);
-    assert!(drift.delta <= 0, "Lyapunov V must not grow at perturbation=0 (target_gas)");
+    assert!(
+        drift.delta <= 0,
+        "Lyapunov V must not grow at perturbation=0 (target_gas)"
+    );
 }
 
 #[test]
@@ -155,9 +167,21 @@ fn step_clips_perturbation_to_decayed_diff() {
 
 #[test]
 fn drift_eq_and_copy() {
-    let a = Drift { v_before: 100, v_after: 50, delta: -50 };
-    let b = Drift { v_before: 100, v_after: 50, delta: -50 };
-    let c = Drift { v_before: 100, v_after: 60, delta: -40 };
+    let a = Drift {
+        v_before: 100,
+        v_after: 50,
+        delta: -50,
+    };
+    let b = Drift {
+        v_before: 100,
+        v_after: 50,
+        delta: -50,
+    };
+    let c = Drift {
+        v_before: 100,
+        v_after: 60,
+        delta: -40,
+    };
     assert_eq!(a, b);
     assert_ne!(a, c);
 }
@@ -176,7 +200,11 @@ fn fee_state_serde_round_trips() {
 
 #[test]
 fn drift_serde_round_trips() {
-    let d = Drift { v_before: 1_000, v_after: 500, delta: -500 };
+    let d = Drift {
+        v_before: 1_000,
+        v_after: 500,
+        delta: -500,
+    };
     let json = serde_json::to_string(&d).unwrap();
     let back: Drift = serde_json::from_str(&json).unwrap();
     assert_eq!(back, d);

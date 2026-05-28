@@ -25,17 +25,14 @@
 //! prediction (increment 6) and Groth16 wrapper viability.
 
 use ark_bn254::Fq as Bn254Fq;
-use ark_relations::gr1cs::{
-    ConstraintSynthesizer, ConstraintSystem, OptimizationGoal,
-};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystem, OptimizationGoal};
 
 use crate::cyclefold_r1cs_bridge::BridgeError;
 use crate::scalar_adapter::{ark_fq_to_secondary, SecondaryScalar};
 
 use nova_snark::provider::GrumpkinEngine;
 use nova_snark::r1cs::{
-    R1CSInstance, R1CSShape, R1CSWitness, RelaxedR1CSInstance, RelaxedR1CSWitness,
-    SparseMatrix,
+    R1CSInstance, R1CSShape, R1CSWitness, RelaxedR1CSInstance, RelaxedR1CSWitness, SparseMatrix,
 };
 use nova_snark::traits::commitment::CommitmentEngineTrait;
 use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
@@ -118,9 +115,7 @@ pub fn measure_cf_secondary_n_aux<C: ConstraintSynthesizer<Bn254Fq>>(
         for (row_idx, row) in rows.iter().enumerate() {
             let mut remapped: Vec<(usize, SecondaryScalar)> = row
                 .iter()
-                .map(|(coeff, ark_col)| {
-                    (remap_col(*ark_col), ark_fq_to_secondary(*coeff))
-                })
+                .map(|(coeff, ark_col)| (remap_col(*ark_col), ark_fq_to_secondary(*coeff)))
                 .collect();
             remapped.sort_by_key(|(col, _)| *col);
             for (col, coeff) in remapped {
@@ -157,10 +152,10 @@ pub fn measure_cf_secondary_n_aux<C: ConstraintSynthesizer<Bn254Fq>>(
     //    next_pow2(max(total_nz, 2·num_vars, num_cons)).
     let ck_floor_closure = S2pp::ck_floor();
     let ck_size = ck_floor_closure(&shape);
-    let ck = <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<
-        GrumpkinEngine,
-    >>::setup(ck_label, ck_size)
-        .map_err(BridgeError::NovaShapeRejected)?;
+    let ck = <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<GrumpkinEngine>>::setup(
+        ck_label, ck_size,
+    )
+    .map_err(BridgeError::NovaShapeRejected)?;
 
     // 3. Build witness + commit (matching r_W internal) + instance.
     let witness = R1CSWitness::<GrumpkinEngine>::new(&shape, &w_nova)
@@ -177,12 +172,9 @@ pub fn measure_cf_secondary_n_aux<C: ConstraintSynthesizer<Bn254Fq>>(
         .map_err(BridgeError::NovaShapeRejected)?;
 
     // 5. Lift to relaxed for ppsnark.
-    let u_relaxed = RelaxedR1CSInstance::<GrumpkinEngine>::from_r1cs_instance(
-        &ck, &shape, &instance,
-    );
-    let w_relaxed = RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(
-        &shape, &witness,
-    );
+    let u_relaxed =
+        RelaxedR1CSInstance::<GrumpkinEngine>::from_r1cs_instance(&ck, &shape, &instance);
+    let w_relaxed = RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(&shape, &witness);
     shape
         .is_sat_relaxed(&ck, &u_relaxed, &w_relaxed)
         .map_err(BridgeError::NovaShapeRejected)?;

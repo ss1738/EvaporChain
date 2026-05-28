@@ -88,9 +88,8 @@ impl EncryptedTransaction {
     /// ciphertext intact but rewrites `commitment` cannot bypass
     /// admission dedup.
     pub fn derived_admission_id(&self) -> [u8; 32] {
-        let mut input = Vec::with_capacity(
-            MEV_ADM_DST.len() + 8 + 32 + self.encrypted_payload.len() + 8,
-        );
+        let mut input =
+            Vec::with_capacity(MEV_ADM_DST.len() + 8 + 32 + self.encrypted_payload.len() + 8);
         input.extend_from_slice(MEV_ADM_DST);
         input.extend_from_slice(&self.submitted_epoch.to_le_bytes());
         input.extend_from_slice(&self.nonce_hash);
@@ -963,10 +962,7 @@ mod tests {
         assert_eq!(pool.pending_count().1, MAX_PLAINTEXT_PENDING);
 
         let over = pool.submit_plaintext(dummy_tx(MAX_PLAINTEXT_PENDING as u64));
-        assert!(
-            !over,
-            "at-cap plaintext submit must be rejected"
-        );
+        assert!(!over, "at-cap plaintext submit must be rejected");
         assert_eq!(pool.pending_count().1, MAX_PLAINTEXT_PENDING);
     }
 

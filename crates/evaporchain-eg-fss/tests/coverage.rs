@@ -47,7 +47,10 @@ fn evolve_below_threshold_keeps_period_and_accumulates_residual() {
     let evolved = k.clone().evolve(99, 100).unwrap();
     assert_eq!(evolved.period_index, 0, "no crossing → no period change");
     assert_eq!(evolved.energy_residual, 99);
-    assert_eq!(evolved.key_material, k.key_material, "key material unchanged");
+    assert_eq!(
+        evolved.key_material, k.key_material,
+        "key material unchanged"
+    );
 }
 
 #[test]
@@ -55,7 +58,10 @@ fn evolve_at_threshold_advances_exactly_one_period() {
     let k = EgFssKey::from_seed([1u8; 32]);
     let evolved = k.evolve(100, 100).unwrap();
     assert_eq!(evolved.period_index, 1);
-    assert_eq!(evolved.energy_residual, 0, "exact crossing leaves no residual");
+    assert_eq!(
+        evolved.energy_residual, 0,
+        "exact crossing leaves no residual"
+    );
 }
 
 #[test]
@@ -69,8 +75,8 @@ fn evolve_collapses_multiple_period_crossings_in_one_call() {
 #[test]
 fn evolve_carries_prior_residual_into_next_call() {
     let k0 = EgFssKey::from_seed([1u8; 32]);
-    let k1 = k0.evolve(60, 100).unwrap();      // residual = 60, period = 0
-    let k2 = k1.evolve(50, 100).unwrap();      // 60 + 50 = 110 → 1 crossing, residual=10
+    let k1 = k0.evolve(60, 100).unwrap(); // residual = 60, period = 0
+    let k2 = k1.evolve(50, 100).unwrap(); // 60 + 50 = 110 → 1 crossing, residual=10
     assert_eq!(k2.period_index, 1);
     assert_eq!(k2.energy_residual, 10);
 }
@@ -87,7 +93,10 @@ fn evolve_saturating_add_safety_on_residual() {
     let threshold = u64::MAX / 4;
     let evolved = k.evolve(1_000, threshold).expect("must not panic");
     assert!(evolved.period_index >= 1);
-    assert!(evolved.period_index <= 5, "advances bounded by total/threshold");
+    assert!(
+        evolved.period_index <= 5,
+        "advances bounded by total/threshold"
+    );
 }
 
 #[test]
@@ -195,16 +204,29 @@ fn verify_rejects_period_index_mismatch() {
 #[test]
 fn verify_error_displays_both_variants() {
     let m = VerifyError::MacMismatch.to_string();
-    let p = VerifyError::PeriodMismatch { claimed: 1, expected: 2 }.to_string();
+    let p = VerifyError::PeriodMismatch {
+        claimed: 1,
+        expected: 2,
+    }
+    .to_string();
     assert!(m.contains("MAC") || m.contains("mismatch"), "got: {m}");
     assert!(p.contains("1") && p.contains("2"), "got: {p}");
 }
 
 #[test]
 fn verify_error_eq_discriminates_variants() {
-    let p12 = VerifyError::PeriodMismatch { claimed: 1, expected: 2 };
-    let p12b = VerifyError::PeriodMismatch { claimed: 1, expected: 2 };
-    let p13 = VerifyError::PeriodMismatch { claimed: 1, expected: 3 };
+    let p12 = VerifyError::PeriodMismatch {
+        claimed: 1,
+        expected: 2,
+    };
+    let p12b = VerifyError::PeriodMismatch {
+        claimed: 1,
+        expected: 2,
+    };
+    let p13 = VerifyError::PeriodMismatch {
+        claimed: 1,
+        expected: 3,
+    };
     assert_eq!(p12, p12b);
     assert_ne!(p12, p13);
     assert_ne!(p12, VerifyError::MacMismatch);

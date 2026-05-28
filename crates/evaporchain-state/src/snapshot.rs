@@ -56,7 +56,9 @@ pub enum SnapshotError {
     /// Quorum cert's bound integrity_hash does not match the
     /// snapshot's actual integrity_hash. Catches an attacker who
     /// attaches a cert signed against a different snapshot.
-    #[error("quorum cert integrity_hash mismatch: cert claims {cert_hash}, snapshot is {snap_hash}")]
+    #[error(
+        "quorum cert integrity_hash mismatch: cert claims {cert_hash}, snapshot is {snap_hash}"
+    )]
     QuorumCertIntegrityHashMismatch {
         cert_hash: String,
         snap_hash: String,
@@ -971,7 +973,8 @@ impl SnapshotFile {
     fn validate_structure(&self) -> Result<(), SnapshotError> {
         use std::collections::HashSet;
 
-        let mut seen_vid: HashSet<u64> = HashSet::with_capacity(self.validator_set.validators.len());
+        let mut seen_vid: HashSet<u64> =
+            HashSet::with_capacity(self.validator_set.validators.len());
         for v in &self.validator_set.validators {
             if !seen_vid.insert(v.id) {
                 return Err(SnapshotError::DuplicateValidatorId(v.id));
@@ -981,7 +984,9 @@ impl SnapshotFile {
         let mut seen_addr: HashSet<AccountAddress> = HashSet::with_capacity(self.accounts.len());
         for a in &self.accounts {
             if !seen_addr.insert(a.address) {
-                return Err(SnapshotError::DuplicateAccountAddress(hex::encode(a.address)));
+                return Err(SnapshotError::DuplicateAccountAddress(hex::encode(
+                    a.address,
+                )));
             }
         }
 
@@ -1843,8 +1848,8 @@ mod tests {
         // Round-trip — from_bytes accepts the tampered file (the
         // hash check is internally consistent).
         let bytes = file.to_bytes().unwrap();
-        let parsed = SnapshotFile::from_bytes(&bytes)
-            .expect("internal hash is consistent post-tamper");
+        let parsed =
+            SnapshotFile::from_bytes(&bytes).expect("internal hash is consistent post-tamper");
 
         // But apply_to recomputes the state root from the actual
         // restored data and rejects.
@@ -1854,10 +1859,7 @@ mod tests {
             Err(SnapshotError::StateRootMismatch { expected, actual }) => {
                 assert_ne!(expected, actual, "apply must surface the mismatch");
             }
-            other => panic!(
-                "expected StateRootMismatch from apply_to, got {:?}",
-                other
-            ),
+            other => panic!("expected StateRootMismatch from apply_to, got {:?}", other),
         }
     }
 
@@ -1996,9 +1998,9 @@ mod tests {
         );
 
         let mut victim_db = InMemoryStateDB::new();
-        let result = parsed.apply_to(&mut victim_db).expect(
-            "apply succeeds because state_root matches the partial accounts",
-        );
+        let result = parsed
+            .apply_to(&mut victim_db)
+            .expect("apply succeeds because state_root matches the partial accounts");
         // The victim is now on a divergent state — a chain that diverges
         // from canonical truth at every height ≥100.
         assert_eq!(result.accounts_restored, 2);
@@ -2081,10 +2083,7 @@ mod tests {
 
     /// Helper: sign `msg` with the given keypairs and aggregate into
     /// a SnapshotQuorumCert.
-    fn build_cert(
-        msg: &[u8; 32],
-        signer_keypairs: &[(&u64, &BlsKeypair)],
-    ) -> SnapshotQuorumCert {
+    fn build_cert(msg: &[u8; 32], signer_keypairs: &[(&u64, &BlsKeypair)]) -> SnapshotQuorumCert {
         let sigs: Vec<BlsSignature> = signer_keypairs.iter().map(|(_, kp)| kp.sign(msg)).collect();
         let agg = BlsVerifier::aggregate_signatures(&sigs).expect("aggregate non-empty");
         SnapshotQuorumCert {
@@ -2161,10 +2160,7 @@ mod tests {
             signer_ids: ids,
         });
         let err = file.verify_quorum_cert().unwrap_err();
-        assert!(matches!(
-            err,
-            SnapshotError::QuorumCertUnknownValidator(99)
-        ));
+        assert!(matches!(err, SnapshotError::QuorumCertUnknownValidator(99)));
     }
 
     #[test]
@@ -2267,9 +2263,7 @@ mod tests {
 
         // Stale entries gone.
         assert!(target.get_stake(99).is_none());
-        assert!(target
-            .get_delegation(&[0xDD; 32], 99)
-            .is_none());
+        assert!(target.get_delegation(&[0xDD; 32], 99).is_none());
         assert!(target.get_sentinel_param(77).is_none());
         // Snapshot accounts present.
         assert_eq!(target.get_account(&addr(1)).unwrap().balance, 1_000_000);
@@ -2327,7 +2321,10 @@ mod tests {
         }
         // Pre-existing account is still there. Atomicity preserved.
         assert_eq!(
-            target.get_account(&addr(0x55)).expect("seed acct survives").balance,
+            target
+                .get_account(&addr(0x55))
+                .expect("seed acct survives")
+                .balance,
             4242
         );
         // Snapshot accounts NOT applied.

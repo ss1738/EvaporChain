@@ -21,8 +21,8 @@ use evaporchain_singh_counsel::{Intent, IntentError, IntentId, Verb, KNOWN_VERBS
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-const EPOCH_NOW: u64       = 50;
-const CONF_FLOOR: u64      = 9_000; // 90% floor
+const EPOCH_NOW: u64 = 50;
+const CONF_FLOOR: u64 = 9_000; // 90% floor
 
 fn iid(b: u8) -> IntentId {
     IntentId([b; 32])
@@ -66,7 +66,13 @@ fn i2_past_deadline_rejected_at_admission() {
     let i2 = make_intent(2, Verb::Stake, 30, 500, 9_500).unwrap();
     let err = i2.admit(EPOCH_NOW, CONF_FLOOR, 400).unwrap_err();
     assert!(
-        matches!(err, IntentError::DeadlinePassed { now: 50, deadline: 30 }),
+        matches!(
+            err,
+            IntentError::DeadlinePassed {
+                now: 50,
+                deadline: 30
+            }
+        ),
         "expected DeadlinePassed{{now=50, deadline=30}}, got {err:?}"
     );
 }
@@ -77,7 +83,13 @@ fn i3_low_confidence_rejected_at_admission() {
     let i3 = make_intent(3, Verb::Vote, 100, 500, 6_000).unwrap();
     let err = i3.admit(EPOCH_NOW, CONF_FLOOR, 400).unwrap_err();
     assert!(
-        matches!(err, IntentError::LowConfidence { confidence_bp: 6_000, floor_bp: 9_000 }),
+        matches!(
+            err,
+            IntentError::LowConfidence {
+                confidence_bp: 6_000,
+                floor_bp: 9_000
+            }
+        ),
         "expected LowConfidence, got {err:?}"
     );
 }
@@ -88,7 +100,13 @@ fn i4_over_budget_rejected_at_admission() {
     let i4 = make_intent(4, Verb::Deploy, 100, 500, 9_500).unwrap();
     let err = i4.admit(EPOCH_NOW, CONF_FLOOR, 600).unwrap_err();
     assert!(
-        matches!(err, IntentError::BudgetExceeded { required: 600, budget: 500 }),
+        matches!(
+            err,
+            IntentError::BudgetExceeded {
+                required: 600,
+                budget: 500
+            }
+        ),
         "expected BudgetExceeded, got {err:?}"
     );
 }
@@ -122,15 +140,33 @@ fn session_admit_matrix_all_five_intents() {
     let i3 = make_intent(3, Verb::Vote, 100, 500, 6_000).unwrap();
     let i4 = make_intent(4, Verb::Deploy, 100, 500, 9_500).unwrap();
 
-    assert!(i1.admit(EPOCH_NOW, CONF_FLOOR, 400).is_ok(),    "I1 must ADMIT");
-    assert!(i2.admit(EPOCH_NOW, CONF_FLOOR, 400).is_err(),   "I2 must REJECT (deadline)");
-    assert!(i3.admit(EPOCH_NOW, CONF_FLOOR, 400).is_err(),   "I3 must REJECT (confidence)");
-    assert!(i4.admit(EPOCH_NOW, CONF_FLOOR, 600).is_err(),   "I4 must REJECT (budget)");
+    assert!(
+        i1.admit(EPOCH_NOW, CONF_FLOOR, 400).is_ok(),
+        "I1 must ADMIT"
+    );
+    assert!(
+        i2.admit(EPOCH_NOW, CONF_FLOOR, 400).is_err(),
+        "I2 must REJECT (deadline)"
+    );
+    assert!(
+        i3.admit(EPOCH_NOW, CONF_FLOOR, 400).is_err(),
+        "I3 must REJECT (confidence)"
+    );
+    assert!(
+        i4.admit(EPOCH_NOW, CONF_FLOOR, 600).is_err(),
+        "I4 must REJECT (budget)"
+    );
 
     // I5 never makes it past construction — counted as rejected by grammar.
     let i5 = Intent::new(
-        iid(5), holder(), Verb::Refresh,
-        vec![0xCC; 32], b"not json".to_vec(), 100, 500, 9_500,
+        iid(5),
+        holder(),
+        Verb::Refresh,
+        vec![0xCC; 32],
+        b"not json".to_vec(),
+        100,
+        500,
+        9_500,
     );
     assert!(i5.is_err(), "I5 must REJECT at construction (chat noise)");
 }
@@ -142,7 +178,10 @@ fn doctrine_all_known_verbs_are_constructible() {
     // Every verb in KNOWN_VERBS must pass construction.
     for &verb in KNOWN_VERBS {
         let r = make_intent(0x10, verb, 100, 500, 9_500);
-        assert!(r.is_ok(), "KNOWN_VERBS entry {verb:?} must be constructible");
+        assert!(
+            r.is_ok(),
+            "KNOWN_VERBS entry {verb:?} must be constructible"
+        );
     }
 }
 
@@ -151,8 +190,14 @@ fn doctrine_grammar_gate_fires_before_admission_gate() {
     // Prove ordering: a BadConstraint intent never reaches admit().
     // Construct fails → no admit() call needed.
     let bad = Intent::new(
-        iid(0xFF), holder(), Verb::Send,
-        vec![0x01], b"not-a-json-shape".to_vec(), 100, 500, 9_500,
+        iid(0xFF),
+        holder(),
+        Verb::Send,
+        vec![0x01],
+        b"not-a-json-shape".to_vec(),
+        100,
+        500,
+        9_500,
     );
     assert!(matches!(bad, Err(IntentError::BadConstraint(_))));
 }
@@ -176,7 +221,11 @@ fn doctrine_anti_replay_commitment_changes_with_every_field() {
 
     let mut d = base.clone();
     d.confidence_bp = 5_000;
-    assert_ne!(d.commitment(), h0, "confidence change must alter commitment");
+    assert_ne!(
+        d.commitment(),
+        h0,
+        "confidence change must alter commitment"
+    );
 
     let mut e = base.clone();
     e.object = vec![0xDE; 32];
@@ -230,15 +279,31 @@ fn doctrine_commitment_is_deterministic() {
 
 #[test]
 fn adversarial_empty_object_rejected() {
-    let err = Intent::new(iid(1), holder(), Verb::Send, vec![], b"{}".to_vec(), 100, 500, 9_500)
-        .unwrap_err();
+    let err = Intent::new(
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![],
+        b"{}".to_vec(),
+        100,
+        500,
+        9_500,
+    )
+    .unwrap_err();
     assert_eq!(err, IntentError::EmptyObject);
 }
 
 #[test]
 fn adversarial_object_exceeding_1024_bytes_rejected() {
     let err = Intent::new(
-        iid(1), holder(), Verb::Send, vec![0u8; 1025], b"{}".to_vec(), 100, 500, 9_500,
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![0u8; 1025],
+        b"{}".to_vec(),
+        100,
+        500,
+        9_500,
     )
     .unwrap_err();
     assert_eq!(err, IntentError::ObjectTooLong);
@@ -248,29 +313,61 @@ fn adversarial_object_exceeding_1024_bytes_rejected() {
 fn adversarial_object_at_1024_bytes_accepted() {
     // 1024 bytes is exactly at the limit — allowed.
     Intent::new(
-        iid(1), holder(), Verb::Send, vec![0u8; 1024], b"{}".to_vec(), 100, 500, 9_500,
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![0u8; 1024],
+        b"{}".to_vec(),
+        100,
+        500,
+        9_500,
     )
     .unwrap();
 }
 
 #[test]
 fn adversarial_zero_deadline_rejected() {
-    let err = Intent::new(iid(1), holder(), Verb::Send, vec![1], b"{}".to_vec(), 0, 500, 9_500)
-        .unwrap_err();
+    let err = Intent::new(
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![1],
+        b"{}".to_vec(),
+        0,
+        500,
+        9_500,
+    )
+    .unwrap_err();
     assert_eq!(err, IntentError::ZeroDeadline);
 }
 
 #[test]
 fn adversarial_zero_budget_rejected() {
-    let err = Intent::new(iid(1), holder(), Verb::Send, vec![1], b"{}".to_vec(), 100, 0, 9_500)
-        .unwrap_err();
+    let err = Intent::new(
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![1],
+        b"{}".to_vec(),
+        100,
+        0,
+        9_500,
+    )
+    .unwrap_err();
     assert_eq!(err, IntentError::ZeroBudget);
 }
 
 #[test]
 fn adversarial_non_utf8_constraint_rejected() {
     let err = Intent::new(
-        iid(1), holder(), Verb::Send, vec![1], vec![0xFF, 0xFE], 100, 500, 9_500,
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![1],
+        vec![0xFF, 0xFE],
+        100,
+        500,
+        9_500,
     )
     .unwrap_err();
     assert!(matches!(err, IntentError::BadConstraint(_)));
@@ -280,7 +377,14 @@ fn adversarial_non_utf8_constraint_rejected() {
 fn adversarial_array_constraint_accepted() {
     // Array-shaped JSON is valid: [ ... ]
     Intent::new(
-        iid(1), holder(), Verb::Send, vec![1], b"[1,2,3]".to_vec(), 100, 500, 9_500,
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![1],
+        b"[1,2,3]".to_vec(),
+        100,
+        500,
+        9_500,
     )
     .unwrap();
 }
@@ -289,7 +393,14 @@ fn adversarial_array_constraint_accepted() {
 fn adversarial_empty_constraint_accepted() {
     // No constraint is allowed (means "no restriction").
     Intent::new(
-        iid(1), holder(), Verb::Send, vec![1], vec![], 100, 500, 9_500,
+        iid(1),
+        holder(),
+        Verb::Send,
+        vec![1],
+        vec![],
+        100,
+        500,
+        9_500,
     )
     .unwrap();
 }

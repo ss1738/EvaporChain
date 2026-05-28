@@ -79,13 +79,13 @@ mod press_claim_tests {
     fn rent_increases_monotonically_with_utilisation() {
         let base = 1_000_000;
         let cap = 100;
-        let r0   = rent_rate(0,  cap, base).unwrap();
-        let r25  = rent_rate(25, cap, base).unwrap();
-        let r50  = rent_rate(50, cap, base).unwrap();
+        let r0 = rent_rate(0, cap, base).unwrap();
+        let r25 = rent_rate(25, cap, base).unwrap();
+        let r50 = rent_rate(50, cap, base).unwrap();
         let r100 = rent_rate(100, cap, base).unwrap();
-        assert!(r25 > r0,  "rent at 25% must exceed floor");
+        assert!(r25 > r0, "rent at 25% must exceed floor");
         assert!(r50 > r25, "rent at 50% must exceed rent at 25%");
-        assert!(r100 > r50,"rent at full capacity must be the highest");
+        assert!(r100 > r50, "rent at full capacity must be the highest");
     }
 
     // ── 2. Zero utilisation still costs ──────────────────────────────
@@ -95,7 +95,10 @@ mod press_claim_tests {
         // capacity=1 means (1+1)²/(1²) = 4 × base; even with large cap,
         // the "+1" guarantees at least 1 Energy unit.
         let r = rent_rate(0, 1_000_000, 1_000_000).unwrap();
-        assert!(r >= 1, "zero utilisation must still pay rent (squatting penalty)");
+        assert!(
+            r >= 1,
+            "zero utilisation must still pay rent (squatting penalty)"
+        );
     }
 
     // ── 3. Full namespace locked ──────────────────────────────────────
@@ -108,7 +111,9 @@ mod press_claim_tests {
         let mut pool = pool_with(ns(1), 1_000_000);
         let mut acc = EnergyAccumulator::default();
         let err = reserve_slot(&mut m, &mut pool, &mut acc, &ns(1), 0).unwrap_err();
-        assert!(matches!(err, MarketError::NoCapacity { .. }),
-            "full namespace must return NoCapacity, got {err:?}");
+        assert!(
+            matches!(err, MarketError::NoCapacity { .. }),
+            "full namespace must return NoCapacity, got {err:?}"
+        );
     }
 }

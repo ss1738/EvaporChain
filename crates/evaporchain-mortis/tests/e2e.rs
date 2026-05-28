@@ -15,11 +15,15 @@ use evaporchain_mortis::{
 
 const FLOOR: u64 = 1_000;
 const SUSTAINED: u64 = 3;
-const STATE_ROOT: [u8; 32]  = [0xAA; 32];
+const STATE_ROOT: [u8; 32] = [0xAA; 32];
 const EULOGY_ROOT: [u8; 32] = [0xBB; 32];
 
-fn cond() -> MortisCondition { MortisCondition::new(FLOOR, SUSTAINED) }
-fn fresh() -> MortisMonitor  { MortisMonitor::new(cond()) }
+fn cond() -> MortisCondition {
+    MortisCondition::new(FLOOR, SUSTAINED)
+}
+fn fresh() -> MortisMonitor {
+    MortisMonitor::new(cond())
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -43,7 +47,9 @@ fn gradual_drain_counting_increments() {
         let o = m.tick(k, FLOOR / 2);
         assert_eq!(
             o,
-            TickOutcome::Counting { consecutive_below: k },
+            TickOutcome::Counting {
+                consecutive_below: k
+            },
             "tick {k} must be Counting at {k}"
         );
         assert!(!m.is_triggered());
@@ -58,7 +64,11 @@ fn partial_drain_then_recovery_resets_counter() {
     for k in 1..SUSTAINED {
         m.tick(k, FLOOR / 2);
     }
-    assert_eq!(m.consecutive_below, SUSTAINED - 1, "pre-reset count must be N-1");
+    assert_eq!(
+        m.consecutive_below,
+        SUSTAINED - 1,
+        "pre-reset count must be N-1"
+    );
 
     let o = m.tick(SUSTAINED, FLOOR * 10); // healthy recovery
     assert_eq!(o, TickOutcome::Healthy);
@@ -83,12 +93,18 @@ fn trigger_latches_subsequent_ticks_are_noop() {
     // After JustTriggered, every further tick returns AlreadyTriggered —
     // even if the pool floods back to astronomical levels.
     let mut m = fresh();
-    for k in 1..=SUSTAINED { m.tick(k, 0); }
+    for k in 1..=SUSTAINED {
+        m.tick(k, 0);
+    }
     assert!(m.is_triggered());
 
     for epoch in SUSTAINED + 1..=SUSTAINED + 20 {
         let o = m.tick(epoch, u64::MAX);
-        assert_eq!(o, TickOutcome::AlreadyTriggered, "epoch {epoch}: latch must hold");
+        assert_eq!(
+            o,
+            TickOutcome::AlreadyTriggered,
+            "epoch {epoch}: latch must hold"
+        );
         assert!(m.is_triggered());
     }
 }
@@ -99,8 +115,14 @@ fn pool_at_exactly_floor_counts_as_below() {
     let mut m = fresh();
     let o = m.tick(1, FLOOR);
     assert!(
-        matches!(o, TickOutcome::Counting { consecutive_below: 1 }),
-        "pool == floor must count, not be Healthy; got {:?}", o
+        matches!(
+            o,
+            TickOutcome::Counting {
+                consecutive_below: 1
+            }
+        ),
+        "pool == floor must count, not be Healthy; got {:?}",
+        o
     );
 }
 
@@ -109,7 +131,9 @@ fn partial_then_refill_then_second_full_run_fires() {
     // N-1 below → 1 healthy → N below → JustTriggered. Two separate runs.
     let mut m = fresh();
     // First partial run (N-1 ticks below)
-    for k in 1..SUSTAINED { m.tick(k, 0); }
+    for k in 1..SUSTAINED {
+        m.tick(k, 0);
+    }
     m.tick(SUSTAINED, FLOOR * 100); // recovery resets
 
     // Second full run (N ticks below) must fire from scratch
@@ -148,27 +172,42 @@ fn tampered_certificate_rejected_on_any_field() {
     // Tamper final_state_root
     let mut c = base;
     c.final_state_root[0] ^= 0xFF;
-    assert!(matches!(verify_certificate(&c), Err(CertificateError::WitnessMismatch { .. })));
+    assert!(matches!(
+        verify_certificate(&c),
+        Err(CertificateError::WitnessMismatch { .. })
+    ));
 
     // Tamper eulogy_trie_root
     let mut c = base;
     c.eulogy_trie_root[0] ^= 0xFF;
-    assert!(matches!(verify_certificate(&c), Err(CertificateError::WitnessMismatch { .. })));
+    assert!(matches!(
+        verify_certificate(&c),
+        Err(CertificateError::WitnessMismatch { .. })
+    ));
 
     // Tamper epoch_of_death
     let mut c = base;
     c.epoch_of_death += 1;
-    assert!(matches!(verify_certificate(&c), Err(CertificateError::WitnessMismatch { .. })));
+    assert!(matches!(
+        verify_certificate(&c),
+        Err(CertificateError::WitnessMismatch { .. })
+    ));
 
     // Tamper final_refresh_pool
     let mut c = base;
     c.final_refresh_pool += 1;
-    assert!(matches!(verify_certificate(&c), Err(CertificateError::WitnessMismatch { .. })));
+    assert!(matches!(
+        verify_certificate(&c),
+        Err(CertificateError::WitnessMismatch { .. })
+    ));
 
     // Tamper witness directly
     let mut c = base;
     c.witness[0] ^= 0xFF;
-    assert!(matches!(verify_certificate(&c), Err(CertificateError::WitnessMismatch { .. })));
+    assert!(matches!(
+        verify_certificate(&c),
+        Err(CertificateError::WitnessMismatch { .. })
+    ));
 }
 
 #[test]
@@ -189,8 +228,16 @@ fn two_monitors_with_different_conditions_are_independent() {
     // Pool at 5_000 → tight fires (5_000 < 10_000, and sustained=1); loose is healthy (5_000 > 100)
     let o_tight = tight.tick(1, 5_000);
     let o_loose = loose.tick(1, 5_000);
-    assert_eq!(o_tight, TickOutcome::JustTriggered, "tight monitor fires immediately");
-    assert_eq!(o_loose, TickOutcome::Healthy, "loose monitor unaffected at 5_000");
+    assert_eq!(
+        o_tight,
+        TickOutcome::JustTriggered,
+        "tight monitor fires immediately"
+    );
+    assert_eq!(
+        o_loose,
+        TickOutcome::Healthy,
+        "loose monitor unaffected at 5_000"
+    );
 
     // Tight is latched; loose is still counting at 0
     assert!(tight.is_triggered());
@@ -216,11 +263,16 @@ fn ectn0_shutdown_doctrine_full_arc() {
         assert!(matches!(o, TickOutcome::Counting { .. }));
     }
     let o = m.tick(10_000 + SUSTAINED, 0);
-    assert_eq!(o, TickOutcome::JustTriggered, "ectn0 must fire at epoch 10_003");
+    assert_eq!(
+        o,
+        TickOutcome::JustTriggered,
+        "ectn0 must fire at epoch 10_003"
+    );
 
     // Mint and verify the death certificate
     let cert = mint_certificate(
-        STATE_ROOT, EULOGY_ROOT,
+        STATE_ROOT,
+        EULOGY_ROOT,
         10_000 + SUSTAINED,
         0, // refresh pool exhausted
     );

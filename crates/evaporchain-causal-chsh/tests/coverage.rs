@@ -6,9 +6,9 @@
 
 use evaporchain_causal_chsh::{
     chsh::{compute_chsh_s_classical, ConcurrentPair, ConcurrentPairSamples},
-    AlarmStatus, BlockSummary, CartelAlarm, CartelAlarmEvent, ChshError, GateThresholds,
-    GateVerdict, compute_chsh_s, compute_chsh_s_milli, extract_chsh_samples,
-    run_synthetic_gate, synthesize_max_cartel_samples,
+    compute_chsh_s, compute_chsh_s_milli, extract_chsh_samples, run_synthetic_gate,
+    synthesize_max_cartel_samples, AlarmStatus, BlockSummary, CartelAlarm, CartelAlarmEvent,
+    ChshError, GateThresholds, GateVerdict,
 };
 
 // =================================================================
@@ -109,8 +109,18 @@ fn non_binary_observable_surfaces_index_and_value() {
 fn classical_path_caps_at_2_for_lhv_source() {
     // Balanced classical: every pair sums to zero → S=0.
     let pairs = vec![
-        ConcurrentPair { a: 1, a_prime: -1, b: 1, b_prime: -1 },
-        ConcurrentPair { a: -1, a_prime: 1, b: -1, b_prime: 1 },
+        ConcurrentPair {
+            a: 1,
+            a_prime: -1,
+            b: 1,
+            b_prime: -1,
+        },
+        ConcurrentPair {
+            a: -1,
+            a_prime: 1,
+            b: -1,
+            b_prime: 1,
+        },
     ];
     let s = compute_chsh_s_classical(&pairs).unwrap();
     assert!(s <= 2.0, "classical LHV must satisfy Bell: S={s}");
@@ -124,7 +134,12 @@ fn classical_path_empty_errs() {
 
 #[test]
 fn classical_path_non_binary_errs() {
-    let pairs = vec![ConcurrentPair { a: 2, a_prime: 1, b: 1, b_prime: 1 }];
+    let pairs = vec![ConcurrentPair {
+        a: 2,
+        a_prime: 1,
+        b: 1,
+        b_prime: 1,
+    }];
     assert!(matches!(
         compute_chsh_s_classical(&pairs),
         Err(ChshError::NonBinaryObservable { .. })
@@ -140,7 +155,11 @@ fn gate_verdict_pass_carries_floats() {
     let honest = balanced_zero();
     let cartel = synthesize_max_cartel_samples(8);
     match run_synthetic_gate(&honest, &cartel, GateThresholds::doctrine()) {
-        GateVerdict::Pass { s_honest, s_cartel, gap } => {
+        GateVerdict::Pass {
+            s_honest,
+            s_cartel,
+            gap,
+        } => {
             assert!(s_honest < 1.8);
             assert!(s_cartel > 2.2);
             assert!(gap > 0.4);
@@ -269,7 +288,11 @@ fn cartel_alarm_capacity_floor_is_50() {
             h,
         );
     }
-    assert!(a.buffer_len() <= 50, "capacity clamped to 50, got {}", a.buffer_len());
+    assert!(
+        a.buffer_len() <= 50,
+        "capacity clamped to 50, got {}",
+        a.buffer_len()
+    );
 }
 
 #[test]
@@ -343,7 +366,12 @@ fn block_summary_and_concurrent_pair_serde_round_trips() {
     assert_eq!(back.height, b.height);
     assert_eq!(back.tx_count, b.tx_count);
 
-    let p = ConcurrentPair { a: 1, a_prime: -1, b: 1, b_prime: -1 };
+    let p = ConcurrentPair {
+        a: 1,
+        a_prime: -1,
+        b: 1,
+        b_prime: -1,
+    };
     let json = serde_json::to_string(&p).unwrap();
     let back: ConcurrentPair = serde_json::from_str(&json).unwrap();
     assert_eq!(back.a, p.a);

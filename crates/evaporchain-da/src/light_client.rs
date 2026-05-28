@@ -548,8 +548,7 @@ mod tests {
     fn t1_20_lying_coords_peer_marked_out_of_range() {
         let package = build_test_package();
         let header = package.header.clone();
-        let _faulty_log: RefCell<Vec<(String, PeerFaultReason)>> =
-            RefCell::new(Vec::new());
+        let _faulty_log: RefCell<Vec<(String, PeerFaultReason)>> = RefCell::new(Vec::new());
         let source = LyingCoordsCellSource {
             package,
             peer_id: "liar".into(),

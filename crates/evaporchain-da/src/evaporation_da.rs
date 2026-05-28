@@ -309,14 +309,9 @@ mod tests {
     #[test]
     fn t1_20_verify_rejects_nonzero_energy_in_proof() {
         let (object_id, object_data, snapshot, shards) = setup_test_data();
-        let mut proof = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            0,
-        )
-        .unwrap();
+        let mut proof =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 0)
+                .unwrap();
         // Tamper: claim the object had non-zero energy at evaporation.
         proof.energy_snapshot.energy_at_evaporation = 1;
         let valid = EvaporationDAProofBuilder::verify_proof(&proof, &shards[0].data).unwrap();
@@ -333,14 +328,9 @@ mod tests {
     #[test]
     fn t1_20_verify_rejects_mismatched_commitment_root() {
         let (object_id, object_data, snapshot, shards) = setup_test_data();
-        let mut proof = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            0,
-        )
-        .unwrap();
+        let mut proof =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 0)
+                .unwrap();
         proof.da_commitment_root[0] ^= 0xFF;
         let valid = EvaporationDAProofBuilder::verify_proof(&proof, &shards[0].data).unwrap();
         assert!(
@@ -390,14 +380,9 @@ mod tests {
     fn t1_20_energy_not_zero_error_carries_value() {
         let (object_id, object_data, mut snapshot, shards) = setup_test_data();
         snapshot.energy_at_evaporation = 12_345;
-        let err = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            0,
-        )
-        .unwrap_err();
+        let err =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 0)
+                .unwrap_err();
         match err {
             EvaporationDAError::EnergyNotZero(e) => assert_eq!(e, 12_345),
             other => panic!("expected EnergyNotZero, got {other:?}"),

@@ -12,11 +12,13 @@
 //! one-shot gate; the EvaporationEngine correctly transitions objects;
 //! decay curves (Exponential, Linear, Stepped) yield the right values.
 
-use evaporchain_state::{EvaporationEngine, InMemoryStateDB, StateDB};
 use evaporchain_state::decay_curves::compute_energy;
+use evaporchain_state::{EvaporationEngine, InMemoryStateDB, StateDB};
 use evaporchain_types::{Account, AccountAddress, DecayCurve, ObjectState, StateObject};
 
-fn addr(b: u8) -> AccountAddress { [b; 32] }
+fn addr(b: u8) -> AccountAddress {
+    [b; 32]
+}
 
 fn account(address: AccountAddress, balance: u64) -> Account {
     Account {
@@ -98,8 +100,10 @@ fn balance_change_changes_state_root() {
     db.put_account(account(addr(0x01), 999));
     let root_after = db.compute_state_root();
 
-    assert_ne!(root_before, root_after,
-        "balance change must produce different state root");
+    assert_ne!(
+        root_before, root_after,
+        "balance change must produce different state root"
+    );
 }
 
 #[test]
@@ -119,8 +123,11 @@ fn nullifier_spend_is_one_shot() {
     let mut db = InMemoryStateDB::new();
     let n = [0xBB; 32];
 
-    assert!(!db.is_nullifier_spent(&n), "fresh nullifier must not be spent");
-    assert!(db.spend_nullifier(&n),  "first spend must succeed");
+    assert!(
+        !db.is_nullifier_spent(&n),
+        "fresh nullifier must not be spent"
+    );
+    assert!(db.spend_nullifier(&n), "first spend must succeed");
     assert!(!db.spend_nullifier(&n), "double-spend must be rejected");
     assert!(db.is_nullifier_spent(&n));
 }
@@ -147,7 +154,11 @@ fn evaporation_engine_active_to_grace() {
     db.put_object(obj);
 
     let result = engine.process_epoch(&mut db, 1);
-    assert_eq!(result.entered_grace.len(), 1, "zero-energy object must enter grace");
+    assert_eq!(
+        result.entered_grace.len(),
+        1,
+        "zero-energy object must enter grace"
+    );
     assert_eq!(result.entered_grace[0], id);
 }
 
@@ -162,7 +173,11 @@ fn evaporation_engine_grace_to_ghost() {
     db.put_object(obj);
 
     let result = engine.process_epoch(&mut db, 1);
-    assert_eq!(result.evaporated.len(), 1, "grace-expired object must evaporate");
+    assert_eq!(
+        result.evaporated.len(),
+        1,
+        "grace-expired object must evaporate"
+    );
     assert_eq!(result.evaporated[0], id);
 }
 
@@ -180,7 +195,7 @@ fn decay_curve_exponential() {
 fn decay_curve_linear_reaches_zero() {
     let curve = DecayCurve::Linear { rate_per_epoch: 10 };
     assert_eq!(compute_energy(&curve, 1_000, 100, None), 0);
-    assert_eq!(compute_energy(&curve, 1_000,  50, None), 500);
+    assert_eq!(compute_energy(&curve, 1_000, 50, None), 500);
 }
 
 #[test]
@@ -188,7 +203,7 @@ fn decay_curve_stepped() {
     let curve = DecayCurve::Stepped {
         thresholds: vec![(10, 500), (20, 100)],
     };
-    assert_eq!(compute_energy(&curve, 1_000,  5, None), 1_000);
+    assert_eq!(compute_energy(&curve, 1_000, 5, None), 1_000);
     assert_eq!(compute_energy(&curve, 1_000, 15, None), 500);
     assert_eq!(compute_energy(&curve, 1_000, 25, None), 100);
 }
@@ -205,12 +220,12 @@ fn lena_state_transition_full_arc() {
 
     db.put_account(account(addr(0xA0), 10_000));
     db.put_account(account(addr(0xB0), 20_000));
-    db.put_account(account(addr(0xC0),  5_000));
+    db.put_account(account(addr(0xC0), 5_000));
     let root_initial = db.compute_state_root();
 
     // Commutativity: different insertion order → same root.
     let mut db2 = InMemoryStateDB::new();
-    db2.put_account(account(addr(0xC0),  5_000));
+    db2.put_account(account(addr(0xC0), 5_000));
     db2.put_account(account(addr(0xA0), 10_000));
     db2.put_account(account(addr(0xB0), 20_000));
     assert_eq!(root_initial, db2.compute_state_root());

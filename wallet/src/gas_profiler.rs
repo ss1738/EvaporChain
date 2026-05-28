@@ -710,11 +710,20 @@ mod tests {
         let mut gp = GasProfiler::new();
         gp.create_profile("p1", OpType::Transfer).unwrap();
         // gas_price == 0 → total_cost == 0 → grand_total_cost == 0
-        gp.add_sample("p1", GasSample {
-            tx_hash: "0x1".into(), op_type: OpType::Transfer,
-            gas_used: 1000, gas_limit: 2000, gas_price: 0,
-            timestamp: Utc::now().to_rfc3339(), block_number: 1, success: true,
-        }).unwrap();
+        gp.add_sample(
+            "p1",
+            GasSample {
+                tx_hash: "0x1".into(),
+                op_type: OpType::Transfer,
+                gas_used: 1000,
+                gas_limit: 2000,
+                gas_price: 0,
+                timestamp: Utc::now().to_rfc3339(),
+                block_number: 1,
+                success: true,
+            },
+        )
+        .unwrap();
         let hotspots = gp.detect_hotspots();
         assert_eq!(hotspots.len(), 1);
         assert_eq!(hotspots[0].percentage_of_total, 0.0);
@@ -737,7 +746,9 @@ mod tests {
         gp.add_sample("p1", sample(1000, 200000, 10)).unwrap();
         gp.add_sample("p1", sample(100000, 200000, 10)).unwrap();
         let suggestions = gp.generate_suggestions();
-        assert!(suggestions.iter().any(|s| s.suggestion == "Inconsistent gas usage"));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.suggestion == "Inconsistent gas usage"));
     }
 
     #[test]

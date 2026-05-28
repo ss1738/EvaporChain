@@ -82,7 +82,13 @@ pub fn extract_chsh_samples(
     let obs_a = |b: &BlockSummary| if b.energy >= med_energy { 1i8 } else { -1 };
     let obs_a_prime = |b: &BlockSummary| if b.gas >= med_gas { 1i8 } else { -1 };
     let obs_b = |b: &BlockSummary| if b.tx_count >= med_count { 1i8 } else { -1 };
-    let obs_b_prime = |b: &BlockSummary| if b.timestamp_secs.is_multiple_of(2) { 1i8 } else { -1 };
+    let obs_b_prime = |b: &BlockSummary| {
+        if b.timestamp_secs.is_multiple_of(2) {
+            1i8
+        } else {
+            -1
+        }
+    };
 
     // Walk all pairs (i, j) where j > i and timestamps are within
     // window. Distribute round-robin across the four setting-pairs

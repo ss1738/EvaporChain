@@ -126,9 +126,18 @@ fn current_step_hash_native(
     let cf_u_lo = pack_le_to_fr(&bits[..split]);
     let cf_u_hi = pack_le_to_fr(&bits[split..]);
     let mut absorbed: Vec<Bn254Fr> = vec![
-        pp_hash, i, z_0, z_i, z_i1, cf_x_digest,
-        cf_u_lo, cf_u_hi,
-        cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
+        pp_hash,
+        i,
+        z_0,
+        z_i,
+        z_i1,
+        cf_x_digest,
+        cf_u_lo,
+        cf_u_hi,
+        cf_comm_w_x,
+        cf_comm_w_y,
+        cf_comm_e_x,
+        cf_comm_e_y,
     ];
     for x_fq in cf_x_vec {
         let xb = x_fq.into_bigint().to_bits_le();
@@ -136,8 +145,7 @@ fn current_step_hash_native(
         absorbed.push(pack_le_to_fr(&xb[..xs]));
         absorbed.push(pack_le_to_fr(&xb[xs..]));
     }
-    let absorbed_nova: Vec<_> =
-        absorbed.into_iter().map(ark_fr_to_primary).collect();
+    let absorbed_nova: Vec<_> = absorbed.into_iter().map(ark_fr_to_primary).collect();
     primary_to_ark_fr(neptune_hash_primary(&absorbed_nova))
 }
 
@@ -167,10 +175,9 @@ pub fn build_shell_for_step<R: RngCore>(
     };
     let (t1_p, t1_s, t1_q) = mk_tuple(rng);
     let (t2_p, t2_s, t2_q) = mk_tuple(rng);
-    let cf_x_digest =
-        crate::cyclefold_cf_x_digest::compute_cf_x_digest_pair_native(
-            t1_p, t1_s, t1_q, t2_p, t2_s, t2_q,
-        );
+    let cf_x_digest = crate::cyclefold_cf_x_digest::compute_cf_x_digest_pair_native(
+        t1_p, t1_s, t1_q, t2_p, t2_s, t2_q,
+    );
 
     // CF running instance fields — independent per step at the
     // shell level (full CF-side IVC threading is sub-step b-2).
@@ -227,8 +234,12 @@ pub fn build_shell_for_step<R: RngCore>(
         z_0,
         z_i,
         z_i1,
-        t1_p, t1_s, t1_q,
-        t2_p, t2_s, t2_q,
+        t1_p,
+        t1_s,
+        t1_q,
+        t2_p,
+        t2_s,
+        t2_q,
         cf_x_digest,
         current_step_hash,
         cf_u_running,
@@ -284,9 +295,10 @@ mod tests {
         // Concrete StdRng so the closure's &mut StdRng param type
         // matches (test_rng() returns `impl Rng`, opaque).
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
-        let params = crate::neptune_permutation_gadget::params_from_dump_path(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
-        )
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/neptune-bn256-standard.json"
+        ))
         .expect("load neptune params");
         let pp_hash = Bn254Fr::from(42u64);
         let z_0 = Bn254Fr::from(0u64);
@@ -324,8 +336,10 @@ mod tests {
                                        previous_step_hash: Bn254Fr,
                                        primary_u_r: Bn254Fr,
                                        primary_x_r: [Bn254Fr; 2],
-                                       cw_x: Bn254Fr, cw_y: Bn254Fr,
-                                       ce_x: Bn254Fr, ce_y: Bn254Fr,
+                                       cw_x: Bn254Fr,
+                                       cw_y: Bn254Fr,
+                                       ce_x: Bn254Fr,
+                                       ce_y: Bn254Fr,
                                        cf_u: Bn254Fq,
                                        cf_x: Vec<Bn254Fq>|
          -> PrimaryAugmentedCircuitShell {
@@ -338,12 +352,10 @@ mod tests {
             };
             let (t1p, t1s, t1q) = mk(rng);
             let (t2p, t2s, t2q) = mk(rng);
-            let cf_x_digest =
-                crate::cyclefold_cf_x_digest::compute_cf_x_digest_pair_native(
-                    t1p, t1s, t1q, t2p, t2s, t2q,
-                );
-            let primary_x_i: [Bn254Fr; 2] =
-                [Bn254Fr::rand(rng), Bn254Fr::rand(rng)];
+            let cf_x_digest = crate::cyclefold_cf_x_digest::compute_cf_x_digest_pair_native(
+                t1p, t1s, t1q, t2p, t2s, t2q,
+            );
+            let primary_x_i: [Bn254Fr; 2] = [Bn254Fr::rand(rng), Bn254Fr::rand(rng)];
             let inner_mk_g1 = |rng: &mut ark_std::rand::rngs::StdRng| {
                 let g = G1Affine::generator();
                 let s = Bn254Fr::rand(rng);
@@ -353,8 +365,12 @@ mod tests {
             let primary_comm_t = inner_mk_g1(rng);
             let i_fr = Bn254Fr::from(step_index);
             let primary_r = primary_r_native(
-                pp_hash, previous_step_hash, primary_x_i[0], primary_x_i[1],
-                primary_comm_w_i, primary_comm_t,
+                pp_hash,
+                previous_step_hash,
+                primary_x_i[0],
+                primary_x_i[1],
+                primary_comm_w_i,
+                primary_comm_t,
             );
             let primary_u_new = primary_u_r + primary_r;
             let primary_x_new = [
@@ -362,26 +378,66 @@ mod tests {
                 primary_x_r[1] + primary_r * primary_x_i[1],
             ];
             let current_step_hash = current_step_hash_native(
-                pp_hash, i_fr, z_0, z_i, z_i1, cf_x_digest, cf_u,
-                cw_x, cw_y, ce_x, ce_y, &cf_x,
+                pp_hash,
+                i_fr,
+                z_0,
+                z_i,
+                z_i1,
+                cf_x_digest,
+                cf_u,
+                cw_x,
+                cw_y,
+                ce_x,
+                ce_y,
+                &cf_x,
             );
             PrimaryAugmentedCircuitShell::new(
-                pp_hash, i_fr, z_0, z_i, z_i1,
-                t1p, t1s, t1q, t2p, t2s, t2q,
-                cf_x_digest, current_step_hash,
-                cf_u, cw_x, cw_y, ce_x, ce_y, cf_x,
-                primary_u_r, primary_x_r, primary_x_i,
-                primary_r, primary_u_new, primary_x_new,
-                previous_step_hash, primary_comm_t, primary_comm_w_i,
+                pp_hash,
+                i_fr,
+                z_0,
+                z_i,
+                z_i1,
+                t1p,
+                t1s,
+                t1q,
+                t2p,
+                t2s,
+                t2q,
+                cf_x_digest,
+                current_step_hash,
+                cf_u,
+                cw_x,
+                cw_y,
+                ce_x,
+                ce_y,
+                cf_x,
+                primary_u_r,
+                primary_x_r,
+                primary_x_i,
+                primary_r,
+                primary_u_new,
+                primary_x_new,
+                previous_step_hash,
+                primary_comm_t,
+                primary_comm_w_i,
                 params.clone(),
             )
         };
 
         let cf_x_zero: Vec<Bn254Fq> = vec![Bn254Fq::from(0u64); 21];
         let shell_0 = build_step_with_running(
-            &mut rng, 0, z_0, Bn254Fr::from(7u64),
-            Bn254Fr::from(0u64), [Bn254Fr::from(0u64); 2],
-            cw0_x, cw0_y, ce0_x, ce0_y, running_zero.u, cf_x_zero,
+            &mut rng,
+            0,
+            z_0,
+            Bn254Fr::from(7u64),
+            Bn254Fr::from(0u64),
+            [Bn254Fr::from(0u64); 2],
+            cw0_x,
+            cw0_y,
+            ce0_x,
+            ce0_y,
+            running_zero.u,
+            cf_x_zero,
         );
         let s0_z_i1 = shell_0.z_i1;
         let s0_step_hash = shell_0.current_step_hash;
@@ -393,26 +449,30 @@ mod tests {
         assert!(cs_0.is_satisfied().unwrap(), "shell 0 CS must be sat");
 
         // Fold shell_0.t1 into running.
-        let art = bridge_cf_tuple(s0_t1.0, s0_t1.1, s0_t1.2, ck_label)
-            .expect("bridge t1");
+        let art = bridge_cf_tuple(s0_t1.0, s0_t1.1, s0_t1.2, ck_label).expect("bridge t1");
         let u_relaxed = RelaxedR1CSInstance::<GrumpkinEngine>::from_r1cs_instance(
-            &art.ck, &art.shape, &art.instance,
+            &art.ck,
+            &art.shape,
+            &art.instance,
         );
-        let w_relaxed = RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(
-            &art.shape, &art.witness,
-        );
+        let w_relaxed =
+            RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(&art.shape, &art.witness);
         let ro_consts = ROConstants::<GrumpkinEngine>::default();
         let pp_digest_secondary = crate::scalar_adapter::SecondaryScalar::from(0u64);
         // Initial running CF (relaxed, zero).
-        let u_run_init =
-            RelaxedR1CSInstance::<GrumpkinEngine>::default(&art.ck, &art.shape);
+        let u_run_init = RelaxedR1CSInstance::<GrumpkinEngine>::default(&art.ck, &art.shape);
         let w_run_init = RelaxedR1CSWitness::<GrumpkinEngine>::default(&art.shape);
-        let (_nifs, (u_run_after_0, w_run_after_0)) =
-            NIFS::<GrumpkinEngine>::prove(
-                &art.ck, &ro_consts, &pp_digest_secondary, &art.shape,
-                &u_run_init, &w_run_init, &art.instance, &art.witness,
-            )
-            .expect("nifs prove step 0");
+        let (_nifs, (u_run_after_0, w_run_after_0)) = NIFS::<GrumpkinEngine>::prove(
+            &art.ck,
+            &ro_consts,
+            &pp_digest_secondary,
+            &art.shape,
+            &u_run_init,
+            &w_run_init,
+            &art.instance,
+            &art.witness,
+        )
+        .expect("nifs prove step 0");
         art.shape
             .is_sat_relaxed(&art.ck, &u_run_after_0, &w_run_after_0)
             .expect("running CF (post step 0) must be is_sat_relaxed");
@@ -440,11 +500,9 @@ mod tests {
         // (b)-2b: extract the post-step-0 running CF state and
         // chain it into shell_1. Path schema verified by HEAD
         // 9344e97a premise dump; extractor in s4_secondary_extract.
-        let v = serde_json::to_value(&u_run_after_0)
-            .expect("RelaxedR1CSInstance to_value");
-        let (cw, ce, u1, x1) =
-            crate::s4_secondary_extract::extract_relaxed_running_inst(&v)
-                .expect("extract running CF state post-step-0");
+        let v = serde_json::to_value(&u_run_after_0).expect("RelaxedR1CSInstance to_value");
+        let (cw, ce, u1, x1) = crate::s4_secondary_extract::extract_relaxed_running_inst(&v)
+            .expect("extract running CF state post-step-0");
         let (cw_x, cw_y) = (cw.x, cw.y);
         let (ce_x, ce_y) = (ce.x, ce.y);
 
@@ -458,7 +516,12 @@ mod tests {
             s0_step_hash,
             s0_u_new,
             s0_x_new,
-            cw_x, cw_y, ce_x, ce_y, u1, x1,
+            cw_x,
+            cw_y,
+            ce_x,
+            ce_y,
+            u1,
+            x1,
         );
         let s1_t1 = (shell_1.t1_p, shell_1.t1_s, shell_1.t1_q);
         let cs_1 = ConstraintSystem::<Bn254Fr>::new_ref();
@@ -466,14 +529,18 @@ mod tests {
         assert!(cs_1.is_satisfied().unwrap(), "shell 1 CS must be sat");
 
         // Fold shell_1.t1 into the running pair (now u_run_after_0).
-        let art1 = bridge_cf_tuple(s1_t1.0, s1_t1.1, s1_t1.2, ck_label)
-            .expect("bridge t1 step 1");
-        let (_nifs1, (u_run_after_1, w_run_after_1)) =
-            NIFS::<GrumpkinEngine>::prove(
-                &art1.ck, &ro_consts, &pp_digest_secondary, &art1.shape,
-                &u_run_after_0, &w_run_after_0, &art1.instance, &art1.witness,
-            )
-            .expect("nifs prove step 1");
+        let art1 = bridge_cf_tuple(s1_t1.0, s1_t1.1, s1_t1.2, ck_label).expect("bridge t1 step 1");
+        let (_nifs1, (u_run_after_1, w_run_after_1)) = NIFS::<GrumpkinEngine>::prove(
+            &art1.ck,
+            &ro_consts,
+            &pp_digest_secondary,
+            &art1.shape,
+            &u_run_after_0,
+            &w_run_after_0,
+            &art1.instance,
+            &art1.witness,
+        )
+        .expect("nifs prove step 1");
         art1.shape
             .is_sat_relaxed(&art1.ck, &u_run_after_1, &w_run_after_1)
             .expect("running CF (post step 1) must be is_sat_relaxed");
@@ -486,9 +553,10 @@ mod tests {
     #[test]
     fn two_step_chain_threads_state_correctly() {
         let mut rng = test_rng();
-        let params = crate::neptune_permutation_gadget::params_from_dump_path(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
-        )
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/neptune-bn256-standard.json"
+        ))
         .expect("load neptune params");
 
         let pp_hash = Bn254Fr::from(42u64);
@@ -529,10 +597,10 @@ mod tests {
             pp_hash,
             z_0,
             1,
-            step_0_z_i1,                 // z_1 ← step 0's z_{i+1}
-            step_0_current_step_hash,    // previous_step_hash ← step 0's current_step_hash
-            step_0_u_new,                // u_R ← step 0's u_new
-            step_0_x_new,                // X_R ← step 0's X_new
+            step_0_z_i1,              // z_1 ← step 0's z_{i+1}
+            step_0_current_step_hash, // previous_step_hash ← step 0's current_step_hash
+            step_0_u_new,             // u_R ← step 0's u_new
+            step_0_x_new,             // X_R ← step 0's X_new
             &params,
         );
 

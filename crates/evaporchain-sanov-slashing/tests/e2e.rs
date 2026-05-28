@@ -15,27 +15,41 @@
 
 use evaporchain_energy_kernel::{Compartment, ConservationCheck, EnergyAccumulator};
 use evaporchain_sanov_slashing::{
-    apply_slash, kl_millibits, sanov_slash,
-    Distribution, DistributionError, KlError, SlashError, FIXED_POINT_SCALE,
+    apply_slash, kl_millibits, sanov_slash, Distribution, DistributionError, KlError, SlashError,
+    FIXED_POINT_SCALE,
 };
 
 // ── Distributions ──────────────────────────────────────────────────────────
 // P_honest: 99.9% produce (999_000), 0.1% miss (1_000)
-fn p_honest()  -> Distribution { Distribution::new(vec![999_000, 1_000]).unwrap() }
+fn p_honest() -> Distribution {
+    Distribution::new(vec![999_000, 1_000]).unwrap()
+}
 // Q_alice matches P exactly → 0 KL
-fn q_alice()   -> Distribution { Distribution::new(vec![999_000, 1_000]).unwrap() }
+fn q_alice() -> Distribution {
+    Distribution::new(vec![999_000, 1_000]).unwrap()
+}
 // Q_bob: 95% produce, 5% miss → KL > 0
-fn q_bob()     -> Distribution { Distribution::new(vec![950_000, 50_000]).unwrap() }
+fn q_bob() -> Distribution {
+    Distribution::new(vec![950_000, 50_000]).unwrap()
+}
 // Q_carol: 50% produce, 50% miss → high KL
-fn q_carol()   -> Distribution { Distribution::new(vec![500_000, 500_000]).unwrap() }
+fn q_carol() -> Distribution {
+    Distribution::new(vec![500_000, 500_000]).unwrap()
+}
 // P_no_equivocation: honest never produces outcome 1 (P_1=0)
-fn p_no_equivocation() -> Distribution { Distribution::new(vec![FIXED_POINT_SCALE, 0]).unwrap() }
+fn p_no_equivocation() -> Distribution {
+    Distribution::new(vec![FIXED_POINT_SCALE, 0]).unwrap()
+}
 // Q_equivocator: validator IS observed in outcome 1 → KL = ∞
-fn q_equivocator() -> Distribution { Distribution::new(vec![900_000, 100_000]).unwrap() }
+fn q_equivocator() -> Distribution {
+    Distribution::new(vec![900_000, 100_000]).unwrap()
+}
 
 const STAKE: u64 = 1_000_000;
 
-fn fresh_acc() -> EnergyAccumulator { EnergyAccumulator::new(0, STAKE, 0, 0) }
+fn fresh_acc() -> EnergyAccumulator {
+    EnergyAccumulator::new(0, STAKE, 0, 0)
+}
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -70,7 +84,10 @@ fn severe_downtime_full_slash() {
     // total_millibits is u128; saturating_add_signed saturates at 0 — the -500 term is
     // swallowed (0.saturating_add_signed(-500) = 0), so final KL = 4500, not 4000.
     let kl = kl_millibits(&q_carol(), &p_honest()).unwrap();
-    assert_eq!(kl, 4_500, "KL(carol ‖ honest) must be 4_500 millibits (negative term saturated to 0)");
+    assert_eq!(
+        kl, 4_500,
+        "KL(carol ‖ honest) must be 4_500 millibits (negative term saturated to 0)"
+    );
 
     let slash = sanov_slash(STAKE, &q_carol(), &p_honest()).unwrap();
     assert_eq!(slash, STAKE, "severe downtime must fully slash");
@@ -89,15 +106,15 @@ fn slash_monotone_in_miss_rate() {
     // Q_slight: 99% produce, 1% miss.
     let q_slight = Distribution::new(vec![990_000, 10_000]).unwrap();
 
-    let s_alice  = sanov_slash(STAKE, &q_alice(),  &p_honest()).unwrap();
+    let s_alice = sanov_slash(STAKE, &q_alice(), &p_honest()).unwrap();
     let s_slight = sanov_slash(STAKE, &q_slight, &p_honest()).unwrap();
-    let s_bob    = sanov_slash(STAKE, &q_bob(),    &p_honest()).unwrap();
-    let s_carol  = sanov_slash(STAKE, &q_carol(),  &p_honest()).unwrap();
+    let s_bob = sanov_slash(STAKE, &q_bob(), &p_honest()).unwrap();
+    let s_carol = sanov_slash(STAKE, &q_carol(), &p_honest()).unwrap();
 
     assert_eq!(s_alice, 0, "exact honest → 0 slash");
-    assert!(s_alice  < s_slight, "1% miss must cost more than 0%");
-    assert!(s_slight < s_bob,   "5% miss must cost more than 1%");
-    assert!(s_bob    < s_carol, "50% miss must cost more than 5%");
+    assert!(s_alice < s_slight, "1% miss must cost more than 0%");
+    assert!(s_slight < s_bob, "5% miss must cost more than 1%");
+    assert!(s_bob < s_carol, "50% miss must cost more than 5%");
 }
 
 #[test]
@@ -138,8 +155,15 @@ fn insufficient_stake_fails_closed() {
 
     let err = apply_slash(STAKE, &q_equivocator(), &p_no_equivocation(), &mut acc).unwrap_err();
     assert!(
-        matches!(err, SlashError::StakeBelowSlash { available: 100, slash: 1_000_000 }),
-        "wrong error: {:?}", err
+        matches!(
+            err,
+            SlashError::StakeBelowSlash {
+                available: 100,
+                slash: 1_000_000
+            }
+        ),
+        "wrong error: {:?}",
+        err
     );
     assert_eq!(acc, pre, "accumulator must be unchanged after failed slash");
 }
@@ -151,7 +175,10 @@ fn from_counts_builds_valid_empirical_distribution() {
     let q = Distribution::from_counts(&[1000, 24]).unwrap();
     let sum: u64 = q.pmf.iter().sum();
     assert_eq!(sum, FIXED_POINT_SCALE, "empirical pmf must sum to scale");
-    assert!(q.pmf[0] > q.pmf[1], "produce bucket must dominate miss bucket");
+    assert!(
+        q.pmf[0] > q.pmf[1],
+        "produce bucket must dominate miss bucket"
+    );
 
     // This Q should produce a positive but small slash relative to p_honest.
     let slash = sanov_slash(STAKE, &q, &p_honest()).unwrap();
@@ -172,26 +199,29 @@ fn kl_infinity_when_p_has_zero_outcome() {
     // §A1.3 — P_i = 0 while Q_i > 0 → KL = +∞ → full slash.
     use evaporchain_sanov_slashing::kl::KL_INFINITY;
     let kl = kl_millibits(&q_equivocator(), &p_no_equivocation()).unwrap();
-    assert_eq!(kl, KL_INFINITY, "impossible-event must produce KL = KL_INFINITY");
+    assert_eq!(
+        kl, KL_INFINITY,
+        "impossible-event must produce KL = KL_INFINITY"
+    );
 }
 
 #[test]
 fn two_validators_independent_accumulators() {
     // Two validators' slashes are computed independently; their accumulators
     // share no state.
-    let mut acc_bob   = EnergyAccumulator::new(0, STAKE, 0, 0);
+    let mut acc_bob = EnergyAccumulator::new(0, STAKE, 0, 0);
     let mut acc_carol = EnergyAccumulator::new(0, STAKE, 0, 0);
 
-    let amt_bob   = apply_slash(STAKE, &q_bob(),   &p_honest(), &mut acc_bob).unwrap();
+    let amt_bob = apply_slash(STAKE, &q_bob(), &p_honest(), &mut acc_bob).unwrap();
     let amt_carol = apply_slash(STAKE, &q_carol(), &p_honest(), &mut acc_carol).unwrap();
 
-    assert_eq!(amt_bob,   300_000);
+    assert_eq!(amt_bob, 300_000);
     assert_eq!(amt_carol, STAKE); // full slash
 
     // Each accumulator reflects only its own slash
-    assert_eq!(acc_bob[Compartment::Stake],      STAKE - 300_000);
+    assert_eq!(acc_bob[Compartment::Stake], STAKE - 300_000);
     assert_eq!(acc_bob[Compartment::SlashedPool], 300_000);
-    assert_eq!(acc_carol[Compartment::Stake],      0);
+    assert_eq!(acc_carol[Compartment::Stake], 0);
     assert_eq!(acc_carol[Compartment::SlashedPool], STAKE);
 }
 

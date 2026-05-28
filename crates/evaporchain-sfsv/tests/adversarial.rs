@@ -70,7 +70,10 @@ fn adversary_a_payout_before_epoch_trips_is_rejected() {
     let mut v = vault(Predicate::EpochReached { release_epoch: 100 }, 1_000);
     let err = payout(&mut v, 50, IGNORED).expect_err("predicate not yet satisfied");
     assert_eq!(err, PayoutError::PredicateNotSatisfied { epoch_now: 50 });
-    assert!(v.is_locked(), "vault must remain Locked after failed payout");
+    assert!(
+        v.is_locked(),
+        "vault must remain Locked after failed payout"
+    );
 }
 
 #[test]
@@ -84,7 +87,12 @@ fn adversary_a_payout_before_energy_decays_is_rejected() {
 
 #[test]
 fn adversary_a_repeated_premature_attempts_do_not_drain_or_corrupt() {
-    let mut v = vault(Predicate::EpochReached { release_epoch: 1_000 }, 42);
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 1_000,
+        },
+        42,
+    );
     for epoch in [0u64, 1, 50, 500, 999] {
         let err = payout(&mut v, epoch, IGNORED).expect_err("must remain unsatisfied");
         assert!(matches!(err, PayoutError::PredicateNotSatisfied { .. }));
@@ -181,7 +189,12 @@ fn adversary_e_replay_after_energy_release_still_rejected() {
 
 #[test]
 fn adversary_f_non_holder_cannot_transfer_claim() {
-    let mut v = vault(Predicate::EpochReached { release_epoch: 1_000 }, 1);
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 1_000,
+        },
+        1,
+    );
     let mallory = addr(0x99);
     let bob = addr(0x42);
     let err = v
@@ -193,12 +206,18 @@ fn adversary_f_non_holder_cannot_transfer_claim() {
 
 #[test]
 fn adversary_f_transfer_chain_preserves_holder_lineage() {
-    let mut v = vault(Predicate::EpochReached { release_epoch: 1_000 }, 1);
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 1_000,
+        },
+        1,
+    );
     let initial_holder = addr(0x02);
     let bob = addr(0x42);
     let carol = addr(0x43);
 
-    v.transfer_claim(initial_holder, bob).expect("initial → bob");
+    v.transfer_claim(initial_holder, bob)
+        .expect("initial → bob");
     assert_eq!(v.current_holder(), Some(bob));
 
     let stale = v
@@ -228,8 +247,14 @@ fn adversary_f_transfer_after_release_is_rejected() {
 
 #[test]
 fn adversary_f_self_referential_transfer_succeeds_but_changes_nothing() {
-    let mut v = vault(Predicate::EpochReached { release_epoch: 1_000 }, 1);
-    v.transfer_claim(addr(0x02), addr(0x02)).expect("self-transfer");
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 1_000,
+        },
+        1,
+    );
+    v.transfer_claim(addr(0x02), addr(0x02))
+        .expect("self-transfer");
     assert_eq!(v.current_holder(), Some(addr(0x02)));
 }
 
@@ -238,7 +263,12 @@ fn adversary_f_self_referential_transfer_succeeds_but_changes_nothing() {
 
 #[test]
 fn adversary_f_cannot_list_someone_elses_claim() {
-    let mut v = vault(Predicate::EpochReached { release_epoch: 1_000 }, 1);
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 1_000,
+        },
+        1,
+    );
     // mallory (not holder) tries to open a listing on 0x02's vault.
     let err = v
         .list_for_sale(addr(0x99), 1_000, 100, 0, 50)
@@ -251,7 +281,12 @@ fn adversary_f_cannot_list_someone_elses_claim() {
 fn adversary_f_cannot_record_sale_without_a_listing() {
     // Front-run: attacker calls record_sale hoping to grab the claim
     // before any listing exists. Must be rejected (no open listing).
-    let mut v = vault(Predicate::EpochReached { release_epoch: 1_000 }, 1);
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 1_000,
+        },
+        1,
+    );
     let err = v
         .record_sale(addr(0x99), 10)
         .expect_err("record_sale with no listing rejected");
@@ -263,7 +298,12 @@ fn adversary_f_cannot_record_sale_without_a_listing() {
 fn adversary_f_cannot_record_sale_after_listing_expired() {
     // Holder lists; attacker waits past expiry then tries to settle a
     // stale listing to themselves. `.es` expiry guard must reject.
-    let mut v = vault(Predicate::EpochReached { release_epoch: 10_000 }, 1);
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 10_000,
+        },
+        1,
+    );
     v.list_for_sale(addr(0x02), 1_000, 100, 0, 100)
         .expect("holder lists");
     let err = v
@@ -275,8 +315,14 @@ fn adversary_f_cannot_record_sale_after_listing_expired() {
 
 #[test]
 fn adversary_f_double_list_is_rejected() {
-    let mut v = vault(Predicate::EpochReached { release_epoch: 1_000 }, 1);
-    v.list_for_sale(addr(0x02), 1_000, 100, 0, 50).expect("first list");
+    let mut v = vault(
+        Predicate::EpochReached {
+            release_epoch: 1_000,
+        },
+        1,
+    );
+    v.list_for_sale(addr(0x02), 1_000, 100, 0, 50)
+        .expect("first list");
     let err = v
         .list_for_sale(addr(0x02), 900, 90, 0, 50)
         .expect_err("second concurrent listing rejected");
@@ -331,10 +377,30 @@ fn predicate_evaluate_does_not_mutate_predicate() {
 fn predicate_evaluate_extreme_values_do_not_panic() {
     // Re-org / DoS safety: boundary inputs must never panic in debug.
     let cases = [
-        (Predicate::EpochReached { release_epoch: u64::MAX }, 0u64, 0u64),
-        (Predicate::EpochReached { release_epoch: 0 }, u64::MAX, u64::MAX),
-        (Predicate::EnergyDecaysBelow { threshold: 0 }, u64::MAX, u64::MAX),
-        (Predicate::EnergyDecaysBelow { threshold: u64::MAX }, u64::MAX, 0),
+        (
+            Predicate::EpochReached {
+                release_epoch: u64::MAX,
+            },
+            0u64,
+            0u64,
+        ),
+        (
+            Predicate::EpochReached { release_epoch: 0 },
+            u64::MAX,
+            u64::MAX,
+        ),
+        (
+            Predicate::EnergyDecaysBelow { threshold: 0 },
+            u64::MAX,
+            u64::MAX,
+        ),
+        (
+            Predicate::EnergyDecaysBelow {
+                threshold: u64::MAX,
+            },
+            u64::MAX,
+            0,
+        ),
     ];
     for (p, epoch_now, contract_energy) in cases {
         let _ = evaluate(&p, ctx(epoch_now, contract_energy));

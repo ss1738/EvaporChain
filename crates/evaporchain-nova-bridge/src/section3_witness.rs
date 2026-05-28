@@ -86,8 +86,8 @@ impl Section3Witness {
     pub fn canonical_shape(
         pp: &PublicParams<E1, E2, TrivialIncrementCircuit>,
     ) -> Result<Self, ExtractError> {
-        let pp_val = serde_json::to_value(pp)
-            .map_err(|e| ExtractError::SerdeError(e.to_string()))?;
+        let pp_val =
+            serde_json::to_value(pp).map_err(|e| ExtractError::SerdeError(e.to_string()))?;
         let shape = &pp_val["r1cs_shape_primary"];
         let num_cons = shape["num_cons"]
             .as_u64()
@@ -177,9 +177,21 @@ impl Section3Witness {
             e_primary: vec![ArkFr::from(0u64); num_cons],
             u_primary: ArkFr::from(1u64),
             x_primary: [ArkFr::from(0u64); 2],
-            a_primary: SparseTriple { num_rows: num_cons, num_cols, entries: vec![] },
-            b_primary: SparseTriple { num_rows: num_cons, num_cols, entries: vec![] },
-            c_primary: SparseTriple { num_rows: num_cons, num_cols, entries: vec![] },
+            a_primary: SparseTriple {
+                num_rows: num_cons,
+                num_cols,
+                entries: vec![],
+            },
+            b_primary: SparseTriple {
+                num_rows: num_cons,
+                num_cols,
+                entries: vec![],
+            },
+            c_primary: SparseTriple {
+                num_rows: num_cons,
+                num_cols,
+                entries: vec![],
+            },
             num_cons,
             num_vars,
             num_io,
@@ -207,10 +219,8 @@ pub fn extract_section3_witness(
     rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
     pp: &PublicParams<E1, E2, TrivialIncrementCircuit>,
 ) -> Result<Section3Witness, ExtractError> {
-    let rs_val = serde_json::to_value(rs)
-        .map_err(|e| ExtractError::SerdeError(e.to_string()))?;
-    let pp_val = serde_json::to_value(pp)
-        .map_err(|e| ExtractError::SerdeError(e.to_string()))?;
+    let rs_val = serde_json::to_value(rs).map_err(|e| ExtractError::SerdeError(e.to_string()))?;
+    let pp_val = serde_json::to_value(pp).map_err(|e| ExtractError::SerdeError(e.to_string()))?;
 
     // ── r_W_primary ────────────────────────────────────────────────────────
     let rw = &rs_val["r_W_primary"];
@@ -230,11 +240,14 @@ pub fn extract_section3_witness(
 
     // ── r1cs_shape_primary ─────────────────────────────────────────────────
     let shape = &pp_val["r1cs_shape_primary"];
-    let num_cons = shape["num_cons"].as_u64()
+    let num_cons = shape["num_cons"]
+        .as_u64()
         .ok_or_else(|| ExtractError::MissingField("num_cons".into()))? as usize;
-    let num_vars = shape["num_vars"].as_u64()
+    let num_vars = shape["num_vars"]
+        .as_u64()
         .ok_or_else(|| ExtractError::MissingField("num_vars".into()))? as usize;
-    let num_io = shape["num_io"].as_u64()
+    let num_io = shape["num_io"]
+        .as_u64()
         .ok_or_else(|| ExtractError::MissingField("num_io".into()))? as usize;
 
     // NCR5 (re-audit 2026-05-14): cap R1CS shape parameters so a
@@ -292,15 +305,19 @@ pub fn extract_section3_witness(
 
 // ── Parsing helpers ───────────────────────────────────────────────────────────
 
-fn parse_csr(v: &serde_json::Value, num_rows: usize, num_cols: usize)
-    -> Result<SparseTriple, String>
-{
-    let indptr  = parse_usize_vec(&v["indptr"])?;
+fn parse_csr(
+    v: &serde_json::Value,
+    num_rows: usize,
+    num_cols: usize,
+) -> Result<SparseTriple, String> {
+    let indptr = parse_usize_vec(&v["indptr"])?;
     let indices = parse_usize_vec(&v["indices"])?;
-    let data    = parse_le_hex_vec(&v["data"])?;
+    let data = parse_le_hex_vec(&v["data"])?;
     if indptr.len() != num_rows + 1 {
         return Err(format!(
-            "indptr.len()={} expected {}", indptr.len(), num_rows + 1
+            "indptr.len()={} expected {}",
+            indptr.len(),
+            num_rows + 1
         ));
     }
     let mut entries = Vec::with_capacity(data.len());
@@ -309,7 +326,11 @@ fn parse_csr(v: &serde_json::Value, num_rows: usize, num_cols: usize)
             entries.push((row, indices[j], data[j]));
         }
     }
-    Ok(SparseTriple { num_rows, num_cols, entries })
+    Ok(SparseTriple {
+        num_rows,
+        num_cols,
+        entries,
+    })
 }
 
 fn parse_le_hex_vec(v: &serde_json::Value) -> Result<Vec<ArkFr>, String> {
@@ -319,7 +340,9 @@ fn parse_le_hex_vec(v: &serde_json::Value) -> Result<Vec<ArkFr>, String> {
 
 /// 64-char LE hex string (halo2curves canonical form, no `0x` prefix).
 fn parse_le_hex_scalar(v: &serde_json::Value) -> Result<ArkFr, String> {
-    let s = v.as_str().ok_or_else(|| format!("expected string, got {v:?}"))?;
+    let s = v
+        .as_str()
+        .ok_or_else(|| format!("expected string, got {v:?}"))?;
     let clean = s.trim_start_matches("0x");
     if clean.len() != 64 {
         return Err(format!("expected 64 hex chars, got {}", clean.len()));
@@ -331,7 +354,6 @@ fn parse_le_hex_scalar(v: &serde_json::Value) -> Result<ArkFr, String> {
     }
     Ok(ArkFr::from_le_bytes_mod_order(&bytes))
 }
-
 
 fn parse_usize_vec(v: &serde_json::Value) -> Result<Vec<usize>, String> {
     let arr = v.as_array().ok_or("expected JSON array for usize vec")?;
@@ -371,34 +393,45 @@ mod tests {
             num_cols: 2,
             entries: vec![(0, 1, ArkFr::from(3u64))],
         };
-        let z   = vec![ArkFr::from(5u64), ArkFr::from(7u64)];
+        let z = vec![ArkFr::from(5u64), ArkFr::from(7u64)];
         let out = sparse_mv(&m, &z);
         assert_eq!(out[0], ArkFr::from(21u64), "3 * 7 = 21");
-        assert_eq!(out[1], ArkFr::from(0u64),  "row 1 has no entries");
+        assert_eq!(out[1], ArkFr::from(0u64), "row 1 has no entries");
     }
 
     #[test]
     fn sparse_mv_zero_matrix_yields_zeros() {
-        let m = SparseTriple { num_rows: 3, num_cols: 4, entries: vec![] };
+        let m = SparseTriple {
+            num_rows: 3,
+            num_cols: 4,
+            entries: vec![],
+        };
         let z = vec![
-            ArkFr::from(11u64), ArkFr::from(13u64),
-            ArkFr::from(17u64), ArkFr::from(19u64),
+            ArkFr::from(11u64),
+            ArkFr::from(13u64),
+            ArkFr::from(17u64),
+            ArkFr::from(19u64),
         ];
         let out = sparse_mv(&m, &z);
         assert_eq!(out.len(), 3);
-        for v in &out { assert_eq!(*v, ArkFr::from(0u64)); }
+        for v in &out {
+            assert_eq!(*v, ArkFr::from(0u64));
+        }
     }
 
     #[test]
     fn sparse_mv_multiple_entries_same_row_accumulate() {
         // Row 0: 5*z[0] + 7*z[2] = 5*10 + 7*100 = 750
         let m = SparseTriple {
-            num_rows: 1, num_cols: 4,
+            num_rows: 1,
+            num_cols: 4,
             entries: vec![(0, 0, ArkFr::from(5u64)), (0, 2, ArkFr::from(7u64))],
         };
         let z = vec![
-            ArkFr::from(10u64), ArkFr::from(999u64),
-            ArkFr::from(100u64), ArkFr::from(9999u64),
+            ArkFr::from(10u64),
+            ArkFr::from(999u64),
+            ArkFr::from(100u64),
+            ArkFr::from(9999u64),
         ];
         assert_eq!(sparse_mv(&m, &z)[0], ArkFr::from(750u64));
     }
@@ -407,13 +440,16 @@ mod tests {
     fn sparse_mv_dense_2x2_matches_manual_product() {
         // M = [[2,3],[5,7]] ; z = [11,13] ⇒ M*z = [61, 146]
         let m = SparseTriple {
-            num_rows: 2, num_cols: 2,
+            num_rows: 2,
+            num_cols: 2,
             entries: vec![
-                (0, 0, ArkFr::from(2u64)), (0, 1, ArkFr::from(3u64)),
-                (1, 0, ArkFr::from(5u64)), (1, 1, ArkFr::from(7u64)),
+                (0, 0, ArkFr::from(2u64)),
+                (0, 1, ArkFr::from(3u64)),
+                (1, 0, ArkFr::from(5u64)),
+                (1, 1, ArkFr::from(7u64)),
             ],
         };
-        let z   = vec![ArkFr::from(11u64), ArkFr::from(13u64)];
+        let z = vec![ArkFr::from(11u64), ArkFr::from(13u64)];
         let out = sparse_mv(&m, &z);
         assert_eq!(out[0], ArkFr::from(61u64));
         assert_eq!(out[1], ArkFr::from(146u64));
@@ -428,18 +464,29 @@ mod tests {
             u_primary: ArkFr::from(1u64),
             x_primary: [ArkFr::from(0u64); 2],
             a_primary: SparseTriple {
-                num_rows: 1, num_cols: 5,
+                num_rows: 1,
+                num_cols: 5,
                 entries: vec![(0, 0, ArkFr::from(1u64))],
             },
             b_primary: SparseTriple {
-                num_rows: 1, num_cols: 5,
+                num_rows: 1,
+                num_cols: 5,
                 entries: vec![(0, 1, ArkFr::from(1u64))],
             },
-            c_primary: SparseTriple { num_rows: 1, num_cols: 5, entries: vec![] },
-            num_cons: 1, num_vars: 2, num_io: 2,
+            c_primary: SparseTriple {
+                num_rows: 1,
+                num_cols: 5,
+                entries: vec![],
+            },
+            num_cons: 1,
+            num_vars: 2,
+            num_io: 2,
         };
         let err = s3.validate_rows_native().expect_err("row must fail");
-        assert!(err.contains("row 0"), "error must reference failing row: {err}");
+        assert!(
+            err.contains("row 0"),
+            "error must reference failing row: {err}"
+        );
     }
 
     #[test]
@@ -451,20 +498,26 @@ mod tests {
             u_primary: ArkFr::from(1u64),
             x_primary: [ArkFr::from(0u64); 2],
             a_primary: SparseTriple {
-                num_rows: 1, num_cols: 6,
+                num_rows: 1,
+                num_cols: 6,
                 entries: vec![(0, 0, ArkFr::from(1u64))],
             },
             b_primary: SparseTriple {
-                num_rows: 1, num_cols: 6,
+                num_rows: 1,
+                num_cols: 6,
                 entries: vec![(0, 1, ArkFr::from(1u64))],
             },
             c_primary: SparseTriple {
-                num_rows: 1, num_cols: 6,
+                num_rows: 1,
+                num_cols: 6,
                 entries: vec![(0, 2, ArkFr::from(1u64))],
             },
-            num_cons: 1, num_vars: 3, num_io: 2,
+            num_cons: 1,
+            num_vars: 3,
+            num_io: 2,
         };
-        s3.validate_rows_native().expect("3 * 4 == 1 * 12 must satisfy");
+        s3.validate_rows_native()
+            .expect("3 * 4 == 1 * 12 must satisfy");
     }
 
     #[test]
@@ -474,10 +527,24 @@ mod tests {
             e_primary: vec![],
             u_primary: ArkFr::from(99u64),
             x_primary: [ArkFr::from(11u64), ArkFr::from(12u64)],
-            a_primary: SparseTriple { num_rows: 0, num_cols: 0, entries: vec![] },
-            b_primary: SparseTriple { num_rows: 0, num_cols: 0, entries: vec![] },
-            c_primary: SparseTriple { num_rows: 0, num_cols: 0, entries: vec![] },
-            num_cons: 0, num_vars: 2, num_io: 2,
+            a_primary: SparseTriple {
+                num_rows: 0,
+                num_cols: 0,
+                entries: vec![],
+            },
+            b_primary: SparseTriple {
+                num_rows: 0,
+                num_cols: 0,
+                entries: vec![],
+            },
+            c_primary: SparseTriple {
+                num_rows: 0,
+                num_cols: 0,
+                entries: vec![],
+            },
+            num_cons: 0,
+            num_vars: 2,
+            num_io: 2,
         };
         let z = s3.build_z();
         assert_eq!(z.len(), 5);
@@ -515,8 +582,7 @@ mod tests {
         use crate::recursive_snark_fixture::generate_fixture;
         use nova_snark::nova::PublicParams;
         use nova_snark::provider::{
-            hyperkzg::EvaluationEngine as EE1,
-            ipa_pc::EvaluationEngine as EE2,
+            hyperkzg::EvaluationEngine as EE1, ipa_pc::EvaluationEngine as EE2,
         };
         use nova_snark::spartan::snark::RelaxedR1CSSNARK;
         use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
@@ -549,5 +615,4 @@ mod tests {
             .expect("primary RelaxedR1CS rows must be satisfied");
         println!("Section 3 native row check: PASS");
     }
-
 }

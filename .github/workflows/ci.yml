@@ -39,12 +39,7 @@ jobs:
       # comparisons) need source fixes too — file as separate punch
       # list item rather than blocking every CI run on them.
       - run: cargo clippy --workspace
-      # fmt-check temporarily non-blocking: many in-flight PRs from
-      # before the current rustfmt version have whitespace drift that
-      # is purely cosmetic and not worth burning per-PR CI time on.
-      # Run a follow-up sweep after the bulk merge completes.
       - run: cargo fmt --check
-        continue-on-error: true
 
   integration:
     name: Rust — integration tests

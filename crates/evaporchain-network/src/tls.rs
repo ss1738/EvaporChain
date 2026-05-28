@@ -360,14 +360,19 @@ mod tests {
     #[test]
     fn t_n3_is_enforcing_reports_mode_correctly() {
         let permissionless = PeerAuthority::permissionless();
-        assert!(!permissionless.is_enforcing(), "permissionless must report enforcing = false");
+        assert!(
+            !permissionless.is_enforcing(),
+            "permissionless must report enforcing = false"
+        );
 
         let permissioned = PeerAuthority::with_allowlist(vec![]);
-        assert!(permissioned.is_enforcing(), "with_allowlist must report enforcing = true");
+        assert!(
+            permissioned.is_enforcing(),
+            "with_allowlist must report enforcing = true"
+        );
 
-        let permissioned_with_peer = PeerAuthority::with_allowlist(vec![
-            Keypair::generate_ed25519().public().to_peer_id(),
-        ]);
+        let permissioned_with_peer =
+            PeerAuthority::with_allowlist(vec![Keypair::generate_ed25519().public().to_peer_id()]);
         assert!(permissioned_with_peer.is_enforcing());
     }
 
@@ -604,8 +609,8 @@ mod tests {
     /// match by-coincidence into a partially-read EVKV check.
     #[test]
     fn t1_20_is_pem_encrypted_short_file_returns_false() {
-        let dir = std::env::temp_dir()
-            .join(format!("evaporchain_tls_short_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("evaporchain_tls_short_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("tiny.bin");
         // 0-byte file.

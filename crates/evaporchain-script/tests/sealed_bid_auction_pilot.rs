@@ -40,10 +40,9 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("SealedBidAuction failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("SealedBidAuction failed to compile: {e:?}"))
+    let ast =
+        parser::parse(SOURCE).unwrap_or_else(|e| panic!("SealedBidAuction failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("SealedBidAuction failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -56,12 +55,7 @@ fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
     state
 }
 
-fn seal(
-    bc: &EvaporBytecode,
-    seller: [u8; 32],
-    item: &str,
-    reserve: u64,
-) -> HashMap<String, Value> {
+fn seal(bc: &EvaporBytecode, seller: [u8; 32], item: &str, reserve: u64) -> HashMap<String, Value> {
     let r = EvaporVM::execute(
         bc,
         "set_metadata",
@@ -168,7 +162,11 @@ fn full_round_trip_commit_reveal_settle() {
     let after_a_reveal = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500), Value::Str("alice-commit-hash".to_string())],
+        vec![
+            Value::U64(500),
+            Value::U64(500),
+            Value::Str("alice-commit-hash".to_string()),
+        ],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -177,7 +175,11 @@ fn full_round_trip_commit_reveal_settle() {
     let after_b_reveal = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(600), Value::U64(400), Value::Str("bob-commit-hash".to_string())],
+        vec![
+            Value::U64(600),
+            Value::U64(400),
+            Value::Str("bob-commit-hash".to_string()),
+        ],
         after_a_reveal.state_changes,
         &ctx(bob, seller, 320, 10_000),
     )
@@ -305,7 +307,11 @@ fn reveal_without_commit_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500), Value::Str("any".to_string())],
+        vec![
+            Value::U64(500),
+            Value::U64(500),
+            Value::Str("any".to_string()),
+        ],
         s1,
         &ctx(alice, seller, 210, 10_000),
     )
@@ -334,7 +340,11 @@ fn reveal_below_reserve_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(50), Value::U64(50), Value::Str("hash".to_string())],
+        vec![
+            Value::U64(50),
+            Value::U64(50),
+            Value::Str("hash".to_string()),
+        ],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -363,7 +373,11 @@ fn reveal_effective_exceeds_nominal_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(600), Value::Str("hash".to_string())],
+        vec![
+            Value::U64(500),
+            Value::U64(600),
+            Value::Str("hash".to_string()),
+        ],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -392,7 +406,11 @@ fn double_reveal_rejects() {
     let s_revealed = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500), Value::Str("hash".to_string())],
+        vec![
+            Value::U64(500),
+            Value::U64(500),
+            Value::Str("hash".to_string()),
+        ],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -400,7 +418,11 @@ fn double_reveal_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(600), Value::U64(600), Value::Str("hash".to_string())],
+        vec![
+            Value::U64(600),
+            Value::U64(600),
+            Value::Str("hash".to_string()),
+        ],
         s_revealed.state_changes,
         &ctx(alice, seller, 311, 10_000),
     )
@@ -452,7 +474,11 @@ fn settle_with_mismatched_effective_rejects() {
     let s_revealed = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500), Value::Str("hash".to_string())],
+        vec![
+            Value::U64(500),
+            Value::U64(500),
+            Value::Str("hash".to_string()),
+        ],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -491,7 +517,11 @@ fn non_seller_settle_rejects() {
     let s_r = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500), Value::Str("h".to_string())],
+        vec![
+            Value::U64(500),
+            Value::U64(500),
+            Value::Str("h".to_string()),
+        ],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )

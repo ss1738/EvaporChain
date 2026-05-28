@@ -9,21 +9,31 @@
 
 use evaporchain_mnemochain::{
     card::{Card, CardError, CardId},
-    curve::{Grade, SinghCurveError, MULT_AGAIN_BP, MULT_EASY_BP, MULT_GOOD_BP, MULT_HARD_BP,
-            STABILITY_FLOOR, update_stability},
+    curve::{
+        update_stability, Grade, SinghCurveError, MULT_AGAIN_BP, MULT_EASY_BP, MULT_GOOD_BP,
+        MULT_HARD_BP, STABILITY_FLOOR,
+    },
     trie::{MnemoTriePtr, TrieError},
     CredentialAttestation, ReviewOutcome,
 };
 
 // ── Actors ────────────────────────────────────────────────────────────────
-fn elena() -> [u8; 32] { [0xE1; 32] }
-fn felix() -> [u8; 32] { [0xFE; 32] }
+fn elena() -> [u8; 32] {
+    [0xE1; 32]
+}
+fn felix() -> [u8; 32] {
+    [0xFE; 32]
+}
 
 // ── Card helpers ──────────────────────────────────────────────────────────
 fn content(seed: u8) -> MnemoTriePtr {
     MnemoTriePtr::new([seed | 0x01; 32], 256).unwrap()
 }
-fn cid(b: u8) -> CardId { let mut x = [0u8; 32]; x[0] = b; x }
+fn cid(b: u8) -> CardId {
+    let mut x = [0u8; 32];
+    x[0] = b;
+    x
+}
 
 /// Fresh card: owner=elena, stability=10, initial_energy=1_000, minted_at=0.
 fn elena_card() -> Card {
@@ -75,14 +85,14 @@ fn singh_curve_exact_multipliers() {
     // Good:   100 * 250 / 100 = 250
     // Easy:   100 * 400 / 100 = 400
     assert_eq!(update_stability(100, Grade::Again).unwrap(), 10);
-    assert_eq!(update_stability(100, Grade::Hard).unwrap(),  120);
-    assert_eq!(update_stability(100, Grade::Good).unwrap(),  250);
-    assert_eq!(update_stability(100, Grade::Easy).unwrap(),  400);
+    assert_eq!(update_stability(100, Grade::Hard).unwrap(), 120);
+    assert_eq!(update_stability(100, Grade::Good).unwrap(), 250);
+    assert_eq!(update_stability(100, Grade::Easy).unwrap(), 400);
 
     // Grade-order monotonicity
     assert!(MULT_AGAIN_BP < MULT_HARD_BP);
-    assert!(MULT_HARD_BP  < MULT_GOOD_BP);
-    assert!(MULT_GOOD_BP  < MULT_EASY_BP);
+    assert!(MULT_HARD_BP < MULT_GOOD_BP);
+    assert!(MULT_GOOD_BP < MULT_EASY_BP);
 }
 
 #[test]
@@ -112,10 +122,10 @@ fn is_due_predicate_matches_stability_interval() {
     let mut card = elena_card(); // stability = 10
     card.review(elena(), Grade::Good, 0).unwrap(); // stability → 25
 
-    assert!(!card.is_due(0),  "epoch=0: 0 elapsed < 25 → not due");
+    assert!(!card.is_due(0), "epoch=0: 0 elapsed < 25 → not due");
     assert!(!card.is_due(24), "epoch=24: 24 elapsed < 25 → not due");
-    assert!( card.is_due(25), "epoch=25: 25 elapsed = 25 → due");
-    assert!( card.is_due(100),"epoch=100: overdue");
+    assert!(card.is_due(25), "epoch=25: 25 elapsed = 25 → due");
+    assert!(card.is_due(100), "epoch=100: overdue");
 }
 
 #[test]
@@ -124,7 +134,10 @@ fn energy_at_one_half_life_is_half() {
     // initial_energy = 1_000, stability = 10; energy_at(10) = 500.
     let card = elena_card();
     let energy = card.energy_at(10); // elapsed = 10 = stability → one half-life
-    assert_eq!(energy, 500, "energy at exactly one half-life must be initial/2");
+    assert_eq!(
+        energy, 500,
+        "energy at exactly one half-life must be initial/2"
+    );
 
     // At 0 elapsed energy equals initial
     assert_eq!(card.energy_at(0), 1_000);
@@ -139,8 +152,8 @@ fn lapse_then_recovery_stability_arc() {
     let mut card = elena_card(); // stability = 10
 
     // Build: Easy × 2 → 10 → 40 → 160
-    card.review(elena(), Grade::Easy, 10).unwrap();  // 40
-    card.review(elena(), Grade::Easy, 60).unwrap();  // 160
+    card.review(elena(), Grade::Easy, 10).unwrap(); // 40
+    card.review(elena(), Grade::Easy, 60).unwrap(); // 160
 
     let pre_lapse = card.stability;
     assert_eq!(pre_lapse, 160);
@@ -172,12 +185,16 @@ fn stability_extends_review_interval_monotonically() {
         assert!(
             card.stability > prior_stability,
             "Easy review must grow stability; was {}, now {}",
-            prior_stability, card.stability
+            prior_stability,
+            card.stability
         );
         prior_stability = card.stability;
     }
     // After 6 Easy reviews, stability must be much larger than initial 10
-    assert!(card.stability > 1_000, "6 Easy reviews from s=10 must reach >1000");
+    assert!(
+        card.stability > 1_000,
+        "6 Easy reviews from s=10 must reach >1000"
+    );
 }
 
 #[test]
@@ -186,7 +203,13 @@ fn portable_credential_attestation_all_fields() {
     // "I have provably reviewed card X across N sessions over T epochs."
     let mut card = elena_card();
     let review_epochs = [10u64, 50, 200, 800, 2000];
-    let grades = [Grade::Good, Grade::Good, Grade::Easy, Grade::Again, Grade::Good];
+    let grades = [
+        Grade::Good,
+        Grade::Good,
+        Grade::Easy,
+        Grade::Again,
+        Grade::Good,
+    ];
     for (&ep, &g) in review_epochs.iter().zip(grades.iter()) {
         card.review(elena(), g, ep).unwrap();
     }
@@ -195,8 +218,8 @@ fn portable_credential_attestation_all_fields() {
     assert_eq!(cred.card_id, cid(1));
     assert_eq!(cred.owner, elena());
     assert_eq!(cred.attempts, 5);
-    assert_eq!(cred.correct, 4);   // Good, Good, Easy, Good = 4
-    assert_eq!(cred.lapses, 1);    // Again = 1
+    assert_eq!(cred.correct, 4); // Good, Good, Easy, Good = 4
+    assert_eq!(cred.lapses, 1); // Again = 1
     assert_eq!(cred.last_reviewed_at_epoch, 2_000);
     assert_eq!(cred.current_stability, card.stability);
 
@@ -213,7 +236,7 @@ fn two_students_two_cards_fully_independent() {
     let mut felix_c = Card::mint(cid(2), felix(), content(0x22), 1_000, 10, 0).unwrap();
 
     elena_c.review(elena(), Grade::Easy, 100).unwrap(); // s → 40
-    felix_c.review(felix(), Grade::Again, 5).unwrap();  // s → 1 (floor)
+    felix_c.review(felix(), Grade::Again, 5).unwrap(); // s → 1 (floor)
 
     assert_eq!(elena_c.stability, 40);
     assert_eq!(felix_c.stability, 1);
@@ -233,7 +256,8 @@ fn adversarial_wrong_owner_review_rejected() {
     let err = card.review(felix(), Grade::Good, 10).unwrap_err();
     assert!(
         matches!(err, CardError::NotOwner { .. }),
-        "wrong caller must produce NotOwner, got {:?}", err
+        "wrong caller must produce NotOwner, got {:?}",
+        err
     );
     // Card is unmodified
     assert_eq!(card.attempts, 0);
@@ -247,8 +271,15 @@ fn adversarial_backward_time_review_rejected() {
 
     let err = card.review(elena(), Grade::Good, 50).unwrap_err();
     assert!(
-        matches!(err, CardError::ReviewBackwardsInTime { epoch: 50, last_reviewed_at: 100 }),
-        "backward review must produce ReviewBackwardsInTime, got {:?}", err
+        matches!(
+            err,
+            CardError::ReviewBackwardsInTime {
+                epoch: 50,
+                last_reviewed_at: 100
+            }
+        ),
+        "backward review must produce ReviewBackwardsInTime, got {:?}",
+        err
     );
     // Card is unmodified from the successful review
     assert_eq!(card.attempts, 1);
@@ -281,9 +312,15 @@ fn doctrine_moat_multi_year_review_history() {
 
     // Simulate 10 spaced review sessions over 3_000 epochs
     let sessions: &[(u64, Grade)] = &[
-        (10, Grade::Good), (35, Grade::Good), (100, Grade::Easy),
-        (300, Grade::Good), (500, Grade::Hard), (600, Grade::Good),
-        (900, Grade::Again), (920, Grade::Good), (1_500, Grade::Easy),
+        (10, Grade::Good),
+        (35, Grade::Good),
+        (100, Grade::Easy),
+        (300, Grade::Good),
+        (500, Grade::Hard),
+        (600, Grade::Good),
+        (900, Grade::Again),
+        (920, Grade::Good),
+        (1_500, Grade::Easy),
         (3_000, Grade::Good),
     ];
     for &(ep, g) in sessions {
@@ -292,10 +329,12 @@ fn doctrine_moat_multi_year_review_history() {
 
     let cred: CredentialAttestation = (&card).into();
     assert_eq!(cred.attempts, 10);
-    assert_eq!(cred.lapses, 1);                       // one Again
-    assert_eq!(cred.correct, 9);                       // nine non-Again
+    assert_eq!(cred.lapses, 1); // one Again
+    assert_eq!(cred.correct, 9); // nine non-Again
     assert_eq!(cred.last_reviewed_at_epoch, 3_000);
     // Stability grew substantially from initial 10
-    assert!(cred.current_stability > 100,
-        "10 mostly-correct reviews must grow stability well above 100");
+    assert!(
+        cred.current_stability > 100,
+        "10 mostly-correct reviews must grow stability well above 100"
+    );
 }

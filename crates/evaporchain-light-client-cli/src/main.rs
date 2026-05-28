@@ -216,13 +216,12 @@ fn run_get_state(
     // require one.
     let (key, source_label) = match (key_hex.as_deref(), account_hex.as_deref()) {
         (Some(k), None) => {
-            let k_arr = parse_hex_32(k)
-                .ok_or_else(|| format!("--key must be 64-char hex: {k}"))?;
+            let k_arr = parse_hex_32(k).ok_or_else(|| format!("--key must be 64-char hex: {k}"))?;
             (k_arr, format!("key={k}"))
         }
         (None, Some(a)) => {
-            let addr = parse_hex_32(a)
-                .ok_or_else(|| format!("--account must be 64-char hex: {a}"))?;
+            let addr =
+                parse_hex_32(a).ok_or_else(|| format!("--account must be 64-char hex: {a}"))?;
             // Same formula as evaporchain-state::db::trie_key_for_account:
             //   blake3("acct" || address)
             let mut buf = Vec::with_capacity(36);
@@ -242,9 +241,9 @@ fn run_get_state(
     };
 
     let expected = match expected_hex.as_deref() {
-        Some(s) => Some(
-            parse_hex_32(s).ok_or_else(|| format!("--expected must be 64-char hex: {s}"))?,
-        ),
+        Some(s) => {
+            Some(parse_hex_32(s).ok_or_else(|| format!("--expected must be 64-char hex: {s}"))?)
+        }
         None => None,
     };
 
@@ -302,7 +301,9 @@ fn run_watch(
                 println!("{}", serde_json::to_string(&out).unwrap());
             }
             Err(e) => {
-                eprintln!("warn: sync cycle failed (preserving last trusted tip {prev_height}): {e}");
+                eprintln!(
+                    "warn: sync cycle failed (preserving last trusted tip {prev_height}): {e}"
+                );
             }
         }
         std::thread::sleep(std::time::Duration::from_secs(poll_secs));
@@ -401,7 +402,12 @@ mod tests {
         ])
         .expect("must parse");
         match cli.command {
-            Cmd::GetState { node, key: k, account, .. } => {
+            Cmd::GetState {
+                node,
+                key: k,
+                account,
+                ..
+            } => {
                 assert_eq!(node, "http://localhost:8080");
                 assert_eq!(k, Some(key));
                 assert_eq!(account, None);
@@ -443,7 +449,10 @@ mod tests {
             "--account",
             &"1".repeat(64),
         ]);
-        assert!(result.is_err(), "clap should reject both --key and --account together");
+        assert!(
+            result.is_err(),
+            "clap should reject both --key and --account together"
+        );
     }
 
     #[test]

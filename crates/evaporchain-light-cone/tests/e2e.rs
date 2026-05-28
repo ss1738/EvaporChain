@@ -35,12 +35,12 @@
 //! INVENTION_STACK §4.1 #1: Light-Cone Consensus.
 
 use evaporchain_energy_kernel::{ChainLambda, Lambda};
+use evaporchain_light_cone::concurrency::MAX_ANTICHAIN_INPUT;
+use evaporchain_light_cone::dag::MAX_PARENTS_PER_BLOCK;
 use evaporchain_light_cone::{
     causal_future, causal_past, closing_antichain, comparable, is_antichain, is_concurrent,
     precedes, time_arrow_holds_at, Block, LightCone, LightConeError,
 };
-use evaporchain_light_cone::concurrency::MAX_ANTICHAIN_INPUT;
-use evaporchain_light_cone::dag::MAX_PARENTS_PER_BLOCK;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -60,19 +60,27 @@ fn build_partition_dag() -> LightCone {
     let mut lc = LightCone::new();
 
     // Genesis.
-    lc.insert(Block::new(id(0x00), vec![],             1_000, 0)).unwrap();
+    lc.insert(Block::new(id(0x00), vec![], 1_000, 0)).unwrap();
     // Group-1 chain.
-    lc.insert(Block::new(id(0xA1), vec![id(0x00)],       900, 1)).unwrap();
-    lc.insert(Block::new(id(0xA2), vec![id(0xA1)],       800, 2)).unwrap();
-    lc.insert(Block::new(id(0xA3), vec![id(0xA2)],       700, 3)).unwrap();
+    lc.insert(Block::new(id(0xA1), vec![id(0x00)], 900, 1))
+        .unwrap();
+    lc.insert(Block::new(id(0xA2), vec![id(0xA1)], 800, 2))
+        .unwrap();
+    lc.insert(Block::new(id(0xA3), vec![id(0xA2)], 700, 3))
+        .unwrap();
     // Group-2 chain (concurrent with A-chain).
-    lc.insert(Block::new(id(0xB1), vec![id(0x00)],       900, 1)).unwrap();
-    lc.insert(Block::new(id(0xB2), vec![id(0xB1)],       800, 2)).unwrap();
-    lc.insert(Block::new(id(0xB3), vec![id(0xB2)],       700, 3)).unwrap();
+    lc.insert(Block::new(id(0xB1), vec![id(0x00)], 900, 1))
+        .unwrap();
+    lc.insert(Block::new(id(0xB2), vec![id(0xB1)], 800, 2))
+        .unwrap();
+    lc.insert(Block::new(id(0xB3), vec![id(0xB2)], 700, 3))
+        .unwrap();
     // Merge block — parents are both concurrent leaves.
-    lc.insert(Block::new(id(0xCC), vec![id(0xA3), id(0xB3)], 600, 4)).unwrap();
+    lc.insert(Block::new(id(0xCC), vec![id(0xA3), id(0xB3)], 600, 4))
+        .unwrap();
     // Descendant of merge.
-    lc.insert(Block::new(id(0xDD), vec![id(0xCC)],       500, 5)).unwrap();
+    lc.insert(Block::new(id(0xDD), vec![id(0xCC)], 500, 5))
+        .unwrap();
 
     lc
 }
@@ -91,12 +99,26 @@ fn merge_block_causal_past_is_full_history() {
     let lc = build_partition_dag();
     let past = causal_past(&lc, id(0xCC));
 
-    for &expected in &[id(0x00), id(0xA1), id(0xA2), id(0xA3), id(0xB1), id(0xB2), id(0xB3)] {
-        assert!(past.contains(&expected),
-            "causal_past(M) must include block {:?}", expected);
+    for &expected in &[
+        id(0x00),
+        id(0xA1),
+        id(0xA2),
+        id(0xA3),
+        id(0xB1),
+        id(0xB2),
+        id(0xB3),
+    ] {
+        assert!(
+            past.contains(&expected),
+            "causal_past(M) must include block {:?}",
+            expected
+        );
     }
-    assert_eq!(past.len(), 7,
-        "causal_past(M) must contain exactly 7 ancestors");
+    assert_eq!(
+        past.len(),
+        7,
+        "causal_past(M) must contain exactly 7 ancestors"
+    );
 }
 
 #[test]
@@ -105,12 +127,27 @@ fn genesis_causal_future_is_all_descendants() {
     let lc = build_partition_dag();
     let future = causal_future(&lc, id(0x00));
 
-    for &expected in &[id(0xA1), id(0xA2), id(0xA3), id(0xB1), id(0xB2), id(0xB3), id(0xCC), id(0xDD)] {
-        assert!(future.contains(&expected),
-            "causal_future(G) must include block {:?}", expected);
+    for &expected in &[
+        id(0xA1),
+        id(0xA2),
+        id(0xA3),
+        id(0xB1),
+        id(0xB2),
+        id(0xB3),
+        id(0xCC),
+        id(0xDD),
+    ] {
+        assert!(
+            future.contains(&expected),
+            "causal_future(G) must include block {:?}",
+            expected
+        );
     }
-    assert_eq!(future.len(), 8,
-        "causal_future(G) must contain all 8 non-genesis blocks");
+    assert_eq!(
+        future.len(),
+        8,
+        "causal_future(G) must contain all 8 non-genesis blocks"
+    );
 }
 
 #[test]
@@ -149,10 +186,11 @@ fn precedes_is_anti_symmetric_no_cycles() {
         (id(0xCC), id(0xDD)),
     ];
     for &(anc, desc) in ancestor_descendant_pairs {
-        assert!(precedes(&lc, anc, desc),
-            "{anc:?} must precede {desc:?}");
-        assert!(!precedes(&lc, desc, anc),
-            "{desc:?} must NOT precede {anc:?} — no cycles");
+        assert!(precedes(&lc, anc, desc), "{anc:?} must precede {desc:?}");
+        assert!(
+            !precedes(&lc, desc, anc),
+            "{desc:?} must NOT precede {anc:?} — no cycles"
+        );
     }
 }
 
@@ -162,8 +200,10 @@ fn frontier_before_merge_is_valid_antichain() {
     // concurrent leaves. The antichain test must pass.
     let lc = build_partition_dag();
     let frontier = [id(0xA3), id(0xB3)];
-    assert!(is_antichain(&lc, &frontier),
-        "{{A3, B3}} must be a valid antichain");
+    assert!(
+        is_antichain(&lc, &frontier),
+        "{{A3, B3}} must be a valid antichain"
+    );
 }
 
 #[test]
@@ -172,7 +212,11 @@ fn leaves_after_merge_is_singleton() {
     // But in our DAG D is the last block — verify leaf count.
     let lc = build_partition_dag();
     let leaves: Vec<_> = lc.leaves().collect();
-    assert_eq!(leaves.len(), 1, "after merge+descendant, exactly one leaf (D)");
+    assert_eq!(
+        leaves.len(),
+        1,
+        "after merge+descendant, exactly one leaf (D)"
+    );
     assert_eq!(leaves[0], id(0xDD), "the single leaf must be D");
 }
 
@@ -180,23 +224,36 @@ fn leaves_after_merge_is_singleton() {
 fn closing_antichain_before_merge_has_two_concurrent_leaves() {
     // Before the merge is added, A3 and B3 are both leaves.
     let mut lc = LightCone::new();
-    lc.insert(Block::new(id(0x00), vec![],             1_000, 0)).unwrap();
-    lc.insert(Block::new(id(0xA1), vec![id(0x00)],       900, 1)).unwrap();
-    lc.insert(Block::new(id(0xA2), vec![id(0xA1)],       800, 2)).unwrap();
-    lc.insert(Block::new(id(0xA3), vec![id(0xA2)],       700, 3)).unwrap();
-    lc.insert(Block::new(id(0xB1), vec![id(0x00)],       900, 1)).unwrap();
-    lc.insert(Block::new(id(0xB2), vec![id(0xB1)],       800, 2)).unwrap();
-    lc.insert(Block::new(id(0xB3), vec![id(0xB2)],       700, 3)).unwrap();
+    lc.insert(Block::new(id(0x00), vec![], 1_000, 0)).unwrap();
+    lc.insert(Block::new(id(0xA1), vec![id(0x00)], 900, 1))
+        .unwrap();
+    lc.insert(Block::new(id(0xA2), vec![id(0xA1)], 800, 2))
+        .unwrap();
+    lc.insert(Block::new(id(0xA3), vec![id(0xA2)], 700, 3))
+        .unwrap();
+    lc.insert(Block::new(id(0xB1), vec![id(0x00)], 900, 1))
+        .unwrap();
+    lc.insert(Block::new(id(0xB2), vec![id(0xB1)], 800, 2))
+        .unwrap();
+    lc.insert(Block::new(id(0xB3), vec![id(0xB2)], 700, 3))
+        .unwrap();
 
     let antichain = closing_antichain(&lc);
-    assert_eq!(antichain.len(), 2,
-        "two concurrent chain-tips must form a 2-element antichain");
+    assert_eq!(
+        antichain.len(),
+        2,
+        "two concurrent chain-tips must form a 2-element antichain"
+    );
     let mut sorted = antichain.clone();
     sorted.sort();
-    assert!(sorted.contains(&id(0xA3)) && sorted.contains(&id(0xB3)),
-        "antichain must be {{A3, B3}}, got {sorted:?}");
-    assert!(is_antichain(&lc, &antichain),
-        "closing_antichain must always return a valid antichain");
+    assert!(
+        sorted.contains(&id(0xA3)) && sorted.contains(&id(0xB3)),
+        "antichain must be {{A3, B3}}, got {sorted:?}"
+    );
+    assert!(
+        is_antichain(&lc, &antichain),
+        "closing_antichain must always return a valid antichain"
+    );
 }
 
 #[test]
@@ -206,7 +263,7 @@ fn doctrine_time_arrow_ancestor_dominates_descendant() {
     //
     // G  (epoch=0, energy=1_000) vs D (epoch=5, energy=500) at t=10.
     let λ = lambda();
-    let genesis    = Block::new(id(0x00), vec![], 1_000, 0);
+    let genesis = Block::new(id(0x00), vec![], 1_000, 0);
     let descendant = Block::new(id(0xDD), vec![id(0xCC)], 500, 5);
 
     assert!(
@@ -229,10 +286,14 @@ fn doctrine_concurrent_blocks_have_no_path() {
     let past_a1 = causal_past(&lc, id(0xA1));
     let past_b1 = causal_past(&lc, id(0xB1));
 
-    assert!(!past_a1.contains(&id(0xB1)),
-        "B1 must NOT be in causal_past(A1)");
-    assert!(!past_b1.contains(&id(0xA1)),
-        "A1 must NOT be in causal_past(B1)");
+    assert!(
+        !past_a1.contains(&id(0xB1)),
+        "B1 must NOT be in causal_past(A1)"
+    );
+    assert!(
+        !past_b1.contains(&id(0xA1)),
+        "A1 must NOT be in causal_past(B1)"
+    );
 }
 
 // ── Adversarial fixture ───────────────────────────────────────────────────
@@ -242,9 +303,17 @@ fn adversarial_missing_parent_rejected() {
     // A block that references a parent not yet in the DAG must be
     // rejected. Prevents out-of-order injection.
     let mut lc = LightCone::new();
-    let err = lc.insert(Block::new(id(0x01), vec![id(0xFF)], 1_000, 1)).unwrap_err();
+    let err = lc
+        .insert(Block::new(id(0x01), vec![id(0xFF)], 1_000, 1))
+        .unwrap_err();
     assert!(
-        matches!(err, LightConeError::MissingParent { block: _, parent: _ }),
+        matches!(
+            err,
+            LightConeError::MissingParent {
+                block: _,
+                parent: _
+            }
+        ),
         "missing parent must be rejected, got {err:?}"
     );
 }
@@ -254,7 +323,9 @@ fn adversarial_duplicate_insert_rejected() {
     // The DAG is insert-only. Reinserting an existing block is an error.
     let mut lc = LightCone::new();
     lc.insert(Block::new(id(0x00), vec![], 1_000, 0)).unwrap();
-    let err = lc.insert(Block::new(id(0x00), vec![], 1_000, 0)).unwrap_err();
+    let err = lc
+        .insert(Block::new(id(0x00), vec![], 1_000, 0))
+        .unwrap_err();
     assert_eq!(err, LightConeError::AlreadyInserted(id(0x00)));
 }
 
@@ -267,10 +338,13 @@ fn adversarial_too_many_parents_rejected() {
 
     // Build MAX_PARENTS_PER_BLOCK + 1 parent blocks.
     for i in 1..=(MAX_PARENTS_PER_BLOCK as u8 + 1) {
-        lc.insert(Block::new(id(i), vec![id(0x00)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(i), vec![id(0x00)], 900, 1))
+            .unwrap();
     }
     let parent_ids: Vec<[u8; 32]> = (1..=(MAX_PARENTS_PER_BLOCK as u8 + 1)).map(id).collect();
-    let err = lc.insert(Block::new(id(0xFF), parent_ids, 800, 2)).unwrap_err();
+    let err = lc
+        .insert(Block::new(id(0xFF), parent_ids, 800, 2))
+        .unwrap_err();
     assert!(
         matches!(err, LightConeError::TooManyParents(_, n) if n == MAX_PARENTS_PER_BLOCK + 1),
         "too-many-parents must be rejected, got {err:?}"
@@ -284,8 +358,10 @@ fn adversarial_antichain_rejects_comparable_pair() {
     let lc = build_partition_dag();
     // G precedes A3 — not an antichain.
     let not_antichain = [id(0x00), id(0xA3)];
-    assert!(!is_antichain(&lc, &not_antichain),
-        "{{G, A3}} must NOT be an antichain (G precedes A3)");
+    assert!(
+        !is_antichain(&lc, &not_antichain),
+        "{{G, A3}} must NOT be an antichain (G precedes A3)"
+    );
 }
 
 #[test]
@@ -296,11 +372,14 @@ fn adversarial_antichain_input_overflow_returns_false() {
     lc.insert(Block::new(id(0x00), vec![], 1_000, 0)).unwrap();
     // Insert MAX_ANTICHAIN_INPUT + 1 concurrent children of genesis.
     for i in 1..=(MAX_ANTICHAIN_INPUT as u8 + 1) {
-        lc.insert(Block::new(id(i), vec![id(0x00)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(i), vec![id(0x00)], 900, 1))
+            .unwrap();
     }
     let big_set: Vec<[u8; 32]> = (1..=(MAX_ANTICHAIN_INPUT as u8 + 1)).map(id).collect();
-    assert!(!is_antichain(&lc, &big_set),
-        "antichain check with > MAX_ANTICHAIN_INPUT must return false (DoS guard)");
+    assert!(
+        !is_antichain(&lc, &big_set),
+        "antichain check with > MAX_ANTICHAIN_INPUT must return false (DoS guard)"
+    );
 }
 
 #[test]
@@ -308,18 +387,24 @@ fn adversarial_time_arrow_false_before_common_epoch() {
     // time_arrow_holds_at returns false when t < either block's
     // observed_epoch — the arrow is only meaningful at common time.
     let λ = lambda();
-    let ancestor   = Block::new(id(0x01), vec![], 1_000, 5);
+    let ancestor = Block::new(id(0x01), vec![], 1_000, 5);
     let descendant = Block::new(id(0x02), vec![id(0x01)], 900, 10);
 
     // t=3 is before ancestor's observed_epoch=5 → false.
-    assert!(!time_arrow_holds_at(&ancestor, &descendant, λ, 3),
-        "time arrow before ancestor's epoch must be false");
+    assert!(
+        !time_arrow_holds_at(&ancestor, &descendant, λ, 3),
+        "time arrow before ancestor's epoch must be false"
+    );
 
     // t=7 is after ancestor but before descendant's epoch=10 → false.
-    assert!(!time_arrow_holds_at(&ancestor, &descendant, λ, 7),
-        "time arrow before descendant's epoch must be false");
+    assert!(
+        !time_arrow_holds_at(&ancestor, &descendant, λ, 7),
+        "time arrow before descendant's epoch must be false"
+    );
 
     // t=10 → valid common epoch → true.
-    assert!(time_arrow_holds_at(&ancestor, &descendant, λ, 10),
-        "time arrow at common epoch must be true");
+    assert!(
+        time_arrow_holds_at(&ancestor, &descendant, λ, 10),
+        "time arrow at common epoch must be true"
+    );
 }

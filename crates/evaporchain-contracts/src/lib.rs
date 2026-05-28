@@ -20,9 +20,9 @@ mod decaying_dao;
 pub use decaying_dao::{DaoProposal, DaoProposalStatus, DecayingDaoState};
 
 const MAX_CONTRACT_STATE_BYTES: usize = 1_048_576; // 1 MB per contract
-// Audit C-RULE-001 (2026-05-15): cap rules per contract to bound O(n) rule
-// evaluation cost in call() and tick().  Without this an adversarial contract
-// with 10,000+ rules stalls the executor on every block tick.
+                                                   // Audit C-RULE-001 (2026-05-15): cap rules per contract to bound O(n) rule
+                                                   // evaluation cost in call() and tick().  Without this an adversarial contract
+                                                   // with 10,000+ rules stalls the executor on every block tick.
 const MAX_RULES_PER_CONTRACT: usize = 100;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4556,12 +4556,18 @@ mod tests {
     fn test_contract_template_names() {
         assert_eq!(ContractTemplate::DecayingToken.name(), "DecayingToken");
         assert_eq!(ContractTemplate::MortalNFT.name(), "MortalNFT");
-        assert_eq!(ContractTemplate::ThermodynamicEscrow.name(), "ThermodynamicEscrow");
+        assert_eq!(
+            ContractTemplate::ThermodynamicEscrow.name(),
+            "ThermodynamicEscrow"
+        );
         assert_eq!(ContractTemplate::DecayingAuction.name(), "DecayingAuction");
         assert_eq!(ContractTemplate::StakingPool.name(), "StakingPool");
         assert_eq!(ContractTemplate::DAOVote.name(), "DAOVote");
         assert_eq!(ContractTemplate::DecayingDAO.name(), "DecayingDAO");
-        assert_eq!(ContractTemplate::TemporalContract.name(), "TemporalContract");
+        assert_eq!(
+            ContractTemplate::TemporalContract.name(),
+            "TemporalContract"
+        );
     }
 
     // ─── DecayingToken: refresh_balance / burn insufficient ───────────────
@@ -4569,21 +4575,38 @@ mod tests {
     #[test]
     fn test_token_refresh_balance_adds_energy() {
         let mut eng = engine();
-        let id = eng.deploy(
-            ContractTemplate::DecayingToken,
-            serde_json::json!({
-                "name": "TC", "symbol": "T", "total_supply": 1000,
-                "decay_half_life": 100, "owner": addr_hex(1),
-            }),
-            vec![], addr(1), 1000, 100, 0,
-        ).unwrap();
+        let id = eng
+            .deploy(
+                ContractTemplate::DecayingToken,
+                serde_json::json!({
+                    "name": "TC", "symbol": "T", "total_supply": 1000,
+                    "decay_half_life": 100, "owner": addr_hex(1),
+                }),
+                vec![],
+                addr(1),
+                1000,
+                100,
+                0,
+            )
+            .unwrap();
         // Start alice at 0 balance, refresh_balance credits her 50.
-        eng.call(id, "refresh_balance",
+        eng.call(
+            id,
+            "refresh_balance",
             &serde_json::json!({"addr": addr_hex(2), "energy": 50}),
-            &addr(1), 0,
-        ).unwrap();
-        let r = eng.call(id, "balance_of",
-            &serde_json::json!({"addr": addr_hex(2)}), &addr(2), 0).unwrap();
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        let r = eng
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": addr_hex(2)}),
+                &addr(2),
+                0,
+            )
+            .unwrap();
         assert!(r.return_value["balance"].as_u64().unwrap() >= 50);
     }
 
@@ -4595,23 +4618,42 @@ mod tests {
     #[test]
     fn test_token_refresh_balance_unauthorized_rejected_vm001() {
         let mut eng = engine();
-        let id = eng.deploy(
-            ContractTemplate::DecayingToken,
-            serde_json::json!({
-                "name": "TC", "symbol": "T", "total_supply": 1000,
-                "decay_half_life": 100, "owner": addr_hex(1),
-            }),
-            vec![], addr(1), 1000, 100, 0,
-        ).unwrap();
+        let id = eng
+            .deploy(
+                ContractTemplate::DecayingToken,
+                serde_json::json!({
+                    "name": "TC", "symbol": "T", "total_supply": 1000,
+                    "decay_half_life": 100, "owner": addr_hex(1),
+                }),
+                vec![],
+                addr(1),
+                1000,
+                100,
+                0,
+            )
+            .unwrap();
         // addr(2) is NOT the creator (addr(1)) — must be rejected.
-        let res = eng.call(id, "refresh_balance",
+        let res = eng.call(
+            id,
+            "refresh_balance",
             &serde_json::json!({"addr": addr_hex(3), "energy": 1_000_000}),
-            &addr(2), 0,
+            &addr(2),
+            0,
         );
-        assert!(res.is_err(), "VM-001: non-creator refresh_balance must be rejected");
+        assert!(
+            res.is_err(),
+            "VM-001: non-creator refresh_balance must be rejected"
+        );
         // The balance must NOT have been credited.
-        let r = eng.call(id, "balance_of",
-            &serde_json::json!({"addr": addr_hex(3)}), &addr(3), 0).unwrap();
+        let r = eng
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": addr_hex(3)}),
+                &addr(3),
+                0,
+            )
+            .unwrap();
         assert_eq!(
             r.return_value["balance"].as_u64().unwrap(),
             0,
@@ -4622,27 +4664,43 @@ mod tests {
     #[test]
     fn test_token_burn_insufficient_balance_rejected() {
         let mut eng = engine();
-        let id = eng.deploy(
-            ContractTemplate::DecayingToken,
-            serde_json::json!({
-                "name": "TC", "symbol": "T", "total_supply": 1000,
-                "decay_half_life": 100, "owner": addr_hex(2),
-            }),
-            vec![], addr(1), 1000, 100, 0,
-        ).unwrap();
+        let id = eng
+            .deploy(
+                ContractTemplate::DecayingToken,
+                serde_json::json!({
+                    "name": "TC", "symbol": "T", "total_supply": 1000,
+                    "decay_half_life": 100, "owner": addr_hex(2),
+                }),
+                vec![],
+                addr(1),
+                1000,
+                100,
+                0,
+            )
+            .unwrap();
         // addr(2) owns the supply (50 tokens) but we try to burn 999 — InsufficientFunds
         // First give addr(2) a small balance via transfer from owner
-        eng.call(id, "transfer",
+        eng.call(
+            id,
+            "transfer",
             &serde_json::json!({"from": addr_hex(2), "to": addr_hex(3), "amount": 950}),
-            &addr(2), 0,
-        ).unwrap(); // addr(2) now has 50
-        // Burn 999 — addr(2) only has 50 → InsufficientFunds
-        let r = eng.call(id, "burn",
+            &addr(2),
+            0,
+        )
+        .unwrap(); // addr(2) now has 50
+                   // Burn 999 — addr(2) only has 50 → InsufficientFunds
+        let r = eng.call(
+            id,
+            "burn",
             &serde_json::json!({"from": addr_hex(2), "amount": 999}),
-            &addr(2), 0,
+            &addr(2),
+            0,
         );
-        assert!(matches!(r, Err(ContractError::InsufficientFunds { .. })),
-            "expected InsufficientFunds, got: {:?}", r);
+        assert!(
+            matches!(r, Err(ContractError::InsufficientFunds { .. })),
+            "expected InsufficientFunds, got: {:?}",
+            r
+        );
     }
 
     // ─── MortalNFT: token_info ─────────────────────────────────────────────
@@ -4650,17 +4708,30 @@ mod tests {
     #[test]
     fn test_nft_token_info_returns_correct_fields() {
         let mut eng = engine();
-        let id = eng.deploy(
-            ContractTemplate::MortalNFT,
-            serde_json::json!({"collection_name": "TestColl", "max_supply": 10}),
-            vec![], addr(1), 1000, 100, 0,
-        ).unwrap();
+        let id = eng
+            .deploy(
+                ContractTemplate::MortalNFT,
+                serde_json::json!({"collection_name": "TestColl", "max_supply": 10}),
+                vec![],
+                addr(1),
+                1000,
+                100,
+                0,
+            )
+            .unwrap();
         eng.call(id, "mint",
             &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 200, "half_life": 10}),
             &addr(1), 0,
         ).unwrap();
-        let r = eng.call(id, "token_info",
-            &serde_json::json!({"token_id": 1}), &addr(2), 5).unwrap();
+        let r = eng
+            .call(
+                id,
+                "token_info",
+                &serde_json::json!({"token_id": 1}),
+                &addr(2),
+                5,
+            )
+            .unwrap();
         assert_eq!(r.return_value["owner"].as_str().unwrap(), addr_hex(2));
         assert_eq!(r.return_value["metadata_hash"].as_str().unwrap(), "abc");
         assert!(r.return_value["current_energy"].as_u64().unwrap() > 0);
@@ -4669,13 +4740,24 @@ mod tests {
     #[test]
     fn test_nft_token_info_unknown_id_rejected() {
         let mut eng = engine();
-        let id = eng.deploy(
-            ContractTemplate::MortalNFT,
-            serde_json::json!({"collection_name": "TestColl", "max_supply": 10}),
-            vec![], addr(1), 1000, 100, 0,
-        ).unwrap();
-        let r = eng.call(id, "token_info",
-            &serde_json::json!({"token_id": 999}), &addr(2), 0);
+        let id = eng
+            .deploy(
+                ContractTemplate::MortalNFT,
+                serde_json::json!({"collection_name": "TestColl", "max_supply": 10}),
+                vec![],
+                addr(1),
+                1000,
+                100,
+                0,
+            )
+            .unwrap();
+        let r = eng.call(
+            id,
+            "token_info",
+            &serde_json::json!({"token_id": 999}),
+            &addr(2),
+            0,
+        );
         assert!(r.is_err());
     }
 
@@ -4691,8 +4773,13 @@ mod tests {
                 "duration_epochs": 20,
                 "reserve_price": 100,
             }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap()
+            vec![],
+            addr(1),
+            5000,
+            100,
+            0,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -4700,10 +4787,18 @@ mod tests {
         let mut eng = engine();
         let id = deploy_auction_simple(&mut eng);
         // bob bids 200 (above reserve)
-        eng.call(id, "bid",
-            &serde_json::json!({"bidder": addr_hex(2), "amount": 200}), &addr(2), 5).unwrap();
+        eng.call(
+            id,
+            "bid",
+            &serde_json::json!({"bidder": addr_hex(2), "amount": 200}),
+            &addr(2),
+            5,
+        )
+        .unwrap();
         // seller finalizes early
-        let r = eng.call(id, "finalize", &serde_json::json!({}), &addr(1), 5).unwrap();
+        let r = eng
+            .call(id, "finalize", &serde_json::json!({}), &addr(1), 5)
+            .unwrap();
         assert_eq!(r.return_value["price"].as_u64().unwrap(), 200);
     }
 
@@ -4720,18 +4815,31 @@ mod tests {
         let mut eng = engine();
         let id = deploy_auction(&mut eng);
         // bid 200 — above min_bid (100) but below reserve (500) → "reserve not met"
-        eng.call(id, "bid",
-            &serde_json::json!({"bidder": addr_hex(2), "amount": 200}), &addr(2), 5).unwrap();
+        eng.call(
+            id,
+            "bid",
+            &serde_json::json!({"bidder": addr_hex(2), "amount": 200}),
+            &addr(2),
+            5,
+        )
+        .unwrap();
         // seller finalizes — reserve not met
-        let r = eng.call(id, "finalize", &serde_json::json!({}), &addr(1), 5).unwrap();
-        assert_eq!(r.return_value["result"].as_str().unwrap(), "reserve not met");
+        let r = eng
+            .call(id, "finalize", &serde_json::json!({}), &addr(1), 5)
+            .unwrap();
+        assert_eq!(
+            r.return_value["result"].as_str().unwrap(),
+            "reserve not met"
+        );
     }
 
     #[test]
     fn test_auction_finalize_no_bids() {
         let mut eng = engine();
         let id = deploy_auction(&mut eng);
-        let r = eng.call(id, "finalize", &serde_json::json!({}), &addr(1), 5).unwrap();
+        let r = eng
+            .call(id, "finalize", &serde_json::json!({}), &addr(1), 5)
+            .unwrap();
         assert_eq!(r.return_value["result"].as_str().unwrap(), "no bids");
     }
 
@@ -4739,7 +4847,8 @@ mod tests {
     fn test_auction_finalize_already_finalized_rejected() {
         let mut eng = engine();
         let id = deploy_auction(&mut eng);
-        eng.call(id, "finalize", &serde_json::json!({}), &addr(1), 5).unwrap();
+        eng.call(id, "finalize", &serde_json::json!({}), &addr(1), 5)
+            .unwrap();
         let r = eng.call(id, "finalize", &serde_json::json!({}), &addr(1), 5);
         assert!(r.is_err());
     }
@@ -4748,20 +4857,35 @@ mod tests {
     fn test_auction_highest_bid_status_time_remaining() {
         let mut eng = engine();
         let id = deploy_auction_simple(&mut eng); // duration=20, reserve=100
-        // before any bids
-        let hb = eng.call(id, "highest_bid", &serde_json::json!({}), &addr(2), 0).unwrap();
+                                                  // before any bids
+        let hb = eng
+            .call(id, "highest_bid", &serde_json::json!({}), &addr(2), 0)
+            .unwrap();
         assert!(hb.return_value["highest"].is_null());
 
-        let status = eng.call(id, "status", &serde_json::json!({}), &addr(2), 0).unwrap();
+        let status = eng
+            .call(id, "status", &serde_json::json!({}), &addr(2), 0)
+            .unwrap();
         assert!(!status.return_value["finalized"].as_bool().unwrap());
         assert!(!status.return_value["ended"].as_bool().unwrap());
 
-        let tr = eng.call(id, "time_remaining", &serde_json::json!({}), &addr(2), 0).unwrap();
+        let tr = eng
+            .call(id, "time_remaining", &serde_json::json!({}), &addr(2), 0)
+            .unwrap();
         assert_eq!(tr.return_value["epochs_remaining"].as_u64().unwrap(), 20);
 
         // place a bid
-        eng.call(id, "bid", &serde_json::json!({"bidder": addr_hex(2), "amount": 150}), &addr(2), 5).unwrap();
-        let hb2 = eng.call(id, "highest_bid", &serde_json::json!({}), &addr(2), 5).unwrap();
+        eng.call(
+            id,
+            "bid",
+            &serde_json::json!({"bidder": addr_hex(2), "amount": 150}),
+            &addr(2),
+            5,
+        )
+        .unwrap();
+        let hb2 = eng
+            .call(id, "highest_bid", &serde_json::json!({}), &addr(2), 5)
+            .unwrap();
         assert_eq!(hb2.return_value["highest"]["amount"].as_u64().unwrap(), 150);
     }
 
@@ -4770,20 +4894,28 @@ mod tests {
     #[test]
     fn test_temporal_advance_to_final_phase_marks_completed() {
         let mut eng = engine();
-        let id = eng.deploy(
-            ContractTemplate::TemporalContract,
-            serde_json::json!({
-                "name": "T1",
-                "owner": addr_hex(1),
-                "phases": [
-                    {"name": "only_phase", "duration_epochs": 10, "min_energy": 0,
-                     "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
-                ]
-            }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap();
+        let id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "T1",
+                    "owner": addr_hex(1),
+                    "phases": [
+                        {"name": "only_phase", "duration_epochs": 10, "min_energy": 0,
+                         "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
         // Only one phase: advancing from it should mark completed
-        let r = eng.call(id, "advance_phase", &serde_json::json!({}), &addr(1), 5).unwrap();
+        let r = eng
+            .call(id, "advance_phase", &serde_json::json!({}), &addr(1), 5)
+            .unwrap();
         assert_eq!(r.return_value["status"].as_str().unwrap(), "completed");
     }
 
@@ -4802,8 +4934,13 @@ mod tests {
                      "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
                 ]
             }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap()
+            vec![],
+            addr(1),
+            5000,
+            100,
+            0,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -4813,101 +4950,146 @@ mod tests {
         // epoch 0: phase1 just started — tick at epoch 6 (> duration 5) should advance
         let result = eng.tick(6);
         // phase1 → phase2 transition logged
-        let found = result.events.iter().any(|e| e.contains("phase1") && e.contains("phase2"));
-        assert!(found, "expected phase1→phase2 event, got: {:?}", result.events);
+        let found = result
+            .events
+            .iter()
+            .any(|e| e.contains("phase1") && e.contains("phase2"));
+        assert!(
+            found,
+            "expected phase1→phase2 event, got: {:?}",
+            result.events
+        );
     }
 
     #[test]
     fn test_temporal_tick_autoadvance_final_phase_completes() {
         let mut eng = engine();
         // One auto-advance phase: when it expires, contract should complete
-        let _id = eng.deploy(
-            ContractTemplate::TemporalContract,
-            serde_json::json!({
-                "name": "AutoFinal",
-                "owner": addr_hex(1),
-                "phases": [
-                    {"name": "only_phase", "duration_epochs": 3, "min_energy": 0,
-                     "auto_advance": true, "allowed_methods": [], "energy_cost_per_epoch": 0}
-                ]
-            }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap();
+        let _id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "AutoFinal",
+                    "owner": addr_hex(1),
+                    "phases": [
+                        {"name": "only_phase", "duration_epochs": 3, "min_energy": 0,
+                         "auto_advance": true, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
         // Tick at epoch 4 (> duration 3) — final phase auto-completes
         let result = eng.tick(4);
         let completed = result.events.iter().any(|e| e.contains("completed"));
-        assert!(completed, "expected completion event, got: {:?}", result.events);
+        assert!(
+            completed,
+            "expected completion event, got: {:?}",
+            result.events
+        );
     }
 
     #[test]
     fn test_temporal_tick_callback_advance_phase() {
         let mut eng = engine();
-        let _id = eng.deploy(
-            ContractTemplate::TemporalContract,
-            serde_json::json!({
-                "name": "CallbackAdvance",
-                "owner": addr_hex(1),
-                "phases": [
-                    {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
-                     "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0},
-                    {"name": "phase2", "duration_epochs": 100, "min_energy": 0,
-                     "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
-                ],
-                "callbacks": [
-                    {"trigger_epoch": 5, "callback_name": "advance_phase",
-                     "args": {}, "fired": false}
-                ]
-            }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap();
+        let _id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "CallbackAdvance",
+                    "owner": addr_hex(1),
+                    "phases": [
+                        {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
+                         "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0},
+                        {"name": "phase2", "duration_epochs": 100, "min_energy": 0,
+                         "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ],
+                    "callbacks": [
+                        {"trigger_epoch": 5, "callback_name": "advance_phase",
+                         "args": {}, "fired": false}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
         let result = eng.tick(5);
-        let found = result.events.iter().any(|e| e.contains("advance_phase") || e.contains("callback"));
+        let found = result
+            .events
+            .iter()
+            .any(|e| e.contains("advance_phase") || e.contains("callback"));
         assert!(found, "expected callback event, got: {:?}", result.events);
     }
 
     #[test]
     fn test_temporal_tick_callback_set_data() {
         let mut eng = engine();
-        let _id = eng.deploy(
-            ContractTemplate::TemporalContract,
-            serde_json::json!({
-                "name": "CallbackSetData",
-                "owner": addr_hex(1),
-                "phases": [
-                    {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
-                     "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
-                ],
-                "callbacks": [
-                    {"trigger_epoch": 3, "callback_name": "set_data",
-                     "args": {"key": "status", "value": "active"}, "fired": false}
-                ]
-            }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap();
+        let _id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "CallbackSetData",
+                    "owner": addr_hex(1),
+                    "phases": [
+                        {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
+                         "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ],
+                    "callbacks": [
+                        {"trigger_epoch": 3, "callback_name": "set_data",
+                         "args": {"key": "status", "value": "active"}, "fired": false}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
         let result = eng.tick(3);
-        let found = result.events.iter().any(|e| e.contains("set data") || e.contains("callback"));
-        assert!(found, "expected set_data callback event, got: {:?}", result.events);
+        let found = result
+            .events
+            .iter()
+            .any(|e| e.contains("set data") || e.contains("callback"));
+        assert!(
+            found,
+            "expected set_data callback event, got: {:?}",
+            result.events
+        );
     }
 
     #[test]
     fn test_temporal_tick_callback_complete() {
         let mut eng = engine();
-        let id = eng.deploy(
-            ContractTemplate::TemporalContract,
-            serde_json::json!({
-                "name": "CallbackComplete",
-                "owner": addr_hex(1),
-                "phases": [
-                    {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
-                     "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
-                ],
-                "callbacks": [
-                    {"trigger_epoch": 7, "callback_name": "complete",
-                     "args": {}, "fired": false}
-                ]
-            }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap();
+        let id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "CallbackComplete",
+                    "owner": addr_hex(1),
+                    "phases": [
+                        {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
+                         "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ],
+                    "callbacks": [
+                        {"trigger_epoch": 7, "callback_name": "complete",
+                         "args": {}, "fired": false}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
         eng.tick(7);
         // After "complete" callback fires, read state directly (contract rejects method calls post-completion)
         let state = eng.get_state(id).unwrap();
@@ -4917,26 +5099,39 @@ mod tests {
     #[test]
     fn test_temporal_tick_custom_callback() {
         let mut eng = engine();
-        let _id = eng.deploy(
-            ContractTemplate::TemporalContract,
-            serde_json::json!({
-                "name": "CustomCallback",
-                "owner": addr_hex(1),
-                "phases": [
-                    {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
-                     "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
-                ],
-                "callbacks": [
-                    {"trigger_epoch": 2, "callback_name": "my_custom_hook",
-                     "args": {"extra": "data"}, "fired": false}
-                ]
-            }),
-            vec![], addr(1), 5000, 100, 0,
-        ).unwrap();
+        let _id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "CustomCallback",
+                    "owner": addr_hex(1),
+                    "phases": [
+                        {"name": "phase1", "duration_epochs": 100, "min_energy": 0,
+                         "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ],
+                    "callbacks": [
+                        {"trigger_epoch": 2, "callback_name": "my_custom_hook",
+                         "args": {"extra": "data"}, "fired": false}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
         let result = eng.tick(2);
         // Custom callbacks are logged in events
-        let found = result.events.iter().any(|e| e.contains("my_custom_hook") || e.contains("custom"));
-        assert!(found, "expected custom callback event, got: {:?}", result.events);
+        let found = result
+            .events
+            .iter()
+            .any(|e| e.contains("my_custom_hook") || e.contains("custom"));
+        assert!(
+            found,
+            "expected custom callback event, got: {:?}",
+            result.events
+        );
     }
 
     // Confirm exactly MAX_RULES_PER_CONTRACT rules are accepted.
@@ -4965,6 +5160,9 @@ mod tests {
             100,
             0,
         );
-        assert!(result.is_ok(), "exactly MAX_RULES_PER_CONTRACT should be accepted");
+        assert!(
+            result.is_ok(),
+            "exactly MAX_RULES_PER_CONTRACT should be accepted"
+        );
     }
 }

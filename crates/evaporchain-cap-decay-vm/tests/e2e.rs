@@ -49,13 +49,7 @@ impl StorageDelegationChain {
 
         // Company mints root capability: 1000 invokes/epoch, 10_000 energy.
         let root_id = registry
-            .mint(
-                COMPANY,
-                storage_authority(1000),
-                10_000,
-                [0x01; 32],
-                0,
-            )
+            .mint(COMPANY, storage_authority(1000), 10_000, [0x01; 32], 0)
             .expect("root mint must succeed");
 
         // Company attenuates to dept_head: 500 invokes/epoch, 5_000 energy.
@@ -99,9 +93,12 @@ impl StorageDelegationChain {
 fn delegation_chain_all_invocable_at_genesis() {
     let chain = StorageDelegationChain::build();
     let r = &chain.registry;
-    r.invoke_gate(chain.root_id).expect("root must be invocable");
-    r.invoke_gate(chain.dept_id).expect("dept must be invocable");
-    r.invoke_gate(chain.dev_id).expect("developer must be invocable");
+    r.invoke_gate(chain.root_id)
+        .expect("root must be invocable");
+    r.invoke_gate(chain.dept_id)
+        .expect("dept must be invocable");
+    r.invoke_gate(chain.dev_id)
+        .expect("developer must be invocable");
 }
 
 #[test]
@@ -322,5 +319,8 @@ fn energy_partial_decay_preserves_invocability_until_floor() {
 
     // Decay to floor — non-invocable.
     r.set_energy(id, ENERGY_FLOOR).unwrap();
-    assert!(matches!(r.invoke_gate(id), Err(RegistryError::NonInvocable(_))));
+    assert!(matches!(
+        r.invoke_gate(id),
+        Err(RegistryError::NonInvocable(_))
+    ));
 }

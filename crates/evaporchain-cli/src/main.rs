@@ -1533,8 +1533,7 @@ fn cmd_testnet_init(
         }
         per_validator_ips.to_vec()
     } else {
-        std::iter::repeat_n(listen_ip.to_string(), validators as usize)
-            .collect()
+        std::iter::repeat_n(listen_ip.to_string(), validators as usize).collect()
     };
 
     let root = PathBuf::from(out);

@@ -44,7 +44,10 @@ fn jagged_cost_matrix_errors() {
 fn imbalanced_supplies_vs_demands_errors() {
     let err = solve_transportation(&[10, 10], &[5, 5], &[vec![1, 1], vec![1, 1]]).unwrap_err();
     match err {
-        TransportError::Imbalanced { supply_total, demand_total } => {
+        TransportError::Imbalanced {
+            supply_total,
+            demand_total,
+        } => {
             assert_eq!(supply_total, 20);
             assert_eq!(demand_total, 10);
         }
@@ -118,12 +121,7 @@ fn uniform_cost_satisfies_flow_invariants() {
 
 #[test]
 fn zero_cost_route_used_preferentially() {
-    let sol = solve_transportation(
-        &[10, 10],
-        &[10, 10],
-        &[vec![0, 100], vec![100, 50]],
-    )
-    .unwrap();
+    let sol = solve_transportation(&[10, 10], &[10, 10], &[vec![0, 100], vec![100, 50]]).unwrap();
     assert_eq!(sol.flow[0][0], 10);
     assert_eq!(sol.flow[1][1], 10);
     assert_eq!(sol.total_cost, 500);
@@ -136,22 +134,50 @@ fn zero_cost_route_used_preferentially() {
 #[test]
 fn transport_error_displays_all_variants() {
     assert!(TransportError::EmptyInput.to_string().contains("empty"));
-    assert!(TransportError::JaggedMatrix.to_string().to_lowercase().contains("inconsistent")
-        || TransportError::JaggedMatrix.to_string().to_lowercase().contains("jagged")
-        || TransportError::JaggedMatrix.to_string().to_lowercase().contains("row"));
-    assert!(TransportError::DimensionMismatch { n_supply: 2, n_demand: 3, n: 1, m: 2 }
-        .to_string()
-        .contains("2"));
-    assert!(TransportError::Imbalanced { supply_total: 10, demand_total: 5 }
-        .to_string()
-        .contains("10"));
+    assert!(
+        TransportError::JaggedMatrix
+            .to_string()
+            .to_lowercase()
+            .contains("inconsistent")
+            || TransportError::JaggedMatrix
+                .to_string()
+                .to_lowercase()
+                .contains("jagged")
+            || TransportError::JaggedMatrix
+                .to_string()
+                .to_lowercase()
+                .contains("row")
+    );
+    assert!(TransportError::DimensionMismatch {
+        n_supply: 2,
+        n_demand: 3,
+        n: 1,
+        m: 2
+    }
+    .to_string()
+    .contains("2"));
+    assert!(TransportError::Imbalanced {
+        supply_total: 10,
+        demand_total: 5
+    }
+    .to_string()
+    .contains("10"));
 }
 
 #[test]
 fn transport_error_eq_discriminates() {
-    let a = TransportError::Imbalanced { supply_total: 1, demand_total: 2 };
-    let b = TransportError::Imbalanced { supply_total: 1, demand_total: 2 };
-    let c = TransportError::Imbalanced { supply_total: 1, demand_total: 3 };
+    let a = TransportError::Imbalanced {
+        supply_total: 1,
+        demand_total: 2,
+    };
+    let b = TransportError::Imbalanced {
+        supply_total: 1,
+        demand_total: 2,
+    };
+    let c = TransportError::Imbalanced {
+        supply_total: 1,
+        demand_total: 3,
+    };
     assert_eq!(a, b);
     assert_ne!(a, c);
     assert_ne!(a, TransportError::EmptyInput);

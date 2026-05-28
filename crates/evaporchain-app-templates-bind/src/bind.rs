@@ -178,10 +178,7 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("SCL", "object must be non-empty"));
             }
             if c.object.len() > MAX_VERB_OR_OBJECT_LEN {
-                return Err(invariant(
-                    "SCL",
-                    "object exceeds MAX_VERB_OR_OBJECT_LEN",
-                ));
+                return Err(invariant("SCL", "object exceeds MAX_VERB_OR_OBJECT_LEN"));
             }
             if c.duration_epochs == 0 {
                 return Err(invariant("SCL", "duration_epochs must be > 0"));

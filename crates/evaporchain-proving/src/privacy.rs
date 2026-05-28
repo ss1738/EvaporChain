@@ -252,11 +252,7 @@ impl NoteTree {
 ///  - `proof.siblings.len() == expected_depth`
 ///  - `proof.leaf_index < (1 << expected_depth)`
 #[allow(clippy::manual_is_multiple_of)]
-pub fn verify_merkle_proof(
-    leaf: &[u8; 32],
-    proof: &MerkleProof,
-    expected_depth: usize,
-) -> bool {
+pub fn verify_merkle_proof(leaf: &[u8; 32], proof: &MerkleProof, expected_depth: usize) -> bool {
     if proof.siblings.len() != expected_depth {
         return false;
     }
@@ -607,9 +603,8 @@ pub fn compute_balance_binding(
     output_blindings: &[[u8; 32]],
 ) -> [u8; 32] {
     let dst = kind.dst();
-    let mut preimage = Vec::with_capacity(
-        dst.len() + 24 + 32 * (input_blindings.len() + output_blindings.len()),
-    );
+    let mut preimage =
+        Vec::with_capacity(dst.len() + 24 + 32 * (input_blindings.len() + output_blindings.len()));
     preimage.extend_from_slice(dst);
     preimage.extend_from_slice(&sum_in.to_le_bytes());
     preimage.extend_from_slice(&sum_out.to_le_bytes());
@@ -634,8 +629,14 @@ pub fn verify_balance_binding(
     input_blindings: &[[u8; 32]],
     output_blindings: &[[u8; 32]],
 ) -> bool {
-    let expected =
-        compute_balance_binding(kind, sum_in, sum_out, fee, input_blindings, output_blindings);
+    let expected = compute_balance_binding(
+        kind,
+        sum_in,
+        sum_out,
+        fee,
+        input_blindings,
+        output_blindings,
+    );
     *binding == expected
 }
 
@@ -1580,8 +1581,14 @@ mod tests {
     fn test_balance_binding_correct() {
         let ib = [test_blinding(1), test_blinding(2)];
         let ob = [test_blinding(3)];
-        let binding =
-            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
+        let binding = compute_balance_binding(
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            900,
+            100,
+            &ib,
+            &ob,
+        );
         assert!(verify_balance_binding(
             &binding,
             BalanceBindingKind::PrivateTransfer,
@@ -1597,8 +1604,14 @@ mod tests {
     fn test_balance_binding_wrong_fee() {
         let ib = [test_blinding(1)];
         let ob = [test_blinding(2)];
-        let binding =
-            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
+        let binding = compute_balance_binding(
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            900,
+            100,
+            &ib,
+            &ob,
+        );
         // Wrong fee
         assert!(!verify_balance_binding(
             &binding,
@@ -1615,8 +1628,14 @@ mod tests {
     fn test_balance_binding_wrong_amounts() {
         let ib = [test_blinding(1)];
         let ob = [test_blinding(2)];
-        let binding =
-            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
+        let binding = compute_balance_binding(
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            900,
+            100,
+            &ib,
+            &ob,
+        );
         // Wrong sum_in
         assert!(!verify_balance_binding(
             &binding,
@@ -1643,8 +1662,14 @@ mod tests {
     fn test_balance_binding_wrong_blindings() {
         let ib = [test_blinding(1)];
         let ob = [test_blinding(2)];
-        let binding =
-            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
+        let binding = compute_balance_binding(
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            900,
+            100,
+            &ib,
+            &ob,
+        );
         // Tampered input blinding
         let tampered_ib = [test_blinding(99)];
         assert!(!verify_balance_binding(
@@ -1694,8 +1719,14 @@ mod tests {
 
         let b_unshield =
             compute_balance_binding(BalanceBindingKind::Unshield, 1000, 900, 100, &ib, &ob);
-        let b_xfer =
-            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
+        let b_xfer = compute_balance_binding(
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            900,
+            100,
+            &ib,
+            &ob,
+        );
 
         assert_ne!(
             b_unshield, b_xfer,

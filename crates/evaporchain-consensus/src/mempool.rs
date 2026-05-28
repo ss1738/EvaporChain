@@ -792,7 +792,10 @@ impl Mempool {
             // DeployTemplate: 32 (deployer) + 4 (template_class) + 8 (nonce)
             // + 8 (epoch) + len(params) + sig/pubkey.
             Transaction::DeployTemplate(t) => {
-                32 + 4 + 8 + 8 + t.params.len()
+                32 + 4
+                    + 8
+                    + 8
+                    + t.params.len()
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
@@ -970,12 +973,18 @@ mod tests {
         );
         // `submit_priority` shares `validate_submission`, so it must reject too.
         assert!(!pool.submit_priority(shield), "Shield via submit_priority");
-        assert!(!pool.submit_priority(unshield), "Unshield via submit_priority");
+        assert!(
+            !pool.submit_priority(unshield),
+            "Unshield via submit_priority"
+        );
         assert!(
             !pool.submit_priority(private_transfer),
             "PrivateTransfer via submit_priority"
         );
-        assert!(pool.is_empty(), "no shielded tx should have entered the pool");
+        assert!(
+            pool.is_empty(),
+            "no shielded tx should have entered the pool"
+        );
     }
 
     #[test]
@@ -1402,7 +1411,10 @@ mod tests {
         assert_eq!(pool.len(), MAX_TXS_PER_ACCOUNT);
 
         // The (cap+1)-th tx from sender A is rejected.
-        let over = pool.submit(dummy_tx_with_nonce_and_sender(1, MAX_TXS_PER_ACCOUNT as u64));
+        let over = pool.submit(dummy_tx_with_nonce_and_sender(
+            1,
+            MAX_TXS_PER_ACCOUNT as u64,
+        ));
         assert!(!over, "sender A past cap must be rejected");
 
         // Sender B is unaffected — anti-DoS fairness.
@@ -1433,7 +1445,8 @@ mod tests {
         // Cross the TTL boundary.
         pool.set_epoch(MAX_TX_AGE_EPOCHS + 1);
         assert_eq!(
-            pool.len(), 0,
+            pool.len(),
+            0,
             "all txs older than MAX_TX_AGE_EPOCHS must evict"
         );
         assert_eq!(pool.total_bytes(), 0, "byte counter resets after eviction");

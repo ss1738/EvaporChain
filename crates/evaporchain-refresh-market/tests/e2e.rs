@@ -29,12 +29,16 @@
 //!   becomes the chain's primary economic activity."
 
 use evaporchain_energy_kernel::{EnergyAccumulator, RefreshPool};
-use evaporchain_refresh_market::{pay_rent, reserve_slot, MarketError, RefreshMarket, rent_rate};
+use evaporchain_refresh_market::{pay_rent, rent_rate, reserve_slot, MarketError, RefreshMarket};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn ns_gaming() -> Vec<u8> { b"gaming-items".to_vec() }
-fn ns_social() -> Vec<u8> { b"social-creds".to_vec() }
+fn ns_gaming() -> Vec<u8> {
+    b"gaming-items".to_vec()
+}
+fn ns_social() -> Vec<u8> {
+    b"social-creds".to_vec()
+}
 
 const BASE: u64 = 1_000_000;
 const GAMING_CAP: u64 = 100;
@@ -73,8 +77,10 @@ fn full_two_namespace_lifecycle() {
     }
     assert_eq!(m.get(&ns_gaming()).unwrap().used, 50);
     let gaming_credit_after_50 = pool.accrued_for(&ns_gaming());
-    assert!(gaming_credit_after_50 < gaming_credit_before,
-        "reserving 50 slots must drain pool credit");
+    assert!(
+        gaming_credit_after_50 < gaming_credit_before,
+        "reserving 50 slots must drain pool credit"
+    );
 
     // ── Step 3: reserve all 10 slots in social-creds ─────────────────
     let social_credit_before = pool.accrued_for(&ns_social());
@@ -83,13 +89,23 @@ fn full_two_namespace_lifecycle() {
     }
     assert_eq!(m.get(&ns_social()).unwrap().used, 10);
     let social_credit_after_10 = pool.accrued_for(&ns_social());
-    assert!(social_credit_after_10 < social_credit_before,
-        "reserving 10 slots must drain social-creds pool credit");
+    assert!(
+        social_credit_after_10 < social_credit_before,
+        "reserving 10 slots must drain social-creds pool credit"
+    );
 
     // ── Step 4: 11th slot → NoCapacity ───────────────────────────────
     let err = reserve_slot(&mut m, &mut pool, &mut acc, &ns_social(), 10).unwrap_err();
-    assert!(matches!(err, MarketError::NoCapacity { used: 10, capacity: 10 }),
-        "full social-creds namespace must reject reservation, got {err:?}");
+    assert!(
+        matches!(
+            err,
+            MarketError::NoCapacity {
+                used: 10,
+                capacity: 10
+            }
+        ),
+        "full social-creds namespace must reject reservation, got {err:?}"
+    );
 
     // ── Step 5: pay 5 renewal epochs for gaming-items ─────────────────
     let before_renew = pool.accrued_for(&ns_gaming());
@@ -99,18 +115,27 @@ fn full_two_namespace_lifecycle() {
     // `used` must not change on pay_rent.
     assert_eq!(m.get(&ns_gaming()).unwrap().used, 50);
     let after_renew = pool.accrued_for(&ns_gaming());
-    assert!(after_renew < before_renew, "pay_rent must drain pool credit");
+    assert!(
+        after_renew < before_renew,
+        "pay_rent must drain pool credit"
+    );
 
     // ── Step 6: zero-epoch pay_rent is a no-op ────────────────────────
     let credit_snap = pool.accrued_for(&ns_gaming());
     let noop = pay_rent(&m, &mut pool, &mut acc, &ns_gaming(), 0, 51).unwrap();
     assert_eq!(noop.paid, 0);
-    assert_eq!(pool.accrued_for(&ns_gaming()), credit_snap,
-        "zero-epoch pay_rent must not drain credit");
+    assert_eq!(
+        pool.accrued_for(&ns_gaming()),
+        credit_snap,
+        "zero-epoch pay_rent must not drain credit"
+    );
 
     // ── Step 7: used is still 50 after all pay_rent calls ────────────
-    assert_eq!(m.get(&ns_gaming()).unwrap().used, 50,
-        "`used` must be unchanged by pay_rent");
+    assert_eq!(
+        m.get(&ns_gaming()).unwrap().used,
+        50,
+        "`used` must be unchanged by pay_rent"
+    );
 }
 
 // ── AMM curve: social-creds rate > gaming-items at full utilisation ──────────
@@ -123,8 +148,8 @@ fn scarce_namespace_commands_higher_rate_at_full_utilisation() {
     // But at `used=cap` both give approx base, with social being slightly higher.
     // The real distinction: at `used=9` on social vs `used=9` on gaming,
     // rate_social >> rate_gaming because social cap² is 100× smaller.
-    let rate_social_9 = rent_rate(9, SOCIAL_CAP, BASE).unwrap();   // 100 × BASE / 100
-    let rate_gaming_9 = rent_rate(9, GAMING_CAP, BASE).unwrap();   //  100 × BASE / 10000
+    let rate_social_9 = rent_rate(9, SOCIAL_CAP, BASE).unwrap(); // 100 × BASE / 100
+    let rate_gaming_9 = rent_rate(9, GAMING_CAP, BASE).unwrap(); //  100 × BASE / 10000
 
     assert!(rate_social_9 > rate_gaming_9,
         "social-creds (cap=10) at used=9 must cost more than gaming-items (cap=100) at used=9 (same BASE)");
@@ -133,11 +158,13 @@ fn scarce_namespace_commands_higher_rate_at_full_utilisation() {
 #[test]
 fn gaming_items_rate_quadratic_shape() {
     // Verify quadratic: rate at 90% utilisation is much higher than at 10%.
-    let r_low  = rent_rate(10,  GAMING_CAP, BASE).unwrap();
-    let r_high = rent_rate(90,  GAMING_CAP, BASE).unwrap();
+    let r_low = rent_rate(10, GAMING_CAP, BASE).unwrap();
+    let r_high = rent_rate(90, GAMING_CAP, BASE).unwrap();
     // (91/11)² ≈ 68.4×; allow for integer division rounding.
-    assert!(r_high > 50 * r_low,
-        "AMM curve must be quadratic: 90%-utilisation rate must be 50× floor");
+    assert!(
+        r_high > 50 * r_low,
+        "AMM curve must be quadratic: 90%-utilisation rate must be 50× floor"
+    );
 }
 
 // ── Adversarial checks ───────────────────────────────────────────────────────
@@ -146,8 +173,10 @@ fn gaming_items_rate_quadratic_shape() {
 fn reserve_unregistered_namespace_rejected() {
     let (mut m, mut pool, mut acc) = build_market();
     let err = reserve_slot(&mut m, &mut pool, &mut acc, &b"unknown".to_vec(), 0).unwrap_err();
-    assert!(matches!(err, MarketError::UnknownNamespace(_)),
-        "unregistered namespace must return UnknownNamespace, got {err:?}");
+    assert!(
+        matches!(err, MarketError::UnknownNamespace(_)),
+        "unregistered namespace must return UnknownNamespace, got {err:?}"
+    );
 }
 
 #[test]
@@ -161,8 +190,10 @@ fn reserve_with_insufficient_pool_credit_rejected() {
     // At base=1_000_000, cap=100, used=0: rate = 1_000_000 / 10_000 = 100.
     // Pool has only 1 Energy → Pool error.
     let err = reserve_slot(&mut m, &mut pool, &mut acc, &ns_gaming(), 0).unwrap_err();
-    assert!(matches!(err, MarketError::Pool(_)),
-        "insufficient pool credit must return Pool error, got {err:?}");
+    assert!(
+        matches!(err, MarketError::Pool(_)),
+        "insufficient pool credit must return Pool error, got {err:?}"
+    );
 }
 
 #[test]
@@ -200,8 +231,10 @@ fn amm_rate_is_non_decreasing_in_used() {
     let mut prev = rent_rate(0, cap, base).unwrap();
     for used in 1..=cap {
         let curr = rent_rate(used, cap, base).unwrap();
-        assert!(curr >= prev,
-            "rent_rate must be non-decreasing: rate({used}) < rate({prev})");
+        assert!(
+            curr >= prev,
+            "rent_rate must be non-decreasing: rate({used}) < rate({prev})"
+        );
         prev = curr;
     }
 }

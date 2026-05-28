@@ -530,7 +530,9 @@ impl BlsVerifier {
         #[cfg(not(any(feature = "bls-native", feature = "bls-portable")))]
         {
             let _ = (msg, sig, pk);
-            unreachable!("evaporchain-crypto requires either `bls-native` or `bls-portable` feature")
+            unreachable!(
+                "evaporchain-crypto requires either `bls-native` or `bls-portable` feature"
+            )
         }
     }
 
@@ -619,7 +621,12 @@ impl BlsVerifier {
         #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
         {
             let pk_byte_slices: Vec<&[u8]> = pks.iter().map(|p| p.0.as_slice()).collect();
-            return crate::bls_portable::aggregate_verify(msg, &agg_sig.0, &pk_byte_slices, BLS_DST);
+            return crate::bls_portable::aggregate_verify(
+                msg,
+                &agg_sig.0,
+                &pk_byte_slices,
+                BLS_DST,
+            );
         }
         #[cfg(not(any(feature = "bls-native", feature = "bls-portable")))]
         {

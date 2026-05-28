@@ -14,12 +14,16 @@
 //! VaultBlob threshold invariants are enforced; serde round-trip.
 
 use evaporchain_childkey::{
-    epochs_until_unlock, is_unlockable, mark_opened,
-    KeyShareCommitment, LetterError, SealedLetter, UnlockError, VaultBlob, VaultError,
+    epochs_until_unlock, is_unlockable, mark_opened, KeyShareCommitment, LetterError, SealedLetter,
+    UnlockError, VaultBlob, VaultError,
 };
 
-fn amara() -> [u8; 32] { [0xAA; 32] }
-fn zara()  -> [u8; 32] { [0x5A; 32] }
+fn amara() -> [u8; 32] {
+    [0xAA; 32]
+}
+fn zara() -> [u8; 32] {
+    [0x5A; 32]
+}
 
 fn validator(b: u8) -> KeyShareCommitment {
     let mut a = [0u8; 32];
@@ -33,7 +37,8 @@ fn vault_2_of_3() -> VaultBlob {
         4096,
         2,
         vec![validator(0x01), validator(0x02), validator(0x03)],
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 fn letter_18_years(birth_epoch: u64) -> SealedLetter {
@@ -42,11 +47,12 @@ fn letter_18_years(birth_epoch: u64) -> SealedLetter {
         amara(),
         zara(),
         birth_epoch,
-        18,   // unlock_age_years
-        365,  // epochs_per_year  → unlock at birth + 6_570
+        18,  // unlock_age_years
+        365, // epochs_per_year  → unlock at birth + 6_570
         vault_2_of_3(),
         birth_epoch,
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -54,15 +60,19 @@ fn letter_18_years(birth_epoch: u64) -> SealedLetter {
 #[test]
 fn unlock_epoch_is_birth_plus_age_times_scale() {
     let letter = letter_18_years(0);
-    assert_eq!(letter.unlock_epoch(), 18 * 365, "unlock_epoch must be 6_570");
+    assert_eq!(
+        letter.unlock_epoch(),
+        18 * 365,
+        "unlock_epoch must be 6_570"
+    );
 }
 
 #[test]
 fn before_unlock_not_unlockable() {
     let letter = letter_18_years(0);
     assert!(!is_unlockable(&letter, 0));
-    assert!(!is_unlockable(&letter, 3_285));    // midpoint
-    assert!(!is_unlockable(&letter, 6_569));    // one epoch before
+    assert!(!is_unlockable(&letter, 3_285)); // midpoint
+    assert!(!is_unlockable(&letter, 6_569)); // one epoch before
 }
 
 #[test]
@@ -80,7 +90,7 @@ fn after_unlock_still_unlockable_until_opened() {
 #[test]
 fn countdown_decreases_to_zero() {
     let letter = letter_18_years(0);
-    assert_eq!(epochs_until_unlock(&letter, 0),     6_570);
+    assert_eq!(epochs_until_unlock(&letter, 0), 6_570);
     assert_eq!(epochs_until_unlock(&letter, 3_000), 3_570);
     assert_eq!(epochs_until_unlock(&letter, 6_569), 1);
     assert_eq!(epochs_until_unlock(&letter, 6_570), 0);
@@ -92,10 +102,20 @@ fn oscar_early_open_rejected() {
     let mut letter = letter_18_years(0);
     let err = mark_opened(&mut letter, 1_000).unwrap_err();
     assert!(
-        matches!(err, UnlockError::NotYet { unlock_epoch: 6_570, now: 1_000 }),
-        "early open must be rejected: {:?}", err
+        matches!(
+            err,
+            UnlockError::NotYet {
+                unlock_epoch: 6_570,
+                now: 1_000
+            }
+        ),
+        "early open must be rejected: {:?}",
+        err
     );
-    assert!(letter.is_sealed(), "letter must remain sealed after failed open");
+    assert!(
+        letter.is_sealed(),
+        "letter must remain sealed after failed open"
+    );
 }
 
 #[test]
@@ -111,8 +131,14 @@ fn mark_opened_twice_errors() {
     mark_opened(&mut letter, 6_570).unwrap();
     let err = mark_opened(&mut letter, 7_000).unwrap_err();
     assert!(
-        matches!(err, UnlockError::AlreadyOpened { opened_at_epoch: 6_570 }),
-        "double-open must error: {:?}", err
+        matches!(
+            err,
+            UnlockError::AlreadyOpened {
+                opened_at_epoch: 6_570
+            }
+        ),
+        "double-open must error: {:?}",
+        err
     );
 }
 
@@ -121,7 +147,7 @@ fn parent_dies_seal_still_opens_on_schedule() {
     // §A5.5 doctrine: "Parent dies? Seal still opens on schedule."
     // Unlock is purely (status, unlock_epoch, epoch_now) — no sender liveness.
     let letter = letter_18_years(1_000); // birth at epoch 1_000 → unlock at 7_570
-    // Hypothetical: AMARA passes at epoch 4_000.
+                                         // Hypothetical: AMARA passes at epoch 4_000.
     let amara_passes = 4_000;
     // The letter is still sealed and inaccessible before unlock.
     assert!(!is_unlockable(&letter, amara_passes));
@@ -141,8 +167,16 @@ fn non_zero_birth_epoch_shifts_unlock() {
 fn zero_unlock_age_rejected_at_seal() {
     let vault = vault_2_of_3();
     let err = SealedLetter::seal(
-        [0x02; 32], amara(), zara(), 0, 0 /* zero age */, 365, vault, 0,
-    ).unwrap_err();
+        [0x02; 32],
+        amara(),
+        zara(),
+        0,
+        0, /* zero age */
+        365,
+        vault,
+        0,
+    )
+    .unwrap_err();
     assert_eq!(err, LetterError::ZeroUnlockAge);
 }
 
@@ -161,15 +195,21 @@ fn vault_zero_threshold_rejected() {
 #[test]
 fn vault_threshold_above_committee_rejected() {
     let err = VaultBlob::new([0; 32], 100, 5, vec![validator(0x01), validator(0x02)]).unwrap_err();
-    assert!(matches!(err, VaultError::ThresholdAboveCommittee { m: 5, n: 2 }));
+    assert!(matches!(
+        err,
+        VaultError::ThresholdAboveCommittee { m: 5, n: 2 }
+    ));
 }
 
 #[test]
 fn vault_duplicate_committee_rejected() {
     let err = VaultBlob::new(
-        [0; 32], 100, 2,
+        [0; 32],
+        100,
+        2,
         vec![validator(0x01), validator(0x01), validator(0x02)],
-    ).unwrap_err();
+    )
+    .unwrap_err();
     assert_eq!(err, VaultError::DuplicateInCommittee);
 }
 

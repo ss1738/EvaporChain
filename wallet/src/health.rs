@@ -749,7 +749,11 @@ mod tests {
 
     #[test]
     fn test_to_text_with_fix_covers_line_157() {
-        let checks = vec![CheckResult::warning("broken", "something wrong", "do this now")];
+        let checks = vec![CheckResult::warning(
+            "broken",
+            "something wrong",
+            "do this now",
+        )];
         let report = HealthReport::new(checks);
         let text = report.to_text();
         assert!(text.contains("Fix: do this now"));
@@ -758,8 +762,14 @@ mod tests {
     #[test]
     fn test_health_checker_from_defaults_covers_lines_188_195() {
         let checker = HealthChecker::from_defaults();
-        assert!(checker.keystore_path.to_string_lossy().contains("keystore.json"));
-        assert!(checker.config_path.to_string_lossy().contains("config.json"));
+        assert!(checker
+            .keystore_path
+            .to_string_lossy()
+            .contains("keystore.json"));
+        assert!(checker
+            .config_path
+            .to_string_lossy()
+            .contains("config.json"));
     }
 
     #[test]
@@ -767,7 +777,11 @@ mod tests {
         let dir = test_dir();
         let file_path = dir.join("not_a_dir");
         std::fs::write(&file_path, "hello").unwrap();
-        let checker = HealthChecker::new(file_path.clone(), dir.join("ks.json"), dir.join("config.json"));
+        let checker = HealthChecker::new(
+            file_path.clone(),
+            dir.join("ks.json"),
+            dir.join("config.json"),
+        );
         let result = checker.check_data_dir();
         assert_eq!(result.status, HealthStatus::Critical);
         cleanup(&dir);
@@ -787,7 +801,8 @@ mod tests {
     #[test]
     fn test_checker_permissions_no_keystore_covers_line_324() {
         let dir = test_dir();
-        let checker = HealthChecker::new(dir.clone(), dir.join("no_ks.json"), dir.join("config.json"));
+        let checker =
+            HealthChecker::new(dir.clone(), dir.join("no_ks.json"), dir.join("config.json"));
         let result = checker.check_permissions();
         assert_eq!(result.status, HealthStatus::Healthy);
         cleanup(&dir);

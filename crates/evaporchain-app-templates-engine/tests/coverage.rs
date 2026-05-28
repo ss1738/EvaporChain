@@ -1,8 +1,8 @@
 //! Coverage tests for the per-template typed-materialiser registry.
 
 use evaporchain_app_templates::class::{
-    MAYFLY, REFRESH_MARKET_NAMESPACE, SAP_AQ, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT, SHLM_BOUNTY,
-    TemplateClass,
+    TemplateClass, MAYFLY, REFRESH_MARKET_NAMESPACE, SAP_AQ, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT,
+    SHLM_BOUNTY,
 };
 use evaporchain_app_templates_engine::dispatch::{materialise, EngineError, TypedInit};
 use evaporchain_app_templates_materialise::instance::InstanceId;
@@ -79,8 +79,13 @@ fn sfsv_vault_dispatches_to_sfsv_variant() {
     // SFSV's parse may accept a permissive shape — if it errors, the
     // test should still surface as ParseFailed (not unknown template).
     let result = materialise(&inst(SFSV_VAULT, serde_json::to_vec(&body).unwrap()));
-    assert!(matches!(result, Ok(TypedInit::Sfsv(_)) | Err(EngineError::ParseFailed(_))),
-        "SFSV dispatch routes to Sfsv variant or surfaces ParseFailed; got {result:?}");
+    assert!(
+        matches!(
+            result,
+            Ok(TypedInit::Sfsv(_)) | Err(EngineError::ParseFailed(_))
+        ),
+        "SFSV dispatch routes to Sfsv variant or surfaces ParseFailed; got {result:?}"
+    );
 }
 
 #[test]
@@ -88,31 +93,46 @@ fn shlm_bounty_dispatches_to_shlm_variant() {
     let body = b"{}".to_vec();
     let result = materialise(&inst(SHLM_BOUNTY, body));
     // Either parses to Shlm or fails to parse — but routes to the right handler.
-    assert!(matches!(result, Ok(TypedInit::Shlm(_)) | Err(EngineError::ParseFailed(_))));
+    assert!(matches!(
+        result,
+        Ok(TypedInit::Shlm(_)) | Err(EngineError::ParseFailed(_))
+    ));
 }
 
 #[test]
 fn scl_lease_dispatches_to_scl_variant() {
     let result = materialise(&inst(SCL_LEASE, b"{}".to_vec()));
-    assert!(matches!(result, Ok(TypedInit::Scl(_)) | Err(EngineError::ParseFailed(_))));
+    assert!(matches!(
+        result,
+        Ok(TypedInit::Scl(_)) | Err(EngineError::ParseFailed(_))
+    ));
 }
 
 #[test]
 fn sap_aq_dispatches_to_sap_variant() {
     let result = materialise(&inst(SAP_AQ, b"{}".to_vec()));
-    assert!(matches!(result, Ok(TypedInit::Sap(_)) | Err(EngineError::ParseFailed(_))));
+    assert!(matches!(
+        result,
+        Ok(TypedInit::Sap(_)) | Err(EngineError::ParseFailed(_))
+    ));
 }
 
 #[test]
 fn mayfly_dispatches_to_mayfly_variant() {
     let result = materialise(&inst(MAYFLY, b"{}".to_vec()));
-    assert!(matches!(result, Ok(TypedInit::Mayfly(_)) | Err(EngineError::ParseFailed(_))));
+    assert!(matches!(
+        result,
+        Ok(TypedInit::Mayfly(_)) | Err(EngineError::ParseFailed(_))
+    ));
 }
 
 #[test]
 fn refresh_market_dispatches_to_refresh_market_variant() {
     let result = materialise(&inst(REFRESH_MARKET_NAMESPACE, b"{}".to_vec()));
-    assert!(matches!(result, Ok(TypedInit::RefreshMarket(_)) | Err(EngineError::ParseFailed(_))));
+    assert!(matches!(
+        result,
+        Ok(TypedInit::RefreshMarket(_)) | Err(EngineError::ParseFailed(_))
+    ));
 }
 
 // =================================================================
@@ -123,7 +143,10 @@ fn refresh_market_dispatches_to_refresh_market_variant() {
 fn engine_error_displays_both_variants() {
     let u = EngineError::UnknownTemplate(0xDEAD_BEEF).to_string();
     let p = EngineError::ParseFailed("some detail".into()).to_string();
-    assert!(u.contains("0xdeadbeef") || u.contains("DEADBEEF"), "got: {u}");
+    assert!(
+        u.contains("0xdeadbeef") || u.contains("DEADBEEF"),
+        "got: {u}"
+    );
     assert!(p.contains("some detail"), "got: {p}");
 }
 

@@ -31,9 +31,16 @@ fn config_default_field_values() {
 #[test]
 fn config_from_env_falls_back_to_defaults_when_unset() {
     let _guard = ENV_MUTEX.lock().unwrap();
-    for k in ["SFSV_NODE_URL", "SFSV_AUTH_TOKEN", "SFSV_CALLER_BYTE", "SFSV_BID_PORT"] {
+    for k in [
+        "SFSV_NODE_URL",
+        "SFSV_AUTH_TOKEN",
+        "SFSV_CALLER_BYTE",
+        "SFSV_BID_PORT",
+    ] {
         // SAFETY: serialised by ENV_MUTEX; no other thread touches SFSV_* vars.
-        unsafe { std::env::remove_var(k); }
+        unsafe {
+            std::env::remove_var(k);
+        }
     }
     let c = Config::from_env();
     assert_eq!(c.node_url, "http://localhost:8099");
@@ -94,7 +101,9 @@ fn make_vault() -> Vault {
         /* creator     */ [0x01; 32],
         /* future_self */ [0x02; 32],
         /* deposit     */ 1_000,
-        Predicate::EpochReached { release_epoch: 10_000 },
+        Predicate::EpochReached {
+            release_epoch: 10_000,
+        },
         /* created_at  */ 0,
     )
     .expect("valid vault")
@@ -121,7 +130,8 @@ fn auctioneer_new_is_empty() {
 #[test]
 fn register_listing_succeeds_then_double_register_is_rejected() {
     let mut a = Auctioneer::new();
-    a.register_listing(7, make_vault(), make_auction(1)).expect("first registration");
+    a.register_listing(7, make_vault(), make_auction(1))
+        .expect("first registration");
     assert!(a.is_tracked(7));
     let err = a
         .register_listing(7, make_vault(), make_auction(2))
@@ -132,7 +142,8 @@ fn register_listing_succeeds_then_double_register_is_rejected() {
 #[test]
 fn drop_listing_removes_tracking() {
     let mut a = Auctioneer::new();
-    a.register_listing(7, make_vault(), make_auction(1)).unwrap();
+    a.register_listing(7, make_vault(), make_auction(1))
+        .unwrap();
     assert!(a.is_tracked(7));
     a.drop_listing(7);
     assert!(!a.is_tracked(7));
@@ -163,7 +174,8 @@ fn submit_bid_for_unknown_listing_errors() {
 #[test]
 fn submit_bid_happy_path_accepts() {
     let mut a = Auctioneer::new();
-    a.register_listing(7, make_vault(), make_auction(1)).unwrap();
+    a.register_listing(7, make_vault(), make_auction(1))
+        .unwrap();
     let req = BidRequest {
         contract_id: 7,
         bidder_hex: "ab".repeat(32),
@@ -177,7 +189,8 @@ fn submit_bid_happy_path_accepts() {
 #[test]
 fn submit_bid_handles_0x_prefixed_hex() {
     let mut a = Auctioneer::new();
-    a.register_listing(7, make_vault(), make_auction(1)).unwrap();
+    a.register_listing(7, make_vault(), make_auction(1))
+        .unwrap();
     let prefixed = format!("0x{}", "cd".repeat(32));
     let req = BidRequest {
         contract_id: 7,
@@ -194,7 +207,8 @@ fn submit_bid_with_short_hex_rejected() {
     // audit 2026-05-18 (F2): short bidder_hex must be rejected, not
     // silently zero-padded to the genesis address [0u8;32].
     let mut a = Auctioneer::new();
-    a.register_listing(7, make_vault(), make_auction(1)).unwrap();
+    a.register_listing(7, make_vault(), make_auction(1))
+        .unwrap();
     let req = BidRequest {
         contract_id: 7,
         bidder_hex: "01".to_string(), // only 1 byte — must reject
@@ -219,7 +233,8 @@ fn try_clear_all_on_empty_registry_returns_empty() {
 #[test]
 fn try_clear_all_with_no_bids_keeps_listing_open() {
     let mut a = Auctioneer::new();
-    a.register_listing(7, make_vault(), make_auction(1)).unwrap();
+    a.register_listing(7, make_vault(), make_auction(1))
+        .unwrap();
     let cleared = a.try_clear_all(50);
     assert!(cleared.is_empty(), "no bid ⇒ no clear");
     assert!(a.is_tracked(7), "listing remains tracked");
@@ -246,7 +261,8 @@ fn auctioneer_serde_bidrequest_round_trips() {
 #[test]
 fn register_then_drop_then_register_succeeds_again() {
     let mut a = Auctioneer::new();
-    a.register_listing(7, make_vault(), make_auction(1)).unwrap();
+    a.register_listing(7, make_vault(), make_auction(1))
+        .unwrap();
     a.drop_listing(7);
     // After drop, re-registering must succeed.
     a.register_listing(7, make_vault(), make_auction(2))
@@ -273,7 +289,10 @@ fn parse_listing_returns_none_when_listed_is_false() {
             "release_epoch": 9_999_999
         }
     });
-    assert!(parse_listing(1, &json).is_none(), "unlisted vault must return None");
+    assert!(
+        parse_listing(1, &json).is_none(),
+        "unlisted vault must return None"
+    );
 }
 
 #[test]
@@ -295,7 +314,10 @@ fn parse_listing_returns_none_when_ceiling_le_floor() {
             "release_epoch": 99_999
         }
     });
-    assert!(parse_listing(2, &json).is_none(), "ceiling == floor must return None");
+    assert!(
+        parse_listing(2, &json).is_none(),
+        "ceiling == floor must return None"
+    );
 }
 
 #[test]
@@ -311,7 +333,10 @@ fn parse_listing_returns_none_when_duration_is_zero() {
             "release_epoch": 99_999
         }
     });
-    assert!(parse_listing(3, &json).is_none(), "zero duration must return None");
+    assert!(
+        parse_listing(3, &json).is_none(),
+        "zero duration must return None"
+    );
 }
 
 #[test]
@@ -334,7 +359,10 @@ fn parse_listing_returns_some_for_valid_state() {
     let result = parse_listing(4, &json);
     assert!(result.is_some(), "valid listed vault must return Some");
     let (vault, auction) = result.unwrap();
-    assert!(vault.is_locked(), "parsed vault must be in Listed/Locked state");
+    assert!(
+        vault.is_locked(),
+        "parsed vault must be in Listed/Locked state"
+    );
     assert!(vault.listing.is_some(), "vault listing must be set");
     assert_eq!(auction.ceiling, 1_000_000);
     assert_eq!(auction.floor, 100_000);
@@ -353,7 +381,10 @@ fn parse_listing_returns_none_when_ceiling_below_floor() {
             "release_epoch": 99_999
         }
     });
-    assert!(parse_listing(5, &json).is_none(), "floor > ceiling must return None");
+    assert!(
+        parse_listing(5, &json).is_none(),
+        "floor > ceiling must return None"
+    );
 }
 
 #[test]

@@ -405,17 +405,15 @@ mod tests {
         let pk_bytes = kp.public_key_bytes();
         let sk_bytes: Vec<u8> = kp.secret_key().to_vec();
         let derived = derive_address(&pk_bytes);
-        assert_ne!(derived, override_addr,
-            "test setup invariant: derived must differ from override");
+        assert_ne!(
+            derived, override_addr,
+            "test setup invariant: derived must differ from override"
+        );
 
         let mut store = KeyStore::new();
-        let returned_addr = store.import_key_with_address(
-            "validator-1",
-            "pass",
-            &pk_bytes,
-            &sk_bytes,
-            override_addr,
-        ).expect("import_key_with_address");
+        let returned_addr = store
+            .import_key_with_address("validator-1", "pass", &pk_bytes, &sk_bytes, override_addr)
+            .expect("import_key_with_address");
         assert_eq!(returned_addr, override_addr);
 
         // Round-trip the keystore through serde so we exercise the
@@ -428,8 +426,11 @@ mod tests {
         // the OVERRIDE address, not the derived address. Pre-fix this
         // assertion failed (signer used derive_address(pubkey)).
         let signer = WalletSigner::unlock(&reloaded, "validator-1", "pass").unwrap();
-        assert_eq!(*signer.address(), override_addr,
-            "signer must use the keystore entry's address, not re-derive from pubkey");
+        assert_eq!(
+            *signer.address(),
+            override_addr,
+            "signer must use the keystore entry's address, not re-derive from pubkey"
+        );
 
         // Also verify a signature signed by this signer carries the
         // SAME pubkey as the original keypair (so the chain can
@@ -446,8 +447,11 @@ mod tests {
         let mut store = KeyStore::new();
         let addr = store.generate_key("alice", "pass").unwrap();
         let signer = WalletSigner::unlock(&store, "alice", "pass").unwrap();
-        assert_eq!(*signer.address(), addr,
-            "default unlock must derive address from pubkey");
+        assert_eq!(
+            *signer.address(),
+            addr,
+            "default unlock must derive address from pubkey"
+        );
     }
 
     // ─── Hybrid Signer Tests ──────────────────────────────────────────
@@ -563,11 +567,10 @@ mod tests {
     #[test]
     fn test_set_signature_standard_variants() {
         use evaporchain_types::{
-            BlobTx, CallContractTx, CallScriptTx, ClaimDelegationTx, DelegateTx,
-            DeployContractTx, DeployScriptTx, DeployTemplateTx, DeferredTx,
-            GovernanceAction, GovernanceTx, RotateValidatorKeyTx, ShieldTx,
-            UndelegateTx, UpgradeContractTx, UserOpTx, ValidatorClaimStakeTx,
-            ValidatorExitTx, ValidatorStakeTx,
+            BlobTx, CallContractTx, CallScriptTx, ClaimDelegationTx, DeferredTx, DelegateTx,
+            DeployContractTx, DeployScriptTx, DeployTemplateTx, GovernanceAction, GovernanceTx,
+            RotateValidatorKeyTx, ShieldTx, UndelegateTx, UpgradeContractTx, UserOpTx,
+            ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
         };
 
         let signer = make_signer();

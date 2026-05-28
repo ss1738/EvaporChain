@@ -137,7 +137,9 @@ fn e2e_state_query_round_trip_via_http() {
     let mut trie = EnergyVerkleTrie::new();
     let key = [7u8; 32];
     let value = [42u8; 32];
-    trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
+    trie.insert(
+        key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0,
+    );
     let state_root = trie.root();
 
     // 2. Generate a real EnergyVerkleProof and serialize it to
@@ -151,10 +153,7 @@ fn e2e_state_query_round_trip_via_http() {
     //    /api/state/proof/{hex(key)}
     let key_hex: String = key.iter().map(|b| format!("{:02x}", b)).collect();
     let mut routes = std::collections::HashMap::new();
-    routes.insert(
-        format!("/api/state/proof/{}", key_hex),
-        proof_json,
-    );
+    routes.insert(format!("/api/state/proof/{}", key_hex), proof_json);
 
     // 4. Start the test HTTP server and point HttpTransport at it.
     let base_url = start_test_server(routes);
@@ -188,10 +187,7 @@ fn e2e_state_query_404_on_missing_proof() {
 
     let key = [9u8; 32];
     let result = lc.fetch_and_verify_state(&transport, &key, Some([0u8; 32]));
-    assert!(
-        result.is_err(),
-        "404 from server must surface as an error"
-    );
+    assert!(result.is_err(), "404 from server must surface as an error");
 }
 
 #[test]

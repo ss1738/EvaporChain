@@ -49,7 +49,12 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
         c if c == MAYFLY => &["initial_energy", "half_life"],
         // ── Marketplace lane ──────────────────────────────────────
         c if c == SDDC_AUCTION => &["ceiling", "floor", "lot_lambda", "duration_epochs"],
-        c if c == SFSV_VAULT => &["future_self", "predicate_type", "release_param", "deposit_amount"],
+        c if c == SFSV_VAULT => &[
+            "future_self",
+            "predicate_type",
+            "release_param",
+            "deposit_amount",
+        ],
         c if c == SHLM_BOUNTY => &["salary_cap", "min_freshness", "min_level"],
         c if c == SCL_LEASE => &["verb", "object", "duration_epochs"],
         c if c == SAP_AQ => &[

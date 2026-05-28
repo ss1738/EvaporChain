@@ -37,12 +37,12 @@
 //! `committed_hash_primary` and `committed_hash_secondary`
 //! witness slots now bind to actual Nova accumulator state. The
 //! Groth16 proof produced via [`crate::groth16_wrapper::prove`]
-//! still verifies with Sections 2 + 3 wired (when  / 
+//! still verifies with Sections 2 + 3 wired (when  /
 //! are called).  alone (no sections) still produces
 //! a satisfied CS via the Section 1 structural gate only.
 
 use crate::l_u_secondary_extract::{extract_committed_hashes_via_serde, ExtractError};
-use crate::recursive_snark_fixture::{TrivialIncrementCircuit, Scalar1, E1, E2};
+use crate::recursive_snark_fixture::{Scalar1, TrivialIncrementCircuit, E1, E2};
 use crate::scalar_adapter::primary_to_ark_fr;
 use crate::section2_witness::extract_section2_witness;
 use crate::section3_witness::extract_section3_witness;
@@ -68,7 +68,12 @@ pub fn build_circuit_from_fixture(
 
     // zi from the public `outputs()` accessor, type-changed
     // through the same-field scalar adapter.
-    let zi: Vec<ArkFr> = rs.outputs().iter().copied().map(primary_to_ark_fr).collect();
+    let zi: Vec<ArkFr> = rs
+        .outputs()
+        .iter()
+        .copied()
+        .map(primary_to_ark_fr)
+        .collect();
 
     // Real committed hashes from l_u_secondary.X[..2], via serde
     // reflection (see crate::l_u_secondary_extract).
@@ -140,12 +145,8 @@ pub(crate) fn real_provable_circuit() -> Option<NovaVerifierCircuit> {
         return None;
     }
     let circuit_step = TrivialIncrementCircuit;
-    let pp = PublicParams::<E1, E2, _>::setup(
-        &circuit_step,
-        &*S1::ck_floor(),
-        &*S2::ck_floor(),
-    )
-    .ok()?;
+    let pp =
+        PublicParams::<E1, E2, _>::setup(&circuit_step, &*S1::ck_floor(), &*S2::ck_floor()).ok()?;
     let (rs, pp_digest) = generate_fixture_with_digest(2).ok()?;
     let circuit = build_circuit_with_section2(&rs, pp_digest, dump)
         .ok()?
@@ -177,7 +178,11 @@ mod tests {
         let circuit = build_circuit_from_fixture(&rs).expect("build");
 
         assert_eq!(circuit.num_steps, 2, "num_steps must be 2");
-        assert_eq!(circuit.z0.len(), 1, "z0 arity matches TrivialIncrementCircuit");
+        assert_eq!(
+            circuit.z0.len(),
+            1,
+            "z0 arity matches TrivialIncrementCircuit"
+        );
         assert_eq!(circuit.zi.len(), 1, "zi arity matches z0");
         // TrivialIncrementCircuit increments [0] by 1 per step; after 2 steps z_i = 2.
         assert_eq!(
@@ -259,7 +264,10 @@ mod tests {
         let (rs, pp_digest) = generate_fixture_with_digest(2).expect("generate fixture");
         let circuit = build_circuit_with_section2(&rs, pp_digest, dump).expect("build with s2");
 
-        assert!(circuit.section2.is_some(), "section2 witness must be attached");
+        assert!(
+            circuit.section2.is_some(),
+            "section2 witness must be attached"
+        );
         assert!(circuit.section3.is_none(), "section3 must be absent here");
         let cs = ConstraintSystem::<ArkFr>::new_ref();
         let result = circuit.generate_constraints(cs.clone());
@@ -284,8 +292,7 @@ mod tests {
     fn build_circuit_with_section3_alone_is_unsatisfiable() {
         use nova_snark::nova::PublicParams;
         use nova_snark::provider::{
-            hyperkzg::EvaluationEngine as EE1,
-            ipa_pc::EvaluationEngine as EE2,
+            hyperkzg::EvaluationEngine as EE1, ipa_pc::EvaluationEngine as EE2,
         };
         use nova_snark::spartan::snark::RelaxedR1CSSNARK;
         use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
@@ -293,14 +300,17 @@ mod tests {
         type S2 = RelaxedR1CSSNARK<E2, EE2<E2>>;
 
         let circuit_step = crate::recursive_snark_fixture::TrivialIncrementCircuit;
-        let pp = PublicParams::<E1, E2, _>::setup(
-            &circuit_step, &*S1::ck_floor(), &*S2::ck_floor(),
-        ).expect("setup");
+        let pp =
+            PublicParams::<E1, E2, _>::setup(&circuit_step, &*S1::ck_floor(), &*S2::ck_floor())
+                .expect("setup");
 
         let rs = generate_fixture(2).expect("2-step fixture");
         let circuit = build_circuit_with_section3(&rs, &pp).expect("build with s3");
 
-        assert!(circuit.section3.is_some(), "section3 witness must be attached");
+        assert!(
+            circuit.section3.is_some(),
+            "section3 witness must be attached"
+        );
         assert!(circuit.section2.is_none(), "section2 must be absent here");
         let cs = ConstraintSystem::<ArkFr>::new_ref();
         let result = circuit.generate_constraints(cs.clone());
@@ -346,19 +356,13 @@ mod tests {
 
         // Circuit B — REAL prover circuit, BOTH sections from one fixture.
         let circuit_step = crate::recursive_snark_fixture::TrivialIncrementCircuit;
-        let pp = PublicParams::<E1, E2, _>::setup(
-            &circuit_step,
-            &*S1::ck_floor(),
-            &*S2::ck_floor(),
-        )
-        .expect("real pp setup");
-        let (rs, pp_digest) =
-            generate_fixture_with_digest(2).expect("2-step fixture+digest");
+        let pp =
+            PublicParams::<E1, E2, _>::setup(&circuit_step, &*S1::ck_floor(), &*S2::ck_floor())
+                .expect("real pp setup");
+        let (rs, pp_digest) = generate_fixture_with_digest(2).expect("2-step fixture+digest");
         let real = build_circuit_with_section2(&rs, pp_digest, dump)
             .expect("build real section2")
-            .with_section3(
-                extract_section3_witness(&rs, &pp).expect("extract real section3"),
-            );
+            .with_section3(extract_section3_witness(&rs, &pp).expect("extract real section3"));
         assert!(
             real.section2.is_some() && real.section3.is_some(),
             "real prover circuit must carry BOTH real sections"

@@ -34,10 +34,16 @@ fn block(height: u64, energy: u64, accounts: u64, lambda: u64) -> BlockSummary {
 
 #[test]
 fn rg_flow_with_zero_coarse_grain_returns_empty() {
-    let p = RgFlowParams { coarse_grain: 0, entropy_scale_mb: 0 };
+    let p = RgFlowParams {
+        coarse_grain: 0,
+        entropy_scale_mb: 0,
+    };
     let blocks: Vec<_> = (0..10).map(|i| block(i, 1_000, 5, 4096)).collect();
     let flow = rg_flow(&blocks, &p);
-    assert!(flow.is_empty(), "zero coarse_grain must short-circuit to empty");
+    assert!(
+        flow.is_empty(),
+        "zero coarse_grain must short-circuit to empty"
+    );
 }
 
 #[test]
@@ -53,7 +59,10 @@ fn rg_flow_on_empty_blocks_returns_empty() {
 
 #[test]
 fn rg_step_height_range_spans_window() {
-    let p = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 0 };
+    let p = RgFlowParams {
+        coarse_grain: 4,
+        entropy_scale_mb: 0,
+    };
     let w: Vec<_> = (10..14).map(|i| block(i, 1_000, 5, 4096)).collect();
     let ep = rg_step(&w, 7, &p).unwrap();
     assert_eq!(ep.height_start, 10);
@@ -63,18 +72,34 @@ fn rg_step_height_range_spans_window() {
 
 #[test]
 fn rg_step_zero_total_energy_yields_zero_entropy() {
-    let p = RgFlowParams { coarse_grain: 3, entropy_scale_mb: 1_000_000 };
-    let w = vec![block(0, 0, 0, 1_000), block(1, 0, 0, 1_000), block(2, 0, 0, 1_000)];
+    let p = RgFlowParams {
+        coarse_grain: 3,
+        entropy_scale_mb: 1_000_000,
+    };
+    let w = vec![
+        block(0, 0, 0, 1_000),
+        block(1, 0, 0, 1_000),
+        block(2, 0, 0, 1_000),
+    ];
     let ep = rg_step(&w, 0, &p).unwrap();
-    assert_eq!(ep.entropy_mb, 0, "zero total_energy short-circuits entropy to 0");
-    assert_eq!(ep.lambda_eff, 1_000, "with no entropy, no correction → λ_eff = avg_λ");
+    assert_eq!(
+        ep.entropy_mb, 0,
+        "zero total_energy short-circuits entropy to 0"
+    );
+    assert_eq!(
+        ep.lambda_eff, 1_000,
+        "with no entropy, no correction → λ_eff = avg_λ"
+    );
     assert_eq!(ep.energy_density, 0);
     assert_eq!(ep.effective_accounts, 0);
 }
 
 #[test]
 fn rg_step_energy_density_is_total_over_n() {
-    let p = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 0 };
+    let p = RgFlowParams {
+        coarse_grain: 4,
+        entropy_scale_mb: 0,
+    };
     let w = vec![
         block(0, 100, 1, 4096),
         block(1, 200, 1, 4096),
@@ -87,7 +112,10 @@ fn rg_step_energy_density_is_total_over_n() {
 
 #[test]
 fn rg_step_effective_accounts_is_total_over_n() {
-    let p = RgFlowParams { coarse_grain: 3, entropy_scale_mb: 0 };
+    let p = RgFlowParams {
+        coarse_grain: 3,
+        entropy_scale_mb: 0,
+    };
     let w = vec![
         block(0, 1_000, 5, 4096),
         block(1, 1_000, 10, 4096),
@@ -101,11 +129,11 @@ fn rg_step_effective_accounts_is_total_over_n() {
 fn rg_step_total_energy_saturating_add_safety() {
     // Two near-u64::MAX values must not panic on the energy sum.
     // (The fold uses saturating_add, so the result clamps at u64::MAX.)
-    let p = RgFlowParams { coarse_grain: 2, entropy_scale_mb: 0 };
-    let w = vec![
-        block(0, u64::MAX, 1, 1_000),
-        block(1, u64::MAX, 1, 1_000),
-    ];
+    let p = RgFlowParams {
+        coarse_grain: 2,
+        entropy_scale_mb: 0,
+    };
+    let w = vec![block(0, u64::MAX, 1, 1_000), block(1, u64::MAX, 1, 1_000)];
     let ep = rg_step(&w, 0, &p).expect("must not panic on saturation");
     // energy_density = saturating-clamped sum / 2 = u64::MAX / 2
     assert_eq!(ep.energy_density, u64::MAX / 2);
@@ -113,7 +141,10 @@ fn rg_step_total_energy_saturating_add_safety() {
 
 #[test]
 fn rg_step_single_block_window_succeeds() {
-    let p = RgFlowParams { coarse_grain: 1, entropy_scale_mb: 0 };
+    let p = RgFlowParams {
+        coarse_grain: 1,
+        entropy_scale_mb: 0,
+    };
     let w = vec![block(42, 9_999, 7, 4096)];
     let ep = rg_step(&w, 5, &p).unwrap();
     assert_eq!(ep.step, 5);
@@ -129,15 +160,12 @@ fn rg_step_single_block_window_succeeds() {
 
 #[test]
 fn rg_step_skewed_distribution_has_lower_entropy_than_uniform() {
-    let p = RgFlowParams { coarse_grain: 2, entropy_scale_mb: 0 };
-    let uniform = vec![
-        block(0, 1_000_000, 1, 4096),
-        block(1, 1_000_000, 1, 4096),
-    ];
-    let skewed = vec![
-        block(0, 1, 1, 4096),
-        block(1, 1_000_000, 1, 4096),
-    ];
+    let p = RgFlowParams {
+        coarse_grain: 2,
+        entropy_scale_mb: 0,
+    };
+    let uniform = vec![block(0, 1_000_000, 1, 4096), block(1, 1_000_000, 1, 4096)];
+    let skewed = vec![block(0, 1, 1, 4096), block(1, 1_000_000, 1, 4096)];
     let ep_uniform = rg_step(&uniform, 0, &p).unwrap();
     let ep_skewed = rg_step(&skewed, 0, &p).unwrap();
     assert!(
@@ -155,7 +183,10 @@ fn rg_step_skewed_distribution_has_lower_entropy_than_uniform() {
 
 #[test]
 fn rg_flow_advances_height_window_correctly() {
-    let p = RgFlowParams { coarse_grain: 3, entropy_scale_mb: 0 };
+    let p = RgFlowParams {
+        coarse_grain: 3,
+        entropy_scale_mb: 0,
+    };
     let blocks: Vec<_> = (0..9).map(|i| block(i, 1_000, 5, 4096)).collect();
     let flow = rg_flow(&blocks, &p);
     assert_eq!(flow.len(), 3);
@@ -187,7 +218,10 @@ fn block_summary_serde_round_trips() {
 
 #[test]
 fn effective_params_serde_round_trips() {
-    let p = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 0 };
+    let p = RgFlowParams {
+        coarse_grain: 4,
+        entropy_scale_mb: 0,
+    };
     let w: Vec<_> = (10..14).map(|i| block(i, 1_000, 5, 4096)).collect();
     let ep = rg_step(&w, 3, &p).unwrap();
     let json = serde_json::to_string(&ep).expect("serialize");
@@ -203,7 +237,10 @@ fn effective_params_serde_round_trips() {
 
 #[test]
 fn rg_flow_params_serde_round_trips() {
-    let p = RgFlowParams { coarse_grain: 256, entropy_scale_mb: 4_096 };
+    let p = RgFlowParams {
+        coarse_grain: 256,
+        entropy_scale_mb: 4_096,
+    };
     let json = serde_json::to_string(&p).expect("serialize");
     let back: RgFlowParams = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(back.coarse_grain, p.coarse_grain);

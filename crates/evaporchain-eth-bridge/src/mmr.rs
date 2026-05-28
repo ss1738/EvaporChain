@@ -55,10 +55,7 @@ pub struct InclusionProof {
 /// `target_index`, accumulate it into `peaks_left` or `peaks_right`.
 /// For the peak containing the target, run a Merkle inclusion-proof
 /// walk to populate `path`.
-pub fn build_and_prove(
-    leaves: &[[u8; 32]],
-    target_index: u64,
-) -> ([u8; 32], InclusionProof) {
+pub fn build_and_prove(leaves: &[[u8; 32]], target_index: u64) -> ([u8; 32], InclusionProof) {
     assert!(!leaves.is_empty());
     assert!((target_index as usize) < leaves.len());
 
@@ -157,7 +154,11 @@ fn merkle_path(leaves: &[[u8; 32]], leaf_index: usize) -> Vec<u8> {
     let mut layer: Vec<[u8; 32]> = leaves.to_vec();
     let mut idx = leaf_index;
     while layer.len() > 1 {
-        let sibling = if idx & 1 == 0 { layer[idx + 1] } else { layer[idx - 1] };
+        let sibling = if idx & 1 == 0 {
+            layer[idx + 1]
+        } else {
+            layer[idx - 1]
+        };
         path.extend_from_slice(&sibling);
         let mut next = Vec::with_capacity(layer.len() / 2);
         for pair in layer.chunks_exact(2) {
@@ -171,7 +172,11 @@ fn merkle_path(leaves: &[[u8; 32]], leaf_index: usize) -> Vec<u8> {
 
 /// keccak256 the canonical leaf encoding used by `EvaporationDispatcher.dispatch`:
 ///   `keccak256(objectId || evaporatedAtHeight || finalEnergy)`
-pub fn ghost_leaf_hash(object_id: [u8; 32], evaporated_at_height: u64, final_energy: u128) -> [u8; 32] {
+pub fn ghost_leaf_hash(
+    object_id: [u8; 32],
+    evaporated_at_height: u64,
+    final_energy: u128,
+) -> [u8; 32] {
     let mut buf = Vec::with_capacity(32 + 8 + 16);
     buf.extend_from_slice(&object_id);
     buf.extend_from_slice(&evaporated_at_height.to_be_bytes());

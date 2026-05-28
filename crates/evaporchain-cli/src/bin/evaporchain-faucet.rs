@@ -105,8 +105,8 @@ impl ClaimStore {
         let tmp = path.with_extension("json.tmp");
         {
             use std::io::Write;
-            let mut f = std::fs::File::create(&tmp)
-                .with_context(|| format!("create {}", tmp.display()))?;
+            let mut f =
+                std::fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
             f.write_all(json.as_bytes())
                 .with_context(|| format!("write {}", tmp.display()))?;
             f.sync_all()

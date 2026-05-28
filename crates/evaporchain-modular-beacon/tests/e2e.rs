@@ -11,8 +11,8 @@
 //! distinct τs produce distinct triples; tolerance guard works.
 
 use evaporchain_modular_beacon::{
-    compute_beacon, evaluate_delta, evaluate_e4, evaluate_e6,
-    verify_modular_identity, Beacon, BeaconError,
+    compute_beacon, evaluate_delta, evaluate_e4, evaluate_e6, verify_modular_identity, Beacon,
+    BeaconError,
 };
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -22,8 +22,8 @@ fn tau_zero_is_canonical_anchor() {
     // E_4(0)=1, E_6(0)=1, Δ(0)=0 — the substrate zero point.
     let b = compute_beacon(0);
     assert_eq!(b.tau, 0);
-    assert_eq!(b.e4, 1,    "E_4(0) must be 1");
-    assert_eq!(b.e6, 1,    "E_6(0) must be 1");
+    assert_eq!(b.e4, 1, "E_4(0) must be 1");
+    assert_eq!(b.e6, 1, "E_6(0) must be 1");
     assert_eq!(b.delta, 0, "Δ(0) must be 0");
 }
 
@@ -37,10 +37,12 @@ fn modular_identity_exact_at_tau_zero() {
 #[test]
 fn compute_beacon_is_deterministic() {
     // Two block producers independently compute the same τ=1 beacon.
-    let rahul  = compute_beacon(1);
+    let rahul = compute_beacon(1);
     let sunita = compute_beacon(1);
-    assert_eq!(rahul, sunita,
-        "beacon must be deterministic — validators must agree");
+    assert_eq!(
+        rahul, sunita,
+        "beacon must be deterministic — validators must agree"
+    );
 }
 
 #[test]
@@ -48,9 +50,11 @@ fn consecutive_epochs_produce_distinct_beacons() {
     // No two consecutive τs alias — beacon has per-epoch uniqueness.
     let beacons: Vec<Beacon> = (0u64..8).map(compute_beacon).collect();
     for i in 0..beacons.len() {
-        for j in (i+1)..beacons.len() {
-            assert_ne!(beacons[i], beacons[j],
-                "τ={i} and τ={j} must produce distinct beacons");
+        for j in (i + 1)..beacons.len() {
+            assert_ne!(
+                beacons[i], beacons[j],
+                "τ={i} and τ={j} must produce distinct beacons"
+            );
         }
     }
 }
@@ -59,15 +63,21 @@ fn consecutive_epochs_produce_distinct_beacons() {
 fn tau_one_e4_equals_sum_of_e4_coeffs() {
     // At q=1 every term q^k = 1 so E_4(1) = Σ E4_COEFFS.
     let expected: i128 = 1 + 240 + 2160 + 6720 + 17520 + 30240 + 60480 + 82560;
-    assert_eq!(evaluate_e4(1), expected,
-        "E_4(1) must equal sum of coefficient table");
+    assert_eq!(
+        evaluate_e4(1),
+        expected,
+        "E_4(1) must equal sum of coefficient table"
+    );
 }
 
 #[test]
 fn tau_one_delta_matches_known_value() {
     // δ(1) = 65275 per the unit test; e2e confirms the evaluate path.
-    assert_eq!(evaluate_delta(1), 65275,
-        "Δ(1) must equal the known q-expansion value");
+    assert_eq!(
+        evaluate_delta(1),
+        65275,
+        "Δ(1) must equal the known q-expansion value"
+    );
 }
 
 #[test]
@@ -75,12 +85,17 @@ fn e4_monotone_on_small_tau() {
     // E_4 has all-positive q-expansion coefficients so it grows monotonically.
     // E_6 does NOT — its first non-constant coefficient is −504, so E_6(1) < E_6(0).
     for tau in 0u64..4 {
-        assert!(evaluate_e4(tau + 1) > evaluate_e4(tau),
-            "E_4 must grow from τ={tau} to τ={}", tau + 1);
+        assert!(
+            evaluate_e4(tau + 1) > evaluate_e4(tau),
+            "E_4 must grow from τ={tau} to τ={}",
+            tau + 1
+        );
     }
     // E_6 drops from its τ=0 value of 1 once q > 0.
-    assert!(evaluate_e6(1) < evaluate_e6(0),
-        "E_6 must decrease at τ=1 (leading −504q coefficient)");
+    assert!(
+        evaluate_e6(1) < evaluate_e6(0),
+        "E_6 must decrease at τ=1 (leading −504q coefficient)"
+    );
 }
 
 #[test]
@@ -98,8 +113,10 @@ fn forged_beacon_component_caught_by_identity_check() {
 fn forged_e4_caught_by_identity_check() {
     let mut forged = compute_beacon(0);
     forged.e4 += 1;
-    assert!(verify_modular_identity(&forged, 0).is_err(),
-        "tampered e4 must fail identity check");
+    assert!(
+        verify_modular_identity(&forged, 0).is_err(),
+        "tampered e4 must fail identity check"
+    );
 }
 
 #[test]
@@ -108,19 +125,26 @@ fn identity_error_carries_diagnostic_fields() {
     let mut bad = compute_beacon(0);
     bad.delta = 1;
     let err = verify_modular_identity(&bad, 0).unwrap_err();
-    assert!(matches!(err, BeaconError::IdentityFailed { residual, .. } if residual > 0),
-        "error must carry non-zero residual: {:?}", err);
+    assert!(
+        matches!(err, BeaconError::IdentityFailed { residual, .. } if residual > 0),
+        "error must carry non-zero residual: {:?}",
+        err
+    );
 }
 
 #[test]
 fn tolerance_widens_acceptance_window() {
     // tau=2 fails at tolerance=0 but must pass at a large enough tolerance.
     let b = compute_beacon(2);
-    assert!(verify_modular_identity(&b, 0).is_err(),
-        "tau=2 must fail at tolerance=0");
+    assert!(
+        verify_modular_identity(&b, 0).is_err(),
+        "tau=2 must fail at tolerance=0"
+    );
     // A very large tolerance lets through the truncation residual.
-    assert!(verify_modular_identity(&b, i128::MAX).is_ok(),
-        "MAX tolerance must always pass");
+    assert!(
+        verify_modular_identity(&b, i128::MAX).is_ok(),
+        "MAX tolerance must always pass"
+    );
 }
 
 #[test]

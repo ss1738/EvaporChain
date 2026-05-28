@@ -31,9 +31,7 @@ use ark_bn254::{Fr as Bn254Fr, G1Affine, G1Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use nova_snark::nova::nifs::NIFS;
 use nova_snark::provider::GrumpkinEngine;
-use nova_snark::r1cs::{
-    R1CSShape, RelaxedR1CSInstance, RelaxedR1CSWitness,
-};
+use nova_snark::r1cs::{R1CSShape, RelaxedR1CSInstance, RelaxedR1CSWitness};
 use nova_snark::traits::ROConstants;
 
 /// Bridge ONE synthetic cross-curve scalar-mul tuple `(P, s, Q)`
@@ -85,15 +83,10 @@ pub fn run_synthetic_cf_accumulator(
     let art0 = bridge_cf_tuple(p0, s0, q0, ck_label)?;
     let shape = art0.shape.clone();
     let ck = art0.ck.clone();
-    let mut u_running = RelaxedR1CSInstance::<GrumpkinEngine>::from_r1cs_instance(
-        &ck,
-        &shape,
-        &art0.instance,
-    );
-    let mut w_running = RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(
-        &shape,
-        &art0.witness,
-    );
+    let mut u_running =
+        RelaxedR1CSInstance::<GrumpkinEngine>::from_r1cs_instance(&ck, &shape, &art0.instance);
+    let mut w_running =
+        RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(&shape, &art0.witness);
     // Sanity: starting relaxed pair satisfies shape.
     shape
         .is_sat_relaxed(&ck, &u_running, &w_running)
@@ -145,8 +138,7 @@ mod tests {
     #[test]
     fn cf_accumulator_3_steps_running_pair_stays_satisfied() {
         let (shape, ck, u_final, w_final) =
-            run_synthetic_cf_accumulator(3, b"ev-cf-ck")
-                .expect("3-step accumulator must complete");
+            run_synthetic_cf_accumulator(3, b"ev-cf-ck").expect("3-step accumulator must complete");
         shape
             .is_sat_relaxed(&ck, &u_final, &w_final)
             .expect("final accumulator pair must satisfy is_sat_relaxed");
@@ -158,8 +150,7 @@ mod tests {
     #[test]
     fn cf_accumulator_6_steps_running_pair_stays_satisfied() {
         let (shape, ck, u_final, w_final) =
-            run_synthetic_cf_accumulator(6, b"ev-cf-ck")
-                .expect("6-step accumulator must complete");
+            run_synthetic_cf_accumulator(6, b"ev-cf-ck").expect("6-step accumulator must complete");
         shape
             .is_sat_relaxed(&ck, &u_final, &w_final)
             .expect("final accumulator pair must satisfy is_sat_relaxed");

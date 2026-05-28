@@ -184,10 +184,13 @@ impl EvaporVM {
         // Audit G1 (2026-05-15): use checked_add to prevent overflow wrap-around.
         // Without this, gas_used near u64::MAX + a large cost wraps to near-zero,
         // allowing unbounded execution past the gas limit.
-        self.gas_used = self.gas_used.checked_add(cost).ok_or(ScriptError::GasLimitExceeded {
-            used: u64::MAX,
-            limit: self.gas_limit,
-        })?;
+        self.gas_used = self
+            .gas_used
+            .checked_add(cost)
+            .ok_or(ScriptError::GasLimitExceeded {
+                used: u64::MAX,
+                limit: self.gas_limit,
+            })?;
         if self.gas_used > self.gas_limit {
             return Err(ScriptError::GasLimitExceeded {
                 used: self.gas_used,
@@ -242,12 +245,13 @@ impl EvaporVM {
             // Hard step limit: prevents infinite loops independent of gas accounting.
             // Audit G2 (2026-05-15): checked_add prevents overflow wrap-around that
             // would reset step_count to near-zero and bypass the instruction limit.
-            self.step_count = self.step_count.checked_add(1).ok_or(
-                ScriptError::StepLimitExceeded {
-                    steps: u64::MAX,
-                    limit: MAX_STEPS,
-                }
-            )?;
+            self.step_count =
+                self.step_count
+                    .checked_add(1)
+                    .ok_or(ScriptError::StepLimitExceeded {
+                        steps: u64::MAX,
+                        limit: MAX_STEPS,
+                    })?;
             if self.step_count > MAX_STEPS {
                 return Err(ScriptError::StepLimitExceeded {
                     steps: self.step_count,
@@ -749,9 +753,7 @@ impl EvaporVM {
                         )));
                     }
                     let total = tc.checked_add(1).ok_or_else(|| {
-                        ScriptError::Runtime(
-                            "EmitEvent topic_count overflowed usize".into(),
-                        )
+                        ScriptError::Runtime("EmitEvent topic_count overflowed usize".into())
                     })?;
                     // Size-scale the gas charge so a near-cap event
                     // doesn't ride for the flat `GAS_EMIT_EVENT = 20`.
@@ -900,9 +902,7 @@ impl EvaporVM {
                         h.update(&ctx.vrf_randomness);
                         h.update(&iter.to_le_bytes());
                         let derived = h.finalize();
-                        let raw = u64::from_le_bytes(
-                            derived.as_bytes()[..8].try_into().unwrap(),
-                        );
+                        let raw = u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
                         if raw < zone || iter >= MAX_REJECTION_ITERS {
                             // Fallback at hard iteration cap: accept
                             // the biased sample. With probability
@@ -987,7 +987,7 @@ impl EvaporVM {
                             ScriptError::GasLimitExceeded {
                                 used: u64::MAX,
                                 limit: self.gas_limit,
-                            }
+                            },
                         )?;
                         if self.gas_used > self.gas_limit {
                             return Err(ScriptError::GasLimitExceeded {
@@ -1204,8 +1204,9 @@ impl EvaporVM {
                 // per block by looping `hash(megabyte_str)` while
                 // gas_used stayed near 10⁷ × GAS_CALL = 10⁸ — under
                 // the DEFAULT_GAS_LIMIT.
-                let extra =
-                    (input.len() as u64).div_ceil(32).saturating_mul(GAS_HASH_PER_32B);
+                let extra = (input.len() as u64)
+                    .div_ceil(32)
+                    .saturating_mul(GAS_HASH_PER_32B);
                 self.charge_gas(GAS_HASH_BASE.saturating_add(extra))?;
                 // Use a simple hash → u64 for in-VM use
                 let hash = {
@@ -1252,7 +1253,9 @@ impl EvaporVM {
                 // pay to_string()-builds-the-string and only then
                 // charge for it.
                 let est = estimated_to_string_bytes(&val);
-                let extra = (est as u64).div_ceil(32).saturating_mul(GAS_TOSTRING_PER_32B);
+                let extra = (est as u64)
+                    .div_ceil(32)
+                    .saturating_mul(GAS_TOSTRING_PER_32B);
                 self.charge_gas(GAS_TOSTRING_BASE.saturating_add(extra))?;
                 let s = match val {
                     Value::Str(s) => s,
@@ -1289,9 +1292,7 @@ impl EvaporVM {
                 }
                 let max = self.pop()?.as_u64()?;
                 if max == 0 {
-                    return Err(ScriptError::Runtime(
-                        "random_range: max must be > 0".into(),
-                    ));
+                    return Err(ScriptError::Runtime("random_range: max must be > 0".into()));
                 }
                 const MAX_REJECTION_ITERS: u32 = 64;
                 let zone = u64::MAX - (u64::MAX % max);
@@ -1302,8 +1303,7 @@ impl EvaporVM {
                     h.update(&ctx.vrf_randomness);
                     h.update(&iter.to_le_bytes());
                     let derived = h.finalize();
-                    let raw =
-                        u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
+                    let raw = u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
                     if raw < zone || iter >= MAX_REJECTION_ITERS {
                         break raw % max;
                     }
@@ -2578,12 +2578,10 @@ contract WithStateArray {
     /// defense-in-depth).
     #[test]
     fn audit_l8_emit_event_topic_count_overflow_rejected() {
-        let ops = vec![
-            Op::EmitEvent {
-                name: "Spam".into(),
-                topic_count: usize::MAX,
-            },
-        ];
+        let ops = vec![Op::EmitEvent {
+            name: "Spam".into(),
+            topic_count: usize::MAX,
+        }];
         let bytecode = make_bytecode("run", ops);
         let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
         assert!(result.is_err());
@@ -2593,8 +2591,8 @@ contract WithStateArray {
     #[test]
     fn audit_l8_emit_event_normal_topic_count_works() {
         let ops = vec![
-            Op::Push(Value::U64(1)), // topic[0]
-            Op::Push(Value::U64(2)), // topic[1]
+            Op::Push(Value::U64(1)),                // topic[0]
+            Op::Push(Value::U64(2)),                // topic[1]
             Op::Push(Value::Str("payload".into())), // data
             Op::EmitEvent {
                 name: "Ok".into(),
@@ -2631,8 +2629,7 @@ contract WithStateArray {
         ops.push(Op::Push(Value::U64(0)));
         ops.push(Op::Return);
         let bytecode = make_bytecode("spam", ops);
-        let result =
-            EvaporVM::execute(&bytecode, "spam", vec![], empty_state(), &test_ctx());
+        let result = EvaporVM::execute(&bytecode, "spam", vec![], empty_state(), &test_ctx());
         assert!(result.is_err(), "expected gas exhaustion");
         let err = format!("{:?}", result.unwrap_err());
         assert!(
@@ -2651,8 +2648,7 @@ contract WithStateArray {
             Op::Return,
         ];
         let bytecode = make_bytecode("run", ops);
-        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx())
-            .unwrap();
+        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx()).unwrap();
         match r.return_value {
             Value::U64(_) => {}
             other => panic!("expected U64 hash, got {other:?}"),
@@ -2678,8 +2674,7 @@ contract WithStateArray {
         ops.push(Op::Push(Value::U64(0)));
         ops.push(Op::Return);
         let bytecode = make_bytecode("spam", ops);
-        let result =
-            EvaporVM::execute(&bytecode, "spam", vec![], empty_state(), &test_ctx());
+        let result = EvaporVM::execute(&bytecode, "spam", vec![], empty_state(), &test_ctx());
         assert!(result.is_err(), "expected gas exhaustion");
     }
 
@@ -2718,11 +2713,7 @@ contract WithStateArray {
             for seed in 0u8..=255 {
                 let mut ctx = test_ctx();
                 ctx.vrf_randomness = [seed; 32];
-                let ops = vec![
-                    Op::Push(Value::U64(max)),
-                    Op::RandomRange,
-                    Op::Return,
-                ];
+                let ops = vec![Op::Push(Value::U64(max)), Op::RandomRange, Op::Return];
                 let bytecode = make_bytecode("run", ops);
                 let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &ctx)
                     .expect("RandomRange should succeed");
@@ -2730,7 +2721,10 @@ contract WithStateArray {
                     Value::U64(v) => v,
                     other => panic!("expected U64, got {other:?}"),
                 };
-                assert!(v < max, "SCR-N6: RandomRange({max}) returned {v} >= {max} for seed={seed}");
+                assert!(
+                    v < max,
+                    "SCR-N6: RandomRange({max}) returned {v} >= {max} for seed={seed}"
+                );
             }
         }
     }
@@ -2743,7 +2737,11 @@ contract WithStateArray {
             let ops = vec![Op::Push(Value::U64(1)), Op::RandomRange, Op::Return];
             let bytecode = make_bytecode("run", ops);
             let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &ctx).unwrap();
-            assert_eq!(r.return_value, Value::U64(0), "RandomRange(1) must always be 0");
+            assert_eq!(
+                r.return_value,
+                Value::U64(0),
+                "RandomRange(1) must always be 0"
+            );
         }
     }
 
@@ -2752,7 +2750,10 @@ contract WithStateArray {
         let ops = vec![Op::Push(Value::U64(0)), Op::RandomRange, Op::Return];
         let bytecode = make_bytecode("run", ops);
         let err = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
-        assert!(err.is_err(), "SCR-N6: RandomRange(0) must be a runtime error");
+        assert!(
+            err.is_err(),
+            "SCR-N6: RandomRange(0) must be a runtime error"
+        );
     }
 
     // ── OPCODE-5 (audit 2026-05-17): Op::Emit bulk-memory guard ──
@@ -2774,10 +2775,7 @@ contract WithStateArray {
         let result = EvaporVM::execute(&bytecode, "blast", vec![], empty_state(), &test_ctx());
         assert!(result.is_err(), "bulk emit should hit memory limit");
         let err = format!("{:?}", result.unwrap_err());
-        assert!(
-            err.contains("memory"),
-            "expected memory error, got: {err}"
-        );
+        assert!(err.contains("memory"), "expected memory error, got: {err}");
     }
 
     /// Small emits are unaffected: a handful of short messages should succeed.

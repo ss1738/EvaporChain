@@ -439,8 +439,10 @@ mod tests {
         router.send(make_msg(0, 1, 100));
         router.send(make_msg(0, 1, 200));
         assert_eq!(router.drain_for_shard(ShardId(1)).len(), 2);
-        assert!(router.drain_for_shard(ShardId(1)).is_empty(),
-            "second drain must be empty (queue was removed)");
+        assert!(
+            router.drain_for_shard(ShardId(1)).is_empty(),
+            "second drain must be empty (queue was removed)"
+        );
         assert_eq!(router.queue_depth(ShardId(1)), 0);
     }
 
@@ -654,8 +656,7 @@ mod tests {
         let r3 = mk(3, 0x33);
         let root = CrossShardRouter::receipts_root(&[r1.clone(), r2.clone(), r3.clone()]);
         // Must be deterministic.
-        let root_again =
-            CrossShardRouter::receipts_root(&[r1.clone(), r2.clone(), r3.clone()]);
+        let root_again = CrossShardRouter::receipts_root(&[r1.clone(), r2.clone(), r3.clone()]);
         assert_eq!(root, root_again);
         // Must differ from the 2-receipt root (the odd-count padding
         // changes the tree shape vs even-count).

@@ -107,16 +107,6 @@
 pub mod bn256_g1_validation;
 pub mod circuit_builder;
 pub mod compress_ark;
-pub mod eip197;
-pub mod grain_lfsr;
-pub mod grumpkin_config;
-pub mod groth16_wrapper;
-pub mod l_u_secondary_extract;
-pub mod mds_linalg;
-pub mod neptune_dump_parser;
-pub mod neptune_permutation_gadget;
-pub mod neptune_reference;
-pub mod neptune_sponge;
 pub mod cyclefold_aux_circuit;
 pub mod cyclefold_cf_x_digest;
 pub mod cyclefold_fold_homomorphism;
@@ -127,17 +117,27 @@ pub mod cyclefold_n_aux_scaling_probe;
 pub mod cyclefold_primary_augmented_circuit;
 pub mod cyclefold_r1cs_bridge;
 pub mod cyclefold_shell_chain;
+pub mod eip197;
+pub mod grain_lfsr;
+pub mod groth16_wrapper;
+pub mod grumpkin_config;
 pub mod ipa_ck_fold_gadget;
 pub mod ipa_s_tensor;
+pub mod l_u_secondary_extract;
+pub mod mds_linalg;
+pub mod neptune_dump_parser;
+pub mod neptune_permutation_gadget;
+pub mod neptune_reference;
+pub mod neptune_sponge;
 pub mod recursion_decider_circuit;
 pub mod recursive_snark_fixture;
-pub mod scalar_adapter;
 pub mod s4_msm_gadget;
 pub mod s4_primary_extract;
 pub mod s4_primary_msm_gadget;
 pub mod s4_secondary_extract;
 pub mod s4b_secondary_r1cs_extract;
 pub mod s4b_secondary_r1cs_gadget;
+pub mod scalar_adapter;
 pub mod section2_gadget;
 pub mod section2_witness;
 pub mod section3_gadget;
@@ -145,6 +145,7 @@ pub mod section3_witness;
 pub mod vendored_neptune_grain;
 pub mod verifier_circuit;
 
+pub use neptune_dump_parser::{expected_crc_len, extract_compressed_round_constants, parse_dump};
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, public_inputs_for_bridge, FixtureStats, Scalar1,
     TrivialIncrementCircuit, E1, E2,
@@ -153,7 +154,6 @@ pub use scalar_adapter::{
     ark_fr_to_primary, ark_fr_to_secondary_lossy, primary_to_ark_fr, secondary_to_ark_fr_lossy,
     PrimaryScalar, SecondaryScalar,
 };
-pub use neptune_dump_parser::{parse_dump, expected_crc_len, extract_compressed_round_constants};
 pub use verifier_circuit::NovaVerifierCircuit;
 
 /// Marker constant. Phase progression for the bridge crate:

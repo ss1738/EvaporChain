@@ -250,7 +250,8 @@ mod tests {
         eprintln!("ours    LE: {our_le_padded:?}");
 
         assert_eq!(
-            our_le_padded, NEPTUNE_LE,
+            our_le_padded,
+            NEPTUNE_LE,
             "Sponge output must be byte-equal to neptune reference.\n\
              Root cause if this fails: pre_sparse_mds transpose fix regression or \
              CRC drift. our_le[0..8]={:?}  neptune_le[0..8]={:?}",
@@ -341,7 +342,11 @@ mod tests {
     fn truncate_to_n_le_bits_simple() {
         let v = Bn254Fr::from(255u64);
         let truncated = truncate_to_n_le_bits(v, 4);
-        assert_eq!(truncated, Bn254Fr::from(15u64), "low 4 bits of 0xff = 0x0f = 15");
+        assert_eq!(
+            truncated,
+            Bn254Fr::from(15u64),
+            "low 4 bits of 0xff = 0x0f = 15"
+        );
     }
 
     /// IOPattern hasher distinguishes squeeze counts (parity with the

@@ -112,7 +112,11 @@ impl WriteAheadLog {
         let len: u32 = payload.len().try_into().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("WAL entry too large: {} bytes (max {})", payload.len(), u32::MAX),
+                format!(
+                    "WAL entry too large: {} bytes (max {})",
+                    payload.len(),
+                    u32::MAX
+                ),
             )
         })?;
 
@@ -545,10 +549,7 @@ mod tests {
         // Truncate the file mid-way through the next would-be entry
         // by writing < 77 bytes of garbage.
         {
-            let mut h = OpenOptions::new()
-                .append(true)
-                .open(f.path())
-                .unwrap();
+            let mut h = OpenOptions::new().append(true).open(f.path()).unwrap();
             h.write_all(&[0u8; 30]).unwrap(); // < 77 bytes
         }
 
@@ -575,10 +576,7 @@ mod tests {
         // the 64MB cap). Format: 8 bytes height + 32 bytes root +
         // 4 bytes len. Pad with enough zeros so file_len - pos >= 77.
         {
-            let mut h = OpenOptions::new()
-                .append(true)
-                .open(f.path())
-                .unwrap();
+            let mut h = OpenOptions::new().append(true).open(f.path()).unwrap();
             let mut buf = Vec::new();
             buf.extend_from_slice(&100u64.to_le_bytes()); // height
             buf.extend_from_slice(&[0xCC; 32]); // root

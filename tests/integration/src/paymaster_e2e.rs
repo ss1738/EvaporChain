@@ -18,14 +18,10 @@
 use std::sync::Arc;
 
 use evaporchain_execution::{ExecutionEngine, SimpleExecutor};
-use evaporchain_paymaster::{
-    Paymaster, PaymasterInfo, SponsorshipRequest, SponsorshipResponse,
-};
+use evaporchain_paymaster::{Paymaster, PaymasterInfo, SponsorshipRequest, SponsorshipResponse};
 use evaporchain_state::db::StateDB;
 use evaporchain_state::InMemoryStateDB;
-use evaporchain_types::{
-    AccountAddress, Account, Block, Transaction, TransferTx, UserOpTx,
-};
+use evaporchain_types::{Account, AccountAddress, Block, Transaction, TransferTx, UserOpTx};
 
 use evaporchain_crypto::signatures::HybridKeypair;
 
@@ -61,7 +57,10 @@ async fn spawn_paymaster_with_config(
     tokio::sync::oneshot::Sender<()>,
 ) {
     use axum::{
-        extract::State, http::StatusCode, routing::{get, post}, Json, Router,
+        extract::State,
+        http::StatusCode,
+        routing::{get, post},
+        Json, Router,
     };
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -397,16 +396,15 @@ async fn paymaster_e2e_strict_mode_full_pipeline() {
     use evaporchain_crypto::signatures::{HybridKeypair, Signer};
 
     let chain_id = "evaporchain-strict-e2e";
-    let (pm_url, pm_addr, _shutdown) = spawn_paymaster_with_config(
-        chain_id,
-        evaporchain_paymaster::PaymasterConfig::default(),
-    )
-    .await;
+    let (pm_url, pm_addr, _shutdown) =
+        spawn_paymaster_with_config(chain_id, evaporchain_paymaster::PaymasterConfig::default())
+            .await;
 
     // ── Wallet side: build + sign UserOp.
     let user_kp = HybridKeypair::generate();
     // address = blake3(ADDRESS_DST || pk) — must match address_from_pubkey in executor I1 check.
-    let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
+    let sender: AccountAddress =
+        evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
     let recipient: AccountAddress = [9u8; 32];
 
     let inner = Transaction::Transfer(TransferTx {
@@ -458,7 +456,10 @@ async fn paymaster_e2e_strict_mode_full_pipeline() {
         .expect("decode");
     let signed_user_op = resp.user_op;
     assert!(signed_user_op.signature.is_some(), "user sig preserved");
-    assert!(signed_user_op.paymaster_signature.is_some(), "sponsorship sig stamped");
+    assert!(
+        signed_user_op.paymaster_signature.is_some(),
+        "sponsorship sig stamped"
+    );
 
     // ── Chain side: full verify_signatures=true block execution.
     let mut db = InMemoryStateDB::new();
@@ -514,11 +515,9 @@ async fn paymaster_e2e_strict_mode_rejects_unsigned_userop() {
     // BEFORE allocating a sponsorship nonce — the paymaster pays no
     // gas and the chain never sees the bad request.
     let chain_id = "evaporchain-strict-e2e-neg";
-    let (pm_url, pm_addr, _shutdown) = spawn_paymaster_with_config(
-        chain_id,
-        evaporchain_paymaster::PaymasterConfig::default(),
-    )
-    .await;
+    let (pm_url, pm_addr, _shutdown) =
+        spawn_paymaster_with_config(chain_id, evaporchain_paymaster::PaymasterConfig::default())
+            .await;
 
     let inner = Transaction::Transfer(TransferTx {
         from: [1u8; 32],

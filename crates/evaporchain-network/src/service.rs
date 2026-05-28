@@ -311,7 +311,8 @@ impl PeerBanList {
                 let millis_left = expiry.duration_since(now_inst).as_millis() as u64;
                 // Audit A2 (2026-05-14): saturating_add prevents u64 overflow
                 // when millis_left is very large (e.g. corrupted or far-future expiry).
-                file.banned.insert(peer.to_base58(), now_wall.saturating_add(millis_left));
+                file.banned
+                    .insert(peer.to_base58(), now_wall.saturating_add(millis_left));
             }
         }
         match serde_json::to_vec(&file) {
@@ -640,9 +641,9 @@ pub fn load_or_generate_identity(data_dir: &Path) -> std::io::Result<identity::K
         std::fs::create_dir_all(data_dir)?;
     }
     let kp = identity::Keypair::generate_ed25519();
-    let bytes = kp.to_protobuf_encoding().map_err(|e| {
-        std::io::Error::other(format!("encode keypair: {e}"))
-    })?;
+    let bytes = kp
+        .to_protobuf_encoding()
+        .map_err(|e| std::io::Error::other(format!("encode keypair: {e}")))?;
     std::fs::write(&key_path, &bytes)?;
     #[cfg(unix)]
     {
@@ -908,10 +909,7 @@ impl SybilState {
     /// path is unreachable in practice; the explicit gate is
     /// defence-in-depth for test fixtures, in-process integration
     /// runs, and future transport additions.
-    pub fn try_admit_inbound_no_ip(
-        &mut self,
-        current_total: usize,
-    ) -> Result<(), RejectionReason> {
+    pub fn try_admit_inbound_no_ip(&mut self, current_total: usize) -> Result<(), RejectionReason> {
         if current_total >= self.config.max_inbound_connections {
             self.rejections.record(RejectionReason::TotalCap);
             return Err(RejectionReason::TotalCap);
@@ -2775,7 +2773,11 @@ mod tests {
                 .collect(),
         };
         let bytes = serde_json::to_vec(&req).expect("serialize");
-        assert!(bytes.len() < 64 * 1024, "request at cap should be < 64KB, was {}", bytes.len());
+        assert!(
+            bytes.len() < 64 * 1024,
+            "request at cap should be < 64KB, was {}",
+            bytes.len()
+        );
     }
 
     #[test]
@@ -3160,7 +3162,8 @@ mod tests {
             bl.record_violation(peer);
         }
         // Manually expire the ban.
-        bl.banned.insert(peer, Instant::now() - Duration::from_secs(1));
+        bl.banned
+            .insert(peer, Instant::now() - Duration::from_secs(1));
         bl.gc();
         let data = std::fs::read_to_string(&path).unwrap();
         let file: PeerBanFile = serde_json::from_str(&data).unwrap();
@@ -3170,7 +3173,7 @@ mod tests {
         );
     }
 
-        #[test]
+    #[test]
     fn audit_a1_crash_safe_write_produces_valid_json() {
         // Verify atomic write: the file on disk must always be valid JSON.
         // We call save() with active bans and ensure the persisted file parses.
@@ -3184,9 +3187,15 @@ mod tests {
         // File must exist and be valid JSON after save.
         let data = std::fs::read_to_string(&path).unwrap();
         let file: PeerBanFile = serde_json::from_str(&data).unwrap();
-        assert!(file.banned.contains_key(&peer.to_base58()), "ban must be in file");
+        assert!(
+            file.banned.contains_key(&peer.to_base58()),
+            "ban must be in file"
+        );
         // No tmp file should remain.
-        assert!(!path.with_extension("json.tmp").exists(), "tmp file must not remain");
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "tmp file must not remain"
+        );
     }
 
     #[test]
@@ -3204,13 +3213,20 @@ mod tests {
         let mut bl = PeerBanList::new_with_path(path);
         // The peer must be banned (non-expired) but the in-memory Instant must
         // not be astronomically far in the future.
-        assert!(bl.is_banned(&peer), "peer with far-future ban must still be loaded as banned");
+        assert!(
+            bl.is_banned(&peer),
+            "peer with far-future ban must still be loaded as banned"
+        );
         let expiry = bl.banned[&peer];
-        let max_allowed = std::time::Instant::now() + BAN_DURATION * 2 + std::time::Duration::from_secs(5);
-        assert!(expiry <= max_allowed, "expiry must be clamped to ~2×BAN_DURATION");
+        let max_allowed =
+            std::time::Instant::now() + BAN_DURATION * 2 + std::time::Duration::from_secs(5);
+        assert!(
+            expiry <= max_allowed,
+            "expiry must be clamped to ~2×BAN_DURATION"
+        );
     }
 
-        // ── Sybil-resistance state ──────────────────────────────────────────
+    // ── Sybil-resistance state ──────────────────────────────────────────
 
     fn sybil_cfg() -> SybilConfig {
         SybilConfig {
@@ -3765,7 +3781,10 @@ mod tests {
         let entry = rl.counters.get_mut(&peer).unwrap();
         entry.1 = std::time::Instant::now() - Duration::from_secs(15);
         // Window expired → counter resets, call is allowed
-        assert!(rl.check_and_increment(&peer), "must be allowed after window reset");
+        assert!(
+            rl.check_and_increment(&peer),
+            "must be allowed after window reset"
+        );
         assert_eq!(rl.counters[&peer].0, 1, "counter must restart at 1");
     }
 
@@ -3793,12 +3812,19 @@ mod tests {
         let mut bl = PeerBanList::new();
         let peer = PeerId::random();
         // Insert an already-expired ban and a violation count
-        bl.banned.insert(peer, std::time::Instant::now() - Duration::from_secs(1));
+        bl.banned
+            .insert(peer, std::time::Instant::now() - Duration::from_secs(1));
         bl.violations.insert(peer, 5);
         // is_banned should return false and clean up both maps
         assert!(!bl.is_banned(&peer), "expired ban must not be active");
-        assert!(!bl.banned.contains_key(&peer), "expired entry must be removed");
-        assert!(!bl.violations.contains_key(&peer), "violations entry must be removed");
+        assert!(
+            !bl.banned.contains_key(&peer),
+            "expired entry must be removed"
+        );
+        assert!(
+            !bl.violations.contains_key(&peer),
+            "violations entry must be removed"
+        );
     }
 
     #[test]
@@ -3811,7 +3837,10 @@ mod tests {
         assert!(bl.violations.len() > 1024);
         assert!(bl.banned.is_empty());
         bl.gc();
-        assert!(bl.violations.is_empty(), "violations must be cleared when banned empty and large");
+        assert!(
+            bl.violations.is_empty(),
+            "violations must be cleared when banned empty and large"
+        );
     }
 
     #[test]
@@ -3823,7 +3852,10 @@ mod tests {
         assert_eq!(t.count_for(&ip), 1);
         t.release(ip);
         assert_eq!(t.count_for(&ip), 0);
-        assert!(!t.counts.contains_key(&ip), "entry must be removed when count reaches 0");
+        assert!(
+            !t.counts.contains_key(&ip),
+            "entry must be removed when count reaches 0"
+        );
     }
 
     #[test]
@@ -3876,8 +3908,14 @@ mod tests {
         s.ban_ip(ip, "test ban");
         assert!(s.bans.is_banned(&ip), "IP must be banned after ban_ip");
         let removed = s.unban_ip(&ip);
-        assert!(removed, "unban_ip must return true for a currently-banned IP");
-        assert!(!s.bans.is_banned(&ip), "IP must not be banned after unban_ip");
+        assert!(
+            removed,
+            "unban_ip must return true for a currently-banned IP"
+        );
+        assert!(
+            !s.bans.is_banned(&ip),
+            "IP must not be banned after unban_ip"
+        );
         // unban for a non-banned IP returns false
         let removed2 = s.unban_ip(&ipv4(9, 9, 9, 9));
         assert!(!removed2, "unban_ip returns false for non-banned IP");
@@ -3938,7 +3976,10 @@ mod tests {
         // Unreachable address — dial will fail gracefully (warn only)
         config.bootstrap_peers = vec!["/ip4/127.0.0.1/tcp/19999".to_string()];
         let result = P2pNetworkService::start(config).await;
-        assert!(result.is_ok(), "start with bootstrap peers must not fail even if dial fails");
+        assert!(
+            result.is_ok(),
+            "start with bootstrap peers must not fail even if dial fails"
+        );
     }
 
     #[tokio::test]

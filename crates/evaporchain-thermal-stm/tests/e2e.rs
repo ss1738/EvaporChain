@@ -73,24 +73,59 @@ fn fixture_five_tx_bank_transfer_batch() {
     let s = ThermalScheduler::new();
 
     // Keys: A=key(1), B=key(2), C=key(3), D=key(4), E=key(5).
-    let tx1 = write_tx(1, 10_000, vec![key(1)],         vec![(key(1), b"50"),  (key(2), b"150")]);
-    let tx2 = write_tx(2,  8_000, vec![key(1)],         vec![(key(1), b"30"),  (key(3), b"70")]);
-    let tx3 = write_tx(3,  6_000, vec![key(2)],         vec![(key(2), b"90"),  (key(4), b"60")]);
-    let tx4 = write_tx(4,  5_000, vec![key(3)],         vec![(key(3), b"20"),  (key(4), b"80")]);
-    let tx5 = write_tx(5,  3_000, vec![],               vec![(key(5), b"ping")]);
+    let tx1 = write_tx(
+        1,
+        10_000,
+        vec![key(1)],
+        vec![(key(1), b"50"), (key(2), b"150")],
+    );
+    let tx2 = write_tx(
+        2,
+        8_000,
+        vec![key(1)],
+        vec![(key(1), b"30"), (key(3), b"70")],
+    );
+    let tx3 = write_tx(
+        3,
+        6_000,
+        vec![key(2)],
+        vec![(key(2), b"90"), (key(4), b"60")],
+    );
+    let tx4 = write_tx(
+        4,
+        5_000,
+        vec![key(3)],
+        vec![(key(3), b"20"), (key(4), b"80")],
+    );
+    let tx5 = write_tx(5, 3_000, vec![], vec![(key(5), b"ping")]);
 
     // Submit in reverse priority order to confirm sorting.
-    let batch = vec![tx5.clone(), tx4.clone(), tx3.clone(), tx2.clone(), tx1.clone()];
+    let batch = vec![
+        tx5.clone(),
+        tx4.clone(),
+        tx3.clone(),
+        tx2.clone(),
+        tx1.clone(),
+    ];
     let CommitOutcome { outcomes, state } = s.run(BTreeMap::new(), batch).unwrap();
 
     // All 5 transactions accounted for.
     assert_eq!(outcomes.len(), 5);
 
     // Outcomes are in priority order: Tx1(10K), Tx2(8K), Tx3(6K), Tx4(5K), Tx5(3K).
-    assert_eq!(outcomes[0], TxOutcome::Committed { tx_id: tid(1) }, "Tx1 must commit");
+    assert_eq!(
+        outcomes[0],
+        TxOutcome::Committed { tx_id: tid(1) },
+        "Tx1 must commit"
+    );
 
     // Tx2 aborts: reads A which Tx1 wrote.
-    if let TxOutcome::AbortedConflict { ref winner, ref contended_keys, tx_id } = outcomes[1] {
+    if let TxOutcome::AbortedConflict {
+        ref winner,
+        ref contended_keys,
+        tx_id,
+    } = outcomes[1]
+    {
         assert_eq!(tx_id, tid(2), "outcomes[1] must be Tx2");
         assert_eq!(*winner, tid(1), "Tx2's winner must be Tx1");
         assert!(contended_keys.contains(&key(1)), "contended key must be A");
@@ -99,7 +134,12 @@ fn fixture_five_tx_bank_transfer_batch() {
     }
 
     // Tx3 aborts: reads B which Tx1 wrote.
-    if let TxOutcome::AbortedConflict { ref winner, ref contended_keys, tx_id } = outcomes[2] {
+    if let TxOutcome::AbortedConflict {
+        ref winner,
+        ref contended_keys,
+        tx_id,
+    } = outcomes[2]
+    {
         assert_eq!(tx_id, tid(3), "outcomes[2] must be Tx3");
         assert_eq!(*winner, tid(1), "Tx3's winner must be Tx1");
         assert!(contended_keys.contains(&key(2)), "contended key must be B");
@@ -108,15 +148,43 @@ fn fixture_five_tx_bank_transfer_batch() {
     }
 
     // Tx4 and Tx5 commit.
-    assert_eq!(outcomes[3], TxOutcome::Committed { tx_id: tid(4) }, "Tx4 must commit");
-    assert_eq!(outcomes[4], TxOutcome::Committed { tx_id: tid(5) }, "Tx5 must commit");
+    assert_eq!(
+        outcomes[3],
+        TxOutcome::Committed { tx_id: tid(4) },
+        "Tx4 must commit"
+    );
+    assert_eq!(
+        outcomes[4],
+        TxOutcome::Committed { tx_id: tid(5) },
+        "Tx5 must commit"
+    );
 
     // Final state assertions.
-    assert_eq!(state.get(&key(1)).unwrap(), b"50",   "A from Tx1 (Tx2 aborted)");
-    assert_eq!(state.get(&key(2)).unwrap(), b"150",  "B from Tx1 (Tx3 aborted)");
-    assert_eq!(state.get(&key(3)).unwrap(), b"20",   "C from Tx4 (Tx2 aborted, C was free)");
-    assert_eq!(state.get(&key(4)).unwrap(), b"80",   "D from Tx4 (Tx3 aborted, D was free)");
-    assert_eq!(state.get(&key(5)).unwrap(), b"ping", "E from Tx5 (independent)");
+    assert_eq!(
+        state.get(&key(1)).unwrap(),
+        b"50",
+        "A from Tx1 (Tx2 aborted)"
+    );
+    assert_eq!(
+        state.get(&key(2)).unwrap(),
+        b"150",
+        "B from Tx1 (Tx3 aborted)"
+    );
+    assert_eq!(
+        state.get(&key(3)).unwrap(),
+        b"20",
+        "C from Tx4 (Tx2 aborted, C was free)"
+    );
+    assert_eq!(
+        state.get(&key(4)).unwrap(),
+        b"80",
+        "D from Tx4 (Tx3 aborted, D was free)"
+    );
+    assert_eq!(
+        state.get(&key(5)).unwrap(),
+        b"ping",
+        "E from Tx5 (independent)"
+    );
 }
 
 #[test]
@@ -124,16 +192,52 @@ fn fixture_submission_order_identical_to_reversed() {
     // Validator-determinism: same batch in any order -> byte-identical output.
     let s = ThermalScheduler::new();
 
-    let tx1 = write_tx(1, 10_000, vec![key(1)], vec![(key(1), b"50"), (key(2), b"150")]);
-    let tx2 = write_tx(2,  8_000, vec![key(1)], vec![(key(1), b"30"), (key(3), b"70")]);
-    let tx3 = write_tx(3,  6_000, vec![key(2)], vec![(key(2), b"90"), (key(4), b"60")]);
-    let tx4 = write_tx(4,  5_000, vec![key(3)], vec![(key(3), b"20"), (key(4), b"80")]);
-    let tx5 = write_tx(5,  3_000, vec![],       vec![(key(5), b"ping")]);
+    let tx1 = write_tx(
+        1,
+        10_000,
+        vec![key(1)],
+        vec![(key(1), b"50"), (key(2), b"150")],
+    );
+    let tx2 = write_tx(
+        2,
+        8_000,
+        vec![key(1)],
+        vec![(key(1), b"30"), (key(3), b"70")],
+    );
+    let tx3 = write_tx(
+        3,
+        6_000,
+        vec![key(2)],
+        vec![(key(2), b"90"), (key(4), b"60")],
+    );
+    let tx4 = write_tx(
+        4,
+        5_000,
+        vec![key(3)],
+        vec![(key(3), b"20"), (key(4), b"80")],
+    );
+    let tx5 = write_tx(5, 3_000, vec![], vec![(key(5), b"ping")]);
 
-    let fwd = s.run(BTreeMap::new(), vec![tx1.clone(), tx2.clone(), tx3.clone(), tx4.clone(), tx5.clone()]).unwrap();
-    let rev = s.run(BTreeMap::new(), vec![tx5, tx4, tx3, tx2, tx1]).unwrap();
+    let fwd = s
+        .run(
+            BTreeMap::new(),
+            vec![
+                tx1.clone(),
+                tx2.clone(),
+                tx3.clone(),
+                tx4.clone(),
+                tx5.clone(),
+            ],
+        )
+        .unwrap();
+    let rev = s
+        .run(BTreeMap::new(), vec![tx5, tx4, tx3, tx2, tx1])
+        .unwrap();
 
-    assert_eq!(fwd, rev, "batch outcome must be submission-order-independent");
+    assert_eq!(
+        fwd, rev,
+        "batch outcome must be submission-order-independent"
+    );
 }
 
 // -- Doctrine tests -----------------------------------------------------------
@@ -146,14 +250,16 @@ fn doctrine_cyclic_conflict_no_deadlock() {
     let s = ThermalScheduler::new();
 
     let tx_a = write_tx(1, 1_000, vec![key(1)], vec![(key(2), b"a")]);
-    let tx_b = write_tx(2,   500, vec![key(2)], vec![(key(1), b"b")]);
+    let tx_b = write_tx(2, 500, vec![key(2)], vec![(key(1), b"b")]);
 
     let result = s.run(BTreeMap::new(), vec![tx_a, tx_b]).unwrap();
     assert_eq!(result.outcomes.len(), 2);
 
     // Tx_a (higher energy) commits; Tx_b aborts. No hang.
     assert!(matches!(result.outcomes[0], TxOutcome::Committed { tx_id } if tx_id == tid(1)));
-    assert!(matches!(result.outcomes[1], TxOutcome::AbortedConflict { tx_id, .. } if tx_id == tid(2)));
+    assert!(
+        matches!(result.outcomes[1], TxOutcome::AbortedConflict { tx_id, .. } if tx_id == tid(2))
+    );
 }
 
 #[test]
@@ -161,13 +267,21 @@ fn doctrine_aborted_tx_has_zero_state_effect() {
     // Atomic commit: aborted tx leaves NO partial writes.
     let s = ThermalScheduler::new();
 
-    let winner = write_tx(1, 1_000, vec![],       vec![(key(0), b"win")]);
+    let winner = write_tx(1, 1_000, vec![], vec![(key(0), b"win")]);
     // Loser wants to write key(0) (conflict) AND key(99) (would be free).
-    let loser  = write_tx(2,   100, vec![key(0)], vec![(key(0), b"lose"), (key(99), b"side")]);
+    let loser = write_tx(
+        2,
+        100,
+        vec![key(0)],
+        vec![(key(0), b"lose"), (key(99), b"side")],
+    );
 
     let result = s.run(BTreeMap::new(), vec![winner, loser]).unwrap();
     assert_eq!(result.state.get(&key(0)).unwrap(), b"win");
-    assert!(!result.state.contains_key(&key(99)), "aborted tx must not partially write key(99)");
+    assert!(
+        !result.state.contains_key(&key(99)),
+        "aborted tx must not partially write key(99)"
+    );
 }
 
 #[test]
@@ -179,11 +293,15 @@ fn doctrine_non_overlapping_txs_all_commit() {
         write_tx(1, 100, vec![], vec![(key(10), b"a")]),
         write_tx(2, 500, vec![], vec![(key(11), b"b")]),
         write_tx(3, 900, vec![], vec![(key(12), b"c")]),
-        write_tx(4,  50, vec![], vec![(key(13), b"d")]),
+        write_tx(4, 50, vec![], vec![(key(13), b"d")]),
     ];
 
     let result = s.run(BTreeMap::new(), txs).unwrap();
-    let committed = result.outcomes.iter().filter(|o| matches!(o, TxOutcome::Committed { .. })).count();
+    let committed = result
+        .outcomes
+        .iter()
+        .filter(|o| matches!(o, TxOutcome::Committed { .. }))
+        .count();
     assert_eq!(committed, 4, "all 4 non-overlapping txs must commit");
 }
 
@@ -207,7 +325,7 @@ fn doctrine_equal_energy_tie_break_is_deterministic() {
 fn adversarial_duplicate_tx_id_rejected() {
     let s = ThermalScheduler::new();
     let dup_a = write_tx(1, 1_000, vec![], vec![(key(0), b"a")]);
-    let dup_b = write_tx(1,   500, vec![], vec![(key(1), b"b")]);
+    let dup_b = write_tx(1, 500, vec![], vec![(key(1), b"b")]);
     let err = s.run(BTreeMap::new(), vec![dup_a, dup_b]).unwrap_err();
     assert_eq!(err, ScheduleError::DuplicateTxId(tid(1)));
 }
@@ -222,9 +340,20 @@ fn adversarial_high_fan_out_conflict_one_commits() {
         .collect();
     let result = s.run(BTreeMap::new(), txs).unwrap();
 
-    let committed = result.outcomes.iter().filter(|o| matches!(o, TxOutcome::Committed { .. })).count();
-    let aborted   = result.outcomes.iter().filter(|o| matches!(o, TxOutcome::AbortedConflict { .. })).count();
-    assert_eq!(committed, 1, "exactly one tx commits on a fully-contended key");
+    let committed = result
+        .outcomes
+        .iter()
+        .filter(|o| matches!(o, TxOutcome::Committed { .. }))
+        .count();
+    let aborted = result
+        .outcomes
+        .iter()
+        .filter(|o| matches!(o, TxOutcome::AbortedConflict { .. }))
+        .count();
+    assert_eq!(
+        committed, 1,
+        "exactly one tx commits on a fully-contended key"
+    );
     assert_eq!(aborted, 9);
 
     // The committed tx is the highest energy one (id=10, energy=1000).
@@ -244,7 +373,11 @@ fn outcomes_len_equals_batch_size() {
     let result = s.run(BTreeMap::new(), txs).unwrap();
     assert_eq!(result.outcomes.len(), 6);
     // All non-overlapping: all commit.
-    let committed = result.outcomes.iter().filter(|o| matches!(o, TxOutcome::Committed { .. })).count();
+    let committed = result
+        .outcomes
+        .iter()
+        .filter(|o| matches!(o, TxOutcome::Committed { .. }))
+        .count();
     assert_eq!(committed, 6);
 }
 
@@ -258,5 +391,5 @@ fn initial_state_preserved_through_batch() {
     let result = s.run(initial, vec![tx]).unwrap();
 
     assert_eq!(result.state.get(&key(99)).unwrap(), b"existing");
-    assert_eq!(result.state.get(&key(0)).unwrap(),  b"new");
+    assert_eq!(result.state.get(&key(0)).unwrap(), b"new");
 }

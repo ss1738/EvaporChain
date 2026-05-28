@@ -9,13 +9,7 @@
 //! callers back-off rather than the process silently accumulating unbounded
 //! memory (audit 2026-05-18 F1).
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};

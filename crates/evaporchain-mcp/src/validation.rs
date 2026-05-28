@@ -178,10 +178,7 @@ pub fn validate_block_height_field(
 /// Validate a hex object-id path component — less strict than a full
 /// 32-byte address. Accepts 1–128 ASCII hex chars (with/without `0x`).
 /// Prevents path-traversal injection (`/`, `..`, `?`, `#`, etc.).
-pub fn validate_hex_id_field(
-    args: &Value,
-    field: &'static str,
-) -> Result<String, ValidationError> {
+pub fn validate_hex_id_field(args: &Value, field: &'static str) -> Result<String, ValidationError> {
     let raw = args
         .get(field)
         .ok_or(ValidationError::Missing(field))?

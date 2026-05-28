@@ -56,7 +56,10 @@ fn homeostatic_convergence_over_20_epochs() {
 
     // After 20 epochs moving at most 20 per step toward 800 from 500,
     // should reach 800 in (800-500)/20 = 15 steps.
-    assert_eq!(current, 800, "should have converged to 800 within 20 epochs");
+    assert_eq!(
+        current, 800,
+        "should have converged to 800 within 20 epochs"
+    );
 }
 
 // ── Hard bounds: vote beyond max is clamped ───────────────────────────────
@@ -97,13 +100,16 @@ fn max_step_limits_single_epoch_movement() {
 fn ancient_votes_negligible_weight() {
     let p = param_mid();
     let votes = vec![
-        Vote::new(1, 1_000, 0),    // observed at epoch 0
-        Vote::new(2, 1_000, 0),    // observed at epoch 0
+        Vote::new(1, 1_000, 0), // observed at epoch 0
+        Vote::new(2, 1_000, 0), // observed at epoch 0
     ];
     // Current epoch 100_000 → elapsed 100_000 epochs, λ=100 → ~2^-1000 weight ≈ 0.
     let new = propose_adjustment(&p, &votes, lambda(), 100_000, 20).unwrap();
     // Parameter unchanged — all votes decayed.
-    assert_eq!(new, 500, "all votes decayed → parameter must not move: got {new}");
+    assert_eq!(
+        new, 500,
+        "all votes decayed → parameter must not move: got {new}"
+    );
 }
 
 // ── Conflicting votes: recent one dominates ───────────────────────────────
@@ -112,8 +118,8 @@ fn ancient_votes_negligible_weight() {
 fn recent_vote_outweighs_stale_vote() {
     let p = param_mid(); // current=500
     let votes = vec![
-        Vote::new(1, 1_000, 0),    // very old: wants high
-        Vote::new(2, 0, 1_000),    // recent: wants low (epoch 1000)
+        Vote::new(1, 1_000, 0), // very old: wants high
+        Vote::new(2, 0, 1_000), // recent: wants low (epoch 1000)
     ];
     let new = propose_adjustment(&p, &votes, lambda(), 1_000, 20).unwrap();
     // Recent vote (target=0) should dominate → param moves down from 500.

@@ -45,10 +45,8 @@
 //!
 //! INVENTION_STACK §A5.4: Singh-Heartbeat (EvaporWallet-Pulse).
 
-use evaporchain_singh_heartbeat::{
-    color_for_health, pulse_at, sparkline_24h, PulseColor,
-};
-use evaporchain_singh_heartbeat::vitals::{HEALTHY_BPM, ALARMED_BPM};
+use evaporchain_singh_heartbeat::vitals::{ALARMED_BPM, HEALTHY_BPM};
+use evaporchain_singh_heartbeat::{color_for_health, pulse_at, sparkline_24h, PulseColor};
 use evaporchain_singh_triage::TriageItem;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -62,8 +60,8 @@ fn item(byte: u8, energy: u64, half_life: u64, last_refreshed: u64) -> TriageIte
 fn alice_wallet() -> Vec<TriageItem> {
     vec![
         item(0xA0, 1_000_000, 1_000, 0), // governance token
-        item(0xB0,       100,   100, 0), // subscription
-        item(0xC0,         4,     1, 0), // short-lived credential
+        item(0xB0, 100, 100, 0),         // subscription
+        item(0xC0, 4, 1, 0),             // short-lived credential
     ]
 }
 
@@ -74,9 +72,15 @@ fn epoch0_all_fresh_healthy_resting_pulse() {
     let wallet = alice_wallet();
     let v = pulse_at(&wallet, 0);
 
-    assert_eq!(v.bpm, HEALTHY_BPM, "freshly-anchored wallet must pulse at resting 60bpm");
+    assert_eq!(
+        v.bpm, HEALTHY_BPM,
+        "freshly-anchored wallet must pulse at resting 60bpm"
+    );
     assert_eq!(v.color, PulseColor::Green);
-    assert_eq!(v.arrhythmia_amp, 0, "all items equally healthy → no arrhythmia");
+    assert_eq!(
+        v.arrhythmia_amp, 0,
+        "all items equally healthy → no arrhythmia"
+    );
     assert_eq!(v.aggregate_health, 1.0);
     assert_eq!(v.worst_remaining, 1.0);
 }
@@ -89,14 +93,22 @@ fn epoch4_c_dead_arrhythmia_warns_before_inbox() {
     let wallet = alice_wallet();
     let v = pulse_at(&wallet, 4);
 
-    assert_eq!(v.color, PulseColor::Green,
-        "aggregate health ≈ 0.9999 → still Green despite C dying");
-    assert_eq!(v.arrhythmia_amp, 100,
-        "worst_remaining=0 (C dead) while aggregate≈1.0 → max arrhythmia");
+    assert_eq!(
+        v.color,
+        PulseColor::Green,
+        "aggregate health ≈ 0.9999 → still Green despite C dying"
+    );
+    assert_eq!(
+        v.arrhythmia_amp, 100,
+        "worst_remaining=0 (C dead) while aggregate≈1.0 → max arrhythmia"
+    );
     assert_eq!(v.worst_remaining, 0.0, "Item C has zero energy at epoch 4");
     // Linear interpolation within fractional half-lives causes A to lose ~0.2%
     // in 4 epochs, so aggregate is ~0.998, not exactly 1.0.
-    assert!(v.aggregate_health > 0.99, "A and B dominate: aggregate stays near 1.0");
+    assert!(
+        v.aggregate_health > 0.99,
+        "A and B dominate: aggregate stays near 1.0"
+    );
 }
 
 #[test]
@@ -105,10 +117,16 @@ fn epoch1000_a_half_energy_b_c_dead_amber() {
     let wallet = alice_wallet();
     let v = pulse_at(&wallet, 1000);
 
-    assert_eq!(v.color, PulseColor::Amber,
-        "aggregate≈0.4999 is in Amber zone [0.40, 0.75)");
-    assert!(v.bpm > HEALTHY_BPM && v.bpm < ALARMED_BPM,
-        "mid-range health → mid-range bpm, got {}", v.bpm);
+    assert_eq!(
+        v.color,
+        PulseColor::Amber,
+        "aggregate≈0.4999 is in Amber zone [0.40, 0.75)"
+    );
+    assert!(
+        v.bpm > HEALTHY_BPM && v.bpm < ALARMED_BPM,
+        "mid-range health → mid-range bpm, got {}",
+        v.bpm
+    );
 }
 
 #[test]
@@ -117,10 +135,12 @@ fn epoch3000_a_at_12_5pct_red_pulse() {
     let wallet = alice_wallet();
     let v = pulse_at(&wallet, 3000);
 
-    assert_eq!(v.color, PulseColor::Red,
-        "aggregate≈0.125 < 0.40 → Red");
-    assert!(v.bpm > 90,
-        "heavily decayed wallet should pulse well above resting, got {}", v.bpm);
+    assert_eq!(v.color, PulseColor::Red, "aggregate≈0.125 < 0.40 → Red");
+    assert!(
+        v.bpm > 90,
+        "heavily decayed wallet should pulse well above resting, got {}",
+        v.bpm
+    );
 }
 
 #[test]
@@ -166,10 +186,16 @@ fn sparkline_returns_24_points_for_any_wallet() {
 fn sparkline_is_chronological_newest_last() {
     let pts = sparkline_24h(&alice_wallet(), 1000, 50);
     for w in pts.windows(2) {
-        assert!(w[0].epoch <= w[1].epoch,
-            "sparkline must be chronological (oldest first)");
+        assert!(
+            w[0].epoch <= w[1].epoch,
+            "sparkline must be chronological (oldest first)"
+        );
     }
-    assert_eq!(pts.last().unwrap().epoch, 1000, "last point must be epoch_now");
+    assert_eq!(
+        pts.last().unwrap().epoch,
+        1000,
+        "last point must be epoch_now"
+    );
 }
 
 #[test]
@@ -181,14 +207,22 @@ fn sparkline_shows_colour_transition_for_decaying_wallet() {
     let fast_dying = vec![item(0x01, 4, 1, 0)];
     let pts = sparkline_24h(&fast_dying, 23, 1);
 
-    assert_eq!(pts.first().unwrap().vitals.color, PulseColor::Green,
-        "fresh wallet at epoch=0 must be Green");
-    assert_eq!(pts.last().unwrap().vitals.color, PulseColor::Red,
-        "dead wallet at epoch=23 must be Red");
+    assert_eq!(
+        pts.first().unwrap().vitals.color,
+        PulseColor::Green,
+        "fresh wallet at epoch=0 must be Green"
+    );
+    assert_eq!(
+        pts.last().unwrap().vitals.color,
+        PulseColor::Red,
+        "dead wallet at epoch=23 must be Red"
+    );
 
     // BPM must not decrease from first to last.
-    assert!(pts.last().unwrap().vitals.bpm >= pts.first().unwrap().vitals.bpm,
-        "BPM must be non-decreasing as wallet decays");
+    assert!(
+        pts.last().unwrap().vitals.bpm >= pts.first().unwrap().vitals.bpm,
+        "BPM must be non-decreasing as wallet decays"
+    );
 }
 
 #[test]
@@ -196,7 +230,11 @@ fn sparkline_clips_at_zero_no_underflow() {
     // Wallet only 5 epochs old, requesting 24 steps of 10 → would go negative.
     let pts = sparkline_24h(&alice_wallet(), 5, 10);
     assert_eq!(pts.len(), 24, "must still return 24 points");
-    assert_eq!(pts.first().unwrap().epoch, 0, "must clip at epoch=0, not underflow");
+    assert_eq!(
+        pts.first().unwrap().epoch,
+        0,
+        "must clip at epoch=0, not underflow"
+    );
 }
 
 // ── Doctrine tests ────────────────────────────────────────────────────────
@@ -212,8 +250,10 @@ fn doctrine_arrhythmia_is_gap_not_level() {
     ];
     // After many half-lives all are equally dead — rhythm is regular (gap=0).
     let v = pulse_at(&uniform_dying, 100);
-    assert_eq!(v.arrhythmia_amp, 0,
-        "uniform decay → all items same fraction → arrhythmia=0");
+    assert_eq!(
+        v.arrhythmia_amp, 0,
+        "uniform decay → all items same fraction → arrhythmia=0"
+    );
     // But they ARE unhealthy.
     assert_ne!(v.color, PulseColor::Green, "dead items should not be Green");
 }
@@ -225,24 +265,28 @@ fn doctrine_big_stake_one_dying_item_green_but_arrhythmic() {
     let wallet = vec![
         item(0x01, 1_000_000, 1_000_000, 0), // immortal giant
         item(0x02, 1_000_000, 1_000_000, 0), // immortal giant
-        item(0x03,         4,           1, 0), // dying fast
+        item(0x03, 4, 1, 0),                 // dying fast
     ];
     let v = pulse_at(&wallet, 4); // item 3 is dead (4 >> 4 = 0)
 
-    assert_eq!(v.color, PulseColor::Green, "giants dominate aggregate → Green");
+    assert_eq!(
+        v.color,
+        PulseColor::Green,
+        "giants dominate aggregate → Green"
+    );
     assert_eq!(v.arrhythmia_amp, 100, "dying item triggers max arrhythmia");
 }
 
 #[test]
 fn doctrine_color_thresholds_are_exact() {
     // Green ≥ 0.75, Amber [0.40, 0.75), Red < 0.40.
-    assert_eq!(color_for_health(1.0),  PulseColor::Green);
+    assert_eq!(color_for_health(1.0), PulseColor::Green);
     assert_eq!(color_for_health(0.75), PulseColor::Green);
     assert_eq!(color_for_health(0.74), PulseColor::Amber);
     assert_eq!(color_for_health(0.50), PulseColor::Amber);
     assert_eq!(color_for_health(0.40), PulseColor::Amber);
     assert_eq!(color_for_health(0.399), PulseColor::Red);
-    assert_eq!(color_for_health(0.0),  PulseColor::Red);
+    assert_eq!(color_for_health(0.0), PulseColor::Red);
 }
 
 #[test]
@@ -250,8 +294,13 @@ fn doctrine_bpm_bounds() {
     // BPM is always in [HEALTHY_BPM, ALARMED_BPM].
     for &epoch in &[0u64, 1, 10, 100, 1000, 5000, 100_000] {
         let v = pulse_at(&alice_wallet(), epoch);
-        assert!(v.bpm >= HEALTHY_BPM && v.bpm <= ALARMED_BPM,
-            "bpm={} out of [{}, {}] at epoch={epoch}", v.bpm, HEALTHY_BPM, ALARMED_BPM);
+        assert!(
+            v.bpm >= HEALTHY_BPM && v.bpm <= ALARMED_BPM,
+            "bpm={} out of [{}, {}] at epoch={epoch}",
+            v.bpm,
+            HEALTHY_BPM,
+            ALARMED_BPM
+        );
     }
 }
 
@@ -301,7 +350,7 @@ fn adversarial_step_zero_coerced_to_one() {
 fn adversarial_out_of_range_health_clamps() {
     // color_for_health clamps out-of-range values to the nearest bucket.
     assert_eq!(color_for_health(-1.0), PulseColor::Red);
-    assert_eq!(color_for_health(2.0),  PulseColor::Green);
+    assert_eq!(color_for_health(2.0), PulseColor::Green);
     assert_eq!(color_for_health(f64::INFINITY), PulseColor::Green);
     assert_eq!(color_for_health(f64::NEG_INFINITY), PulseColor::Red);
 }
@@ -320,7 +369,9 @@ fn adversarial_single_item_wallet_has_zero_arrhythmia() {
     let single = vec![item(0x01, 1000, 100, 0)];
     for &epoch in &[0u64, 50, 100, 200] {
         let v = pulse_at(&single, epoch);
-        assert_eq!(v.arrhythmia_amp, 0,
-            "single-item wallet has no spread → arrhythmia=0 at epoch={epoch}");
+        assert_eq!(
+            v.arrhythmia_amp, 0,
+            "single-item wallet has no spread → arrhythmia=0 at epoch={epoch}"
+        );
     }
 }

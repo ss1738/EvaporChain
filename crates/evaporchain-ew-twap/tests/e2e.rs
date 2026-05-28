@@ -54,7 +54,7 @@
 //!
 //! INVENTION_STACK §4.3: EW-TWAP (Tier-3 App-Layer).
 
-use evaporchain_ew_twap::{EwTwapOracle, OracleError, Observation};
+use evaporchain_ew_twap::{EwTwapOracle, Observation, OracleError};
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -114,7 +114,10 @@ fn fixture_window_eviction_removes_stale_obs() {
     // sum_pe = 2_000_000*1_000 + 3_000_000*1_000 = 5_000_000_000
     // sum_e  = 2_000
     // twap   = 5_000_000_000 / 2_000 = 2_500_000
-    assert_eq!(twap, 2_500_000, "window eviction removes stale epoch 10 obs");
+    assert_eq!(
+        twap, 2_500_000,
+        "window eviction removes stale epoch 10 obs"
+    );
 
     // At epoch 10_000: all observations evicted. NoObservations.
     let err = oracle.read_at(10_000).unwrap_err();
@@ -168,7 +171,11 @@ fn doctrine_validator_determinism() {
     let mut o1 = EwTwapOracle::new(100);
     let mut o2 = EwTwapOracle::new(100);
 
-    for (ep, price, energy) in [(5, 1_000_000, 500), (10, 2_000_000, 800), (15, 3_000_000, 200)] {
+    for (ep, price, energy) in [
+        (5, 1_000_000, 500),
+        (10, 2_000_000, 800),
+        (15, 3_000_000, 200),
+    ] {
         o1.observe(obs(ep, price, energy)).unwrap();
         o2.observe(obs(ep, price, energy)).unwrap();
     }
@@ -180,12 +187,12 @@ fn doctrine_ew_twap_in_observed_price_range() {
     // EW-TWAP is a convex combination; must lie within [min_price, max_price].
     let mut oracle = EwTwapOracle::new(0);
 
-    oracle.observe(obs(1, 500_000,   200)).unwrap();
-    oracle.observe(obs(2, 800_000,   500)).unwrap();
+    oracle.observe(obs(1, 500_000, 200)).unwrap();
+    oracle.observe(obs(2, 800_000, 500)).unwrap();
     oracle.observe(obs(3, 1_200_000, 300)).unwrap();
 
     let twap = oracle.read().unwrap();
-    assert!(twap >= 500_000,   "EW-TWAP must be >= min observed price");
+    assert!(twap >= 500_000, "EW-TWAP must be >= min observed price");
     assert!(twap <= 1_200_000, "EW-TWAP must be <= max observed price");
 }
 
@@ -202,12 +209,15 @@ fn doctrine_higher_energy_dominates_lower() {
     // The high-energy observation should dominate the result.
     let mut oracle = EwTwapOracle::new(0);
 
-    oracle.observe(obs(1, 1_000_000, 10)).unwrap();      // low energy, low price
+    oracle.observe(obs(1, 1_000_000, 10)).unwrap(); // low energy, low price
     oracle.observe(obs(2, 2_000_000, 100_000)).unwrap(); // high energy, high price
 
     let twap = oracle.read().unwrap();
     // The high-energy obs has 10_000x the weight -- result should be very close to 2M.
-    assert!(twap > 1_999_000, "high-energy obs must dominate; got {twap}");
+    assert!(
+        twap > 1_999_000,
+        "high-energy obs must dominate; got {twap}"
+    );
 }
 
 // -- Adversarial fixture ------------------------------------------------------
@@ -220,12 +230,18 @@ fn adversarial_non_monotone_epoch_rejected() {
     // Same epoch: rejected.
     assert_eq!(
         oracle.observe(obs(10, 2_000_000, 1_000)).unwrap_err(),
-        OracleError::NonMonotoneEpoch { incoming: 10, last: 10 }
+        OracleError::NonMonotoneEpoch {
+            incoming: 10,
+            last: 10
+        }
     );
 
     // Earlier epoch: rejected.
     let err = oracle.observe(obs(5, 2_000_000, 1_000)).unwrap_err();
-    assert!(matches!(err, OracleError::NonMonotoneEpoch { incoming: 5, .. }));
+    assert!(matches!(
+        err,
+        OracleError::NonMonotoneEpoch { incoming: 5, .. }
+    ));
 }
 
 #[test]

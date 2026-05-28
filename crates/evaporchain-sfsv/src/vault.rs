@@ -405,7 +405,8 @@ mod tests {
 
     #[test]
     fn round_trip_serde() {
-        let mut v = Vault::create(id(2), addr(0xAA), addr(0xBB), 777, epoch_predicate(), 5).unwrap();
+        let mut v =
+            Vault::create(id(2), addr(0xAA), addr(0xBB), 777, epoch_predicate(), 5).unwrap();
         v.list_for_sale(addr(0xBB), 900, 90, 1, 9).unwrap();
         let s = serde_json::to_string(&v).unwrap();
         let back: Vault = serde_json::from_str(&s).unwrap();

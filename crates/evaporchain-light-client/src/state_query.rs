@@ -134,12 +134,7 @@ mod tests {
     /// they only exercise `verify_state`'s Verkle path.
     fn light_client_for_trie(trie: &EnergyVerkleTrie) -> crate::LightClient {
         let header = header_with_state_root(trie.root());
-        crate::LightClient::new(
-            header,
-            1_700_000_000,
-            "",
-            None,
-        )
+        crate::LightClient::new(header, 1_700_000_000, "", None)
     }
 
     #[test]
@@ -147,11 +142,14 @@ mod tests {
         let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
+        trie.insert(
+            key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0,
+        );
         let proof = trie.prove(&key);
 
         let lc = light_client_for_trie(&trie);
-        lc.verify_state(&proof, Some(value)).expect("membership proof must verify");
+        lc.verify_state(&proof, Some(value))
+            .expect("membership proof must verify");
     }
 
     #[test]
@@ -175,18 +173,15 @@ mod tests {
         let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
+        trie.insert(
+            key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0,
+        );
         let proof = trie.prove(&key);
 
         // Build the light client against a DIFFERENT (wrong)
         // state root.
         let header = header_with_state_root([0xff; 32]);
-        let lc = crate::LightClient::new(
-            header,
-            1_700_000_000,
-            "",
-            None,
-        );
+        let lc = crate::LightClient::new(header, 1_700_000_000, "", None);
 
         let err = lc
             .verify_state(&proof, Some(value))
@@ -199,7 +194,9 @@ mod tests {
         let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
+        trie.insert(
+            key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0,
+        );
         let mut proof = trie.prove(&key);
 
         // Tamper with the proof's value (claim the trie maps key
@@ -216,8 +213,7 @@ mod tests {
             .expect_err("tampered-value proof must be rejected");
         assert!(matches!(
             err,
-            LightClientError::VerkleProof { .. }
-                | LightClientError::StateValueMismatch { .. }
+            LightClientError::VerkleProof { .. } | LightClientError::StateValueMismatch { .. }
         ));
     }
 
@@ -229,7 +225,9 @@ mod tests {
         let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
+        trie.insert(
+            key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0,
+        );
         let proof = trie.prove(&key); // proof.value = Some(value)
 
         let lc = light_client_for_trie(&trie);

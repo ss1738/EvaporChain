@@ -404,7 +404,8 @@ mod tests {
     ///   bit(4)=0, bit(5)=1, bit(6)=0, bit(7)=0.
     #[test]
     fn lfsr_bit_indexing() {
-        let lfsr = GrainLfsr::from_seed([0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF]);
+        let lfsr =
+            GrainLfsr::from_seed([0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF]);
         assert_eq!(lfsr.bit(0), 1);
         assert_eq!(lfsr.bit(1), 0);
         assert_eq!(lfsr.bit(5), 1);
@@ -416,10 +417,15 @@ mod tests {
     /// must equal the OLD bit 1.
     #[test]
     fn clock_shifts_left_by_one() {
-        let mut lfsr = GrainLfsr::from_seed([0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF]);
+        let mut lfsr =
+            GrainLfsr::from_seed([0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF]);
         let old_bit_1 = lfsr.bit(1);
         lfsr.clock();
-        assert_eq!(lfsr.bit(0), old_bit_1, "post-clock bit 0 must equal pre-clock bit 1");
+        assert_eq!(
+            lfsr.bit(0),
+            old_bit_1,
+            "post-clock bit 0 must equal pre-clock bit 1"
+        );
     }
 
     /// Determinism: same seed + same number of clocks yields the
@@ -507,7 +513,11 @@ mod tests {
         let mut lfsr = GrainLfsr::from_seed(seed);
         lfsr.warmup();
         let bytes = lfsr.next_filtered_bits_be_bytes(254);
-        assert_eq!(bytes.len(), 32, "254 bits → 32 bytes (with 2 trailing pad bits)");
+        assert_eq!(
+            bytes.len(),
+            32,
+            "254 bits → 32 bytes (with 2 trailing pad bits)"
+        );
         // Low 2 bits of byte 31 must be zero (positions 254 and 255
         // not filled).
         assert_eq!(bytes[31] & 0b11, 0, "trailing pad bits must be zero");
@@ -521,8 +531,12 @@ mod tests {
         let mut b = GrainLfsr::from_seed(seed);
         a.warmup();
         b.warmup();
-        let a_fes: Vec<_> = (0..5).map(|_| a.next_filtered_field_element_bn254()).collect();
-        let b_fes: Vec<_> = (0..5).map(|_| b.next_filtered_field_element_bn254()).collect();
+        let a_fes: Vec<_> = (0..5)
+            .map(|_| a.next_filtered_field_element_bn254())
+            .collect();
+        let b_fes: Vec<_> = (0..5)
+            .map(|_| b.next_filtered_field_element_bn254())
+            .collect();
         assert_eq!(a_fes, b_fes, "field-element emission must be deterministic");
     }
 
@@ -534,7 +548,9 @@ mod tests {
         let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
         let mut lfsr = GrainLfsr::from_seed(seed);
         lfsr.warmup();
-        let fes: Vec<_> = (0..5).map(|_| lfsr.next_filtered_field_element_bn254()).collect();
+        let fes: Vec<_> = (0..5)
+            .map(|_| lfsr.next_filtered_field_element_bn254())
+            .collect();
         for i in 0..fes.len() {
             for j in (i + 1)..fes.len() {
                 assert_ne!(fes[i], fes[j], "elements {i} and {j} collided");
@@ -564,8 +580,8 @@ mod tests {
         // Pinned LE bytes = neptune crc[0] LE form (verified
         // byte-for-byte against PR #80's JSON dump):
         const EXPECTED_LE: [u8; 32] = [
-            128, 67, 230, 115, 239, 141, 250, 143, 246, 136, 232, 130, 13, 3, 223, 254,
-            112, 206, 1, 48, 121, 188, 29, 28, 9, 241, 131, 55, 224, 40, 65, 3,
+            128, 67, 230, 115, 239, 141, 250, 143, 246, 136, 232, 130, 13, 3, 223, 254, 112, 206,
+            1, 48, 121, 188, 29, 28, 9, 241, 131, 55, 224, 40, 65, 3,
         ];
         let mut le_32 = [0u8; 32];
         let copy_len = le.len().min(32);
@@ -655,8 +671,10 @@ mod tests {
         }
         // Document the current state via assert_ne: if/when this
         // fires, the LFSR is byte-correct.
-        assert_ne!(mismatches, 0,
-            "LFSR matches neptune ARK byte-for-byte — flip this to `assert_eq!(mismatches, 0)`.");
+        assert_ne!(
+            mismatches, 0,
+            "LFSR matches neptune ARK byte-for-byte — flip this to `assert_eq!(mismatches, 0)`."
+        );
     }
 
     /// Tightened LFSR parity check: compare only `ours[0..25]`
@@ -688,7 +706,10 @@ mod tests {
                 mismatches.push(i);
             }
         }
-        eprintln!("First 25 plain-round-0 entries: {} mismatches", mismatches.len());
+        eprintln!(
+            "First 25 plain-round-0 entries: {} mismatches",
+            mismatches.len()
+        );
         if !mismatches.is_empty() {
             eprintln!("  Mismatch indices: {mismatches:?}");
             // Show byte diff for index 0

@@ -12,10 +12,10 @@
 //!
 //! See `research/INVENTION_STACK.md §4.2` for the doctrine anchor.
 
+use evaporchain_energy_kernel::{ChainLambda, Lambda};
 use evaporchain_etlp::capsule::{Capsule, CapsuleError};
 use evaporchain_etlp::unlock::can_unlock;
 use evaporchain_etlp::witness::EnergyWitness;
-use evaporchain_energy_kernel::{ChainLambda, Lambda};
 
 fn lambda_100() -> ChainLambda {
     ChainLambda::new(Lambda::from_epochs(100))
@@ -198,12 +198,8 @@ fn unlock_rejects_witness_with_mismatched_seal_epoch_binding() {
     // against seal_epoch=11. The pre-decay binding check must
     // catch this before any decay arithmetic runs.
     let c = capsule_with(10, 500);
-    let mismatched_binding = EnergyWitness::compute_binding(
-        /* WRONG */ 11,
-        c.energy_threshold,
-        1000,
-        0,
-    );
+    let mismatched_binding =
+        EnergyWitness::compute_binding(/* WRONG */ 11, c.energy_threshold, 1000, 0);
     let w = EnergyWitness {
         committed_energy: 1000,
         observed_epoch: 0,

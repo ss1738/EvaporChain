@@ -40,10 +40,8 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("Lottery failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("Lottery failed to compile: {e:?}"))
+    let ast = parser::parse(SOURCE).unwrap_or_else(|e| panic!("Lottery failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("Lottery failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -468,7 +466,9 @@ fn on_evaporate_without_draw_voids() {
         assert!(*v, "no-draw evap must flip voided=true");
     }
     assert!(
-        evap.events.iter().any(|e| e.contains("evaporated") || e.contains("void")),
+        evap.events
+            .iter()
+            .any(|e| e.contains("evaporated") || e.contains("void")),
         "must emit void/evaporated event"
     );
 }

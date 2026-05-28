@@ -138,7 +138,12 @@ pub fn aggregate_verify(
 /// under `BLS_POP_DST` with `pk_bytes` as the signing key.
 pub fn verify_pop(pk_bytes: &[u8], pop_bytes: &[u8]) -> bool {
     // H-4: PoP = sign(pk_bytes, BLS_POP_DST) under the same pk.
-    verify(pk_bytes, pop_bytes, pk_bytes, crate::signatures::BLS_POP_DST)
+    verify(
+        pk_bytes,
+        pop_bytes,
+        pk_bytes,
+        crate::signatures::BLS_POP_DST,
+    )
 }
 
 /// Aggregate-verify with per-key Proof-of-Possession checks.
@@ -225,12 +230,7 @@ mod tests {
         let bad_pop = vec![0xFFu8; 96]; // not a valid G2 point signature
         let agg_sig = vec![0u8; 96];
 
-        let result = aggregate_verify_with_pop(
-            b"msg",
-            &agg_sig,
-            &[(&pk_bytes, &bad_pop)],
-            b"dst",
-        );
+        let result = aggregate_verify_with_pop(b"msg", &agg_sig, &[(&pk_bytes, &bad_pop)], b"dst");
         assert!(!result, "must reject aggregate when any PoP is invalid");
     }
 }

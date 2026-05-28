@@ -14,12 +14,9 @@
 //! are serde-round-trippable; ProofChain segment management works;
 //! ProvingError variants are all representable.
 
+use evaporchain_proving::chain_proof::{ChainProof, ProofChain, ProofSegment};
 use evaporchain_proving::{
-    CompressedProof, ProvingError,
-    is_mock_prover_proof, is_mock_prover_proof_bytes,
-};
-use evaporchain_proving::chain_proof::{
-    ChainProof, ProofChain, ProofSegment,
+    is_mock_prover_proof, is_mock_prover_proof_bytes, CompressedProof, ProvingError,
 };
 
 fn mock_compressed(num_steps: usize) -> CompressedProof {
@@ -71,15 +68,19 @@ fn chain_proof_struct(blocks: u64, state_root: [u8; 32]) -> ChainProof {
 fn mock_proof_fingerprint_detected() {
     // H-19: all-zeros proof_bytes of length 32 = MockProver fingerprint.
     let mock = mock_compressed(3);
-    assert!(is_mock_prover_proof(&mock),
-        "all-zeros 32-byte proof must be detected as MockProver");
+    assert!(
+        is_mock_prover_proof(&mock),
+        "all-zeros 32-byte proof must be detected as MockProver"
+    );
 }
 
 #[test]
 fn real_like_proof_not_flagged() {
     let real_like = real_like_compressed(5);
-    assert!(!is_mock_prover_proof(&real_like),
-        "non-zero proof must not be flagged as mock");
+    assert!(
+        !is_mock_prover_proof(&real_like),
+        "non-zero proof must not be flagged as mock"
+    );
 }
 
 #[test]
@@ -99,7 +100,11 @@ fn mock_proof_bytes_wire_layer_detected() {
 fn empty_proof_bytes_not_flagged_as_mock() {
     // An empty proof is not the MockProver fingerprint (length mismatch).
     assert!(!is_mock_prover_proof_bytes(&[]));
-    let empty = CompressedProof { proof_bytes: vec![], num_steps: 0, z0_bytes: vec![] };
+    let empty = CompressedProof {
+        proof_bytes: vec![],
+        num_steps: 0,
+        z0_bytes: vec![],
+    };
     assert!(!is_mock_prover_proof(&empty));
 }
 
@@ -128,7 +133,10 @@ fn chain_proof_size_and_ratio() {
     let cp = chain_proof_struct(1_000, [0xAA; 32]);
     assert_eq!(cp.size(), cp.proof_size_bytes);
     let ratio = cp.compression_ratio();
-    assert!(ratio > 1.0, "compression_ratio must be > 1.0 for 1000 blocks in 32 bytes");
+    assert!(
+        ratio > 1.0,
+        "compression_ratio must be > 1.0 for 1000 blocks in 32 bytes"
+    );
 }
 
 #[test]
@@ -151,7 +159,10 @@ fn chain_proof_serde_round_trip() {
 #[test]
 fn proof_chain_empty_has_no_range() {
     let pc = ProofChain::new();
-    assert!(pc.block_range().is_none(), "empty ProofChain must have no range");
+    assert!(
+        pc.block_range().is_none(),
+        "empty ProofChain must have no range"
+    );
     assert_eq!(pc.total_blocks(), 0);
     assert_eq!(pc.num_segments(), 0);
 }
@@ -159,7 +170,8 @@ fn proof_chain_empty_has_no_range() {
 #[test]
 fn proof_chain_add_segment_extends_range() {
     let mut pc = ProofChain::new();
-    pc.add_segment(segment(0, 999, [0x00; 32], [0xAA; 32])).unwrap();
+    pc.add_segment(segment(0, 999, [0x00; 32], [0xAA; 32]))
+        .unwrap();
     let (lo, hi) = pc.block_range().unwrap();
     assert_eq!(lo, 0);
     assert_eq!(hi, 999);
@@ -170,8 +182,10 @@ fn proof_chain_add_segment_extends_range() {
 #[test]
 fn proof_chain_two_segments_link() {
     let mut pc = ProofChain::new();
-    pc.add_segment(segment(0,     999,   [0x00; 32], [0xAA; 32])).unwrap();
-    pc.add_segment(segment(1_000, 1_999, [0xAA; 32], [0xBB; 32])).unwrap();
+    pc.add_segment(segment(0, 999, [0x00; 32], [0xAA; 32]))
+        .unwrap();
+    pc.add_segment(segment(1_000, 1_999, [0xAA; 32], [0xBB; 32]))
+        .unwrap();
     let (lo, hi) = pc.block_range().unwrap();
     assert_eq!(lo, 0);
     assert_eq!(hi, 1_999);
@@ -188,7 +202,11 @@ fn proving_error_no_blocks_folded_is_representable() {
 #[test]
 fn proving_error_nova_not_available_is_representable() {
     let err = ProvingError::NovaNotAvailable;
-    assert!(err.to_string().contains("nova") || err.to_string().contains("Nova") || err.to_string().contains("feature"));
+    assert!(
+        err.to_string().contains("nova")
+            || err.to_string().contains("Nova")
+            || err.to_string().contains("feature")
+    );
 }
 
 #[test]
@@ -199,8 +217,8 @@ fn leila_light_client_full_arc() {
     // the full chain.
 
     let genesis_root = [0x00; 32];
-    let mid_root     = [0x50; 32];
-    let final_root   = [0xFF; 32];
+    let mid_root = [0x50; 32];
+    let final_root = [0xFF; 32];
 
     // First half: blocks 0–4_999.
     let first_half = ChainProof {
@@ -239,7 +257,8 @@ fn leila_light_client_full_arc() {
         start_state_root: genesis_root,
         end_state_root: mid_root,
         num_steps: 5_000,
-    }).unwrap();
+    })
+    .unwrap();
     pc.add_segment(ProofSegment {
         proof: second_half.proof,
         start_height: 5_000,
@@ -247,7 +266,8 @@ fn leila_light_client_full_arc() {
         start_state_root: mid_root,
         end_state_root: final_root,
         num_steps: 5_000,
-    }).unwrap();
+    })
+    .unwrap();
 
     assert_eq!(pc.total_blocks(), 10_000);
     let (lo, hi) = pc.block_range().unwrap();
