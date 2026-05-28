@@ -19,7 +19,7 @@
 //! Rust side is pinned by `vault.rs`'s unit tests
 //! (`list_for_sale_guards`, `cancel_listing_guards`,
 //! `record_sale_guards`, `release_clears_listing_and_blocks_market_ops`)
-//! + the §8.6 listing adversaries in `adversarial.rs`. This file pins
+//! plus the §8.6 listing adversaries in `adversarial.rs`. This file pins
 //! the `.es` side and the cross-equivalence of the guard set.
 
 use std::fs;

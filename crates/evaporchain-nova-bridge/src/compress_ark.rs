@@ -292,8 +292,8 @@ mod tests {
         let out = compress_first_full_rounds(&plain_ark, &identity_4, 4, 4);
         assert_eq!(out.len(), 16);
         // Round 0: plain extension → 0,1,2,3
-        for i in 0..4 {
-            assert_eq!(out[i], Fr::from(i as u64));
+        for (i, val) in out.iter().take(4).enumerate() {
+            assert_eq!(*val, Fr::from(i as u64));
         }
         // Identity inverse-MDS leaves subsequent rounds unchanged.
         for r in 1..4 {
@@ -317,8 +317,8 @@ mod tests {
         let id = identity_n(4);
         let plain_ark: Vec<Fr> = (10..26).map(|i| Fr::from(i as u64)).collect();
         let out = compress_first_full_rounds(&plain_ark, &id, 4, 4);
-        for i in 0..4 {
-            assert_eq!(out[i], Fr::from((10 + i) as u64));
+        for (i, val) in out.iter().take(4).enumerate() {
+            assert_eq!(*val, Fr::from((10 + i) as u64));
         }
     }
 
@@ -350,8 +350,8 @@ mod tests {
         let plain_ark: Vec<Fr> = (0..16).map(|i| Fr::from(i as u64)).collect();
         let out = compress_first_full_rounds(&plain_ark, &id, 4, 1);
         assert_eq!(out.len(), 4);
-        for i in 0..4 {
-            assert_eq!(out[i], Fr::from(i as u64));
+        for (i, val) in out.iter().take(4).enumerate() {
+            assert_eq!(*val, Fr::from(i as u64));
         }
     }
 

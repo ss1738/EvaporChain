@@ -60,6 +60,7 @@ pub fn merkle_root(receipts: &[DeployReceipt]) -> [u8; 32] {
 /// the trusted source storing the root so it can enforce:
 ///   - `path.len() == ceil(log2(max(leaf_count, 1)))`
 ///   - `idx < leaf_count`
+///
 /// These two invariants together pin the tree shape exactly.
 pub fn verify_inclusion(
     receipt: &DeployReceipt,

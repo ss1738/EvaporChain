@@ -125,6 +125,12 @@ pub enum AuctionError {
 // ─────────────────────── Construction ──────────────────────────────────
 
 impl DecayBoundAuction {
+    // 8 ctor params is over clippy's 7/fn budget, but each is a
+    // distinct on-chain field (auction-id, chain-id, sddc-id, reserve,
+    // commit deadline, reveal deadline, initial energy, half-life).
+    // Packing them into a struct would force the same proliferation at
+    // every call site without removing the data.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         auction_id: [u8; 32],
         chain_id: String,

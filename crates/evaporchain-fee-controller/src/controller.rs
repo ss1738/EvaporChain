@@ -328,6 +328,7 @@ mod empirical_scenarios {
     ///   2. Fee is non-increasing throughout.
     ///   3. Final fee strictly below initial (real convergence,
     ///      not a stall).
+    ///
     /// A future gain tune that breaks any of these (oscillation,
     /// stall, runaway) trips the regression.
     #[test]

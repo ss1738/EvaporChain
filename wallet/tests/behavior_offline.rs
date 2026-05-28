@@ -89,7 +89,8 @@ fn offline_create_object_sign_and_export() {
     let signer = make_signer();
     let obj_id = [0xDDu8; 32];
 
-    let signed = OfflineSigner::sign_create_object(&signer, &obj_id, 10000, 200, vec![0xAB; 64], "");
+    let signed =
+        OfflineSigner::sign_create_object(&signer, &obj_id, 10000, 200, vec![0xAB; 64], "");
     assert_eq!(signed.tx_type, "CreateObject");
     assert!(signed.extra.is_some());
 

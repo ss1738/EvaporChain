@@ -67,9 +67,14 @@ mod press_claim_tests {
     #[test]
     fn the_press_claim_lives_as_a_test() {
         // Grade-tier monotonicity (basis-point multipliers).
-        assert!(MULT_AGAIN_BP < MULT_HARD_BP);
-        assert!(MULT_HARD_BP < MULT_GOOD_BP);
-        assert!(MULT_GOOD_BP < MULT_EASY_BP);
+        // Hoisted into a const block — these are compile-time constants
+        // so const_assert is strictly stronger than a runtime `assert!`
+        // (clippy's deny-default `assertions_on_constants`).
+        const _: () = {
+            assert!(MULT_AGAIN_BP < MULT_HARD_BP);
+            assert!(MULT_HARD_BP < MULT_GOOD_BP);
+            assert!(MULT_GOOD_BP < MULT_EASY_BP);
+        };
 
         let s_again = update_stability(100, Grade::Again).unwrap();
         let s_hard = update_stability(100, Grade::Hard).unwrap();

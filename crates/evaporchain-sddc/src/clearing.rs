@@ -244,9 +244,9 @@ mod tests {
     fn try_clear_on_already_cleared_errors() {
         let mut a = open_auction();
         let b = Bid::new(aid(0xAA), 1000, 100, 50).unwrap();
-        try_clear(&mut a, &[b.clone()], 50).unwrap();
+        try_clear(&mut a, std::slice::from_ref(&b), 50).unwrap();
         // Auction is now Cleared; further try_clear must error.
-        let err = try_clear(&mut a, &[b], 60).unwrap_err();
+        let err = try_clear(&mut a, std::slice::from_ref(&b), 60).unwrap_err();
         assert!(matches!(
             err,
             ClearError::Lifecycle(LifecycleError::NotOpen)

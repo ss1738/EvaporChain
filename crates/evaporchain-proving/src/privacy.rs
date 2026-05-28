@@ -1682,7 +1682,7 @@ mod tests {
 
     /// PRIV-N4 (audit 2026-05-15) regression: a binding computed
     /// for Unshield must NOT verify against the same numeric tuple
-    /// + blindings under the PrivateTransfer kind. Pre-fix, the
+    /// and blindings under the PrivateTransfer kind. Pre-fix, the
     /// shared Poseidon preimage left these two interchangeable —
     /// an attacker controlling the blindings could replay a
     /// PrivateTransfer binding as the Unshield binding for the
