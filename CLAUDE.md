@@ -9,7 +9,7 @@ Read exactly these five state-of-chain docs in order. Stop after the top 2-3 ent
 1. **`SESSION_PROGRESS.md`** — most recent operational state. Newest entry at top. Read FIRST to know where the build is.
 2. **`MAINNET_READINESS.md`** — lane-claim board (🟡 OPEN / 🟢 CLAIMED / ✅ DONE). Pick the lane you'll drive in this session here.
 3. **`DOCTRINE_PUNCH_LIST.md`** — layered build plan (Layers 0–7), what's already shipped at the doctrine level.
-4. **`AUDIT_2026_05_17.md`** — most recent findings (all 9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW closed as of 2026-05-18). Older audits live in `docs/archive/obsolete-audits/`.
+4. **`AUDIT_2026_05_17.md`** — most recent findings (all 9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW closed as of 2026-05-28 — #461 + #469 were the last two; the file carries a point-in-time-snapshot annotation, so consult SESSION_PROGRESS.md / CHANGELOG.md for the live closure trail). Older audits live in `docs/archive/obsolete-audits/`.
 5. **`CHANGELOG.md`** — grep for your area; do not read top-to-bottom.
 
 Completed plan docs (CROOKS_MEV, LAMBDA_FOLD, LIGHT_CONE, MCC_FULL, POST_EXEC, MAINNET_SPRINT_2026_05_11) live in `docs/archive/completed-plans/`. Older audits in `docs/archive/obsolete-audits/`. Deprecated punch-lists in `docs/archive/deprecated/`. Treat as read-only history.
@@ -102,7 +102,7 @@ contracts/evaporscript/mortal_message.es   # reference pilot contract
 | `evaporchain-paymaster` | Paymaster sponsorship service for UserOpTxs (multi-token-gas Option B; see `docs/MULTI_TOKEN_GAS_OPTIONS.md`) |
 | `evaporchain-fee-controller` | Singh-Lyapunov PID fee controller crate |
 
-**Substrate (~60+ crates in `crates/`)** — doctrine primitives, VM paradigms, launch dApps. Each is independent with its own tests. Full list in `Cargo.toml`.
+**Substrate (~120 crates in `crates/`)** — doctrine primitives, VM paradigms, launch dApps. Each is independent with its own tests. Full list in `Cargo.toml`.
 
 Key substrate groups:
 - **Invention-stack primitives**: `evaporchain-light-cone` (Causal-set DAG), `evaporchain-bell-beacon`, `evaporchain-singh-attractor`, `evaporchain-evap-fork-cert`, `evaporchain-ib-validators`, `evaporchain-causal-chsh` (Tier-0; Bell cartel detection, gate PASS on real Ethereum 2026-05-04), `evaporchain-lambda-fold` (Nova IVC accumulator)
