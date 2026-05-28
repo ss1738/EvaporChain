@@ -52,3 +52,4 @@ sha2_old_for_bls = { package = "sha2", version = "0.9", default-features = false
 
 [dev-dependencies]
 proptest = "1"
+serial_test = "3"
