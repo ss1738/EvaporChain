@@ -349,23 +349,23 @@ mod tests {
             // exactly.
             let mut s = seed;
             let mut cost: Vec<Vec<u128>> = vec![vec![0u128; 3]; 3];
-            for i in 0..3 {
-                for j in 0..3 {
+            for row in cost.iter_mut() {
+                for cell in row.iter_mut() {
                     s = s.wrapping_mul(6_364_136_223_846_793_005)
                         .wrapping_add(1_442_695_040_888_963_407);
-                    cost[i][j] = (s as u128 % 100) + 1;
+                    *cell = (s as u128 % 100) + 1;
                 }
             }
             let supplies: Vec<u128> = vec![10, 20, 30];
             let demands: Vec<u128> = vec![15, 25, 20];
             let sol = solve_transportation(&supplies, &demands, &cost).unwrap();
-            for i in 0..3 {
+            for (i, &expected) in supplies.iter().enumerate() {
                 let row_sum: u128 = sol.flow[i].iter().sum();
-                proptest::prop_assert_eq!(row_sum, supplies[i]);
+                proptest::prop_assert_eq!(row_sum, expected);
             }
-            for j in 0..3 {
+            for (j, &expected) in demands.iter().enumerate() {
                 let col_sum: u128 = (0..3).map(|i| sol.flow[i][j]).sum();
-                proptest::prop_assert_eq!(col_sum, demands[j]);
+                proptest::prop_assert_eq!(col_sum, expected);
             }
         }
 
@@ -375,11 +375,11 @@ mod tests {
         ) {
             let mut s = seed;
             let mut cost: Vec<Vec<u128>> = vec![vec![0u128; 3]; 3];
-            for i in 0..3 {
-                for j in 0..3 {
+            for row in cost.iter_mut() {
+                for cell in row.iter_mut() {
                     s = s.wrapping_mul(6_364_136_223_846_793_005)
                         .wrapping_add(1_442_695_040_888_963_407);
-                    cost[i][j] = (s as u128 % 100) + 1;
+                    *cell = (s as u128 % 100) + 1;
                 }
             }
             let supplies: Vec<u128> = vec![10, 20, 30];

@@ -48,6 +48,10 @@ pub struct DecaySimResult {
             Use `evaporchain_types::energy_at_epoch` for the canonical, \
             Coq-verified, deterministic-across-architectures formula."
 )]
+// Kept as a back-compat shim referencing the canonical entry-point so a
+// downstream consumer that imported `compute_energy` directly does not
+// silently get the wrong (non-Layer-0) implementation.
+#[allow(dead_code)]
 pub(crate) fn compute_energy(initial: u64, half_life: u64, epochs_elapsed: u64) -> u64 {
     // Forwarder to the canonical function. Result-wise this may differ
     // by ~1 unit from the pre-deprecation body due to u128-integer vs

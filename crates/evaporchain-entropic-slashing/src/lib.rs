@@ -128,9 +128,9 @@ mod m18_monotonicity_tests {
     use super::*;
     use proptest::prelude::*;
 
-    /// `[1, 1]` is the uniform two-bucket case → max entropy →
-    /// slash = stake (the cap fires). Any `[count, 1]` with
-    /// count > 1 must produce ≤ that.
+    // `[1, 1]` is the uniform two-bucket case → max entropy →
+    // slash = stake (the cap fires). Any `[count, 1]` with
+    // count > 1 must produce ≤ that.
     proptest! {
         #[test]
         fn audit_m18_uniform_pair_max_slash(stake in 1u64..=10_000_000) {
@@ -139,9 +139,9 @@ mod m18_monotonicity_tests {
         }
     }
 
-    /// `[count, 1]` for count ≥ 1 is non-increasing in count.
-    /// Concretely: doubling `count` should not produce MORE slash.
-    /// This is the call-site shape from `tendermint.rs:2345`.
+    // `[count, 1]` for count ≥ 1 is non-increasing in count.
+    // Concretely: doubling `count` should not produce MORE slash.
+    // This is the call-site shape from `tendermint.rs:2345`.
     proptest! {
         #[test]
         fn audit_m18_count_1_shape_non_increasing_in_count(
@@ -158,8 +158,8 @@ mod m18_monotonicity_tests {
         }
     }
 
-    /// Closer-to-uniform 2-bucket distribution yields ≥ slash of a
-    /// more skewed one. Pinning the |a-b| direction.
+    // Closer-to-uniform 2-bucket distribution yields ≥ slash of a
+    // more skewed one. Pinning the |a-b| direction.
     proptest! {
         #[test]
         fn audit_m18_two_bucket_smaller_gap_larger_slash(

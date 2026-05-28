@@ -150,7 +150,7 @@ fn sign_period_in_mac_changes_with_evolution() {
     // Same key material *would* produce identical MACs except that
     // period_index is also folded in. Force the period to differ
     // while holding key_material constant.
-    let mut k_a = EgFssKey::from_seed([7u8; 32]);
+    let k_a = EgFssKey::from_seed([7u8; 32]);
     let mut k_b = EgFssKey::from_seed([7u8; 32]);
     k_b.period_index = 42; // key_material unchanged
     let s_a = sign(&k_a, b"x");
@@ -158,8 +158,6 @@ fn sign_period_in_mac_changes_with_evolution() {
     assert_ne!(s_a.mac, s_b.mac, "period_index must affect the MAC");
     assert_eq!(s_a.period_index, 0);
     assert_eq!(s_b.period_index, 42);
-    // Suppress unused-mut warning when we don't touch k_a's period.
-    k_a.period_index = 0;
 }
 
 #[test]

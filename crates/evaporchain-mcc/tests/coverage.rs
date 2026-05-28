@@ -144,16 +144,17 @@ fn mcc_choose_picks_lower_energy_at_positive_beta() {
 
 #[test]
 fn mcc_choose_tie_breaks_by_lexicographic_head() {
-    // Two trajectories with identical energy → tie broken by larger head id.
+    // Two trajectories with identical energy → tie broken by SMALLER
+    // head id (aligned with select_tip 2026-05-22; was larger-id).
     let mut lc = LightCone::new();
     lc.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
     lc.insert(Block::new(id(1), vec![id(0)], 200, 1)).unwrap();
     lc.insert(Block::new(id(2), vec![id(0)], 200, 1)).unwrap();
     let t_low = Trajectory::new(vec![id(0), id(1)]);
     let t_high = Trajectory::new(vec![id(0), id(2)]);
-    // Same energy. Larger head (id(2)) wins.
+    // Same energy. Smaller head (id(1)) wins.
     let picked = mcc_choose([&t_low, &t_high].iter().copied(), &lc, 1_000).unwrap();
-    assert_eq!(picked, &t_high);
+    assert_eq!(picked, &t_low);
 }
 
 // =================================================================

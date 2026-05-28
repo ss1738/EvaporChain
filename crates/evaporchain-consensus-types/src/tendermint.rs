@@ -7445,13 +7445,18 @@ impl TendermintConsensus {
                 return None;
             }
 
-            let seed = {
-                let mut s = Vec::with_capacity(40);
-                s.extend_from_slice(b"da-2d-sample");
-                s.extend_from_slice(&block.number.to_le_bytes());
-                s.extend_from_slice(&self.my_id.to_le_bytes());
-                s
-            };
+            // Q6 (audit 2026-05-17): use canonical seed builder so the
+            // data_root is bound into the seed. Mirrors the consensus-side
+            // closure already applied at evaporchain-consensus/tendermint.rs.
+            // Pre-fix this manual seed omitted data_root, allowing a proposer
+            // to grind data_root after seeing the (height, validator_id)
+            // pair (both public) and craft a withheld-shard encoding where
+            // the sampled cells fall on the valid portion.
+            let seed = evaporchain_da::DASampler::build_da_sample_seed_v1(
+                block.number,
+                &data_root,
+                self.my_id,
+            );
 
             // 16 cells -> confidence ~ 1 - 2^(-16) ~ 0.999985 if all valid
             let num_samples = 16usize;

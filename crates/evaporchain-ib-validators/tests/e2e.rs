@@ -45,8 +45,8 @@ fn v1_sig() -> StateSignature { prior_sig() }
 /// V2: bimodal — two tight clusters far apart.
 fn v2_sig() -> StateSignature {
     let mut energies = Vec::new();
-    for _ in 0..8  { energies.push(0); }       // bin 0
-    for _ in 0..8  { energies.push(1_599); }   // bin 15
+    energies.extend(std::iter::repeat_n(0, 8));       // bin 0
+    energies.extend(std::iter::repeat_n(1_599, 8));   // bin 15
     StateSignature::from_energies(&energies, 1_600)
 }
 

@@ -4478,8 +4478,14 @@ mod mcc_integration {
         let fork_a = Trajectory::new(vec![bid(0), bid(1)]);
         let fork_b = Trajectory::new(vec![bid(0), bid(2)]);
 
-        // At very high beta (100_000 millibits), low-energy fork wins.
-        let chosen = mcc_choose([&fork_a, &fork_b], &lc, 100_000).unwrap();
+        // Pick beta so shift_bits = (beta_mb · energy) / 1_000_000 stays
+        // < 32 for both forks (else boltzmann_weight saturates to 0 and
+        // the caliber tie-break by head-id — not energy — wins, which
+        // would defeat the high-β semantic this test checks).
+        // For fork_b (energy 1_000): shift = 10_000 · 1_000 / 1_000_000 = 10.
+        // For fork_a (energy 2_500): shift = 10_000 · 2_500 / 1_000_000 = 25.
+        // Both unsaturated; fork_b's caliber is 2^15 × larger.
+        let chosen = mcc_choose([&fork_a, &fork_b], &lc, 10_000).unwrap();
         let chosen_energy = path_energy(chosen, &lc);
         let fork_b_energy = path_energy(&fork_b, &lc);
         assert_eq!(

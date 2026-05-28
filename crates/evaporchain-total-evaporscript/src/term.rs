@@ -277,8 +277,8 @@ mod tests {
     }
 
     /// T1.20 — Term variants serde round-trip. Existing test only
-    /// covers `BoundedFor`; this pins `BoundedWhile`, `Seq`, `If`
-    /// + nested. The chain stores compiled Total-EvaporScript
+    /// covers `BoundedFor`; this pins `BoundedWhile`, `Seq`, `If`,
+    /// and nested. The chain stores compiled Total-EvaporScript
     /// programs on-disk via serde, so a variant that broke serde
     /// would silently fail to load.
     #[test]

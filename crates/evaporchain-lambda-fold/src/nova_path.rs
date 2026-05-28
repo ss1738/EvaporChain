@@ -108,9 +108,9 @@ pub struct NovaFolder {
 }
 
 impl NovaFolder {
-    /// Create a new folder at genesis. Performs the heavy `pp`
-    /// setup; Phase 3.1 contract — call once per chain.
-    pub fn new(genesis: &DualCommitment) -> Result<Self, NovaFoldError> {
+    /// Create a new folder at genesis with explicit chain λ. Performs
+    /// the heavy `pp` setup; Phase 3.1 contract — call once per chain.
+    pub fn new(genesis: &DualCommitment, chain_lambda: ChainLambda) -> Result<Self, NovaFoldError> {
         Ok(Self {
             prover: RealBlockProver::new(genesis)?,
             total_energy_remaining: 0,
@@ -178,6 +178,10 @@ impl NovaFolder {
             );
             decayed as u128
         };
+        // Suppress unused warning — `thermo` is still required by
+        // `fold_real_block_with_witness` even though we no longer
+        // consult its `object_energies` for the running total.
+        let _ = thermo;
         self.total_energy_remaining = decayed_prev.saturating_add(step_energy as u128);
         self.step_count = self.step_count.saturating_add(1);
         self.latest_epoch = observed_epoch;
@@ -333,7 +337,8 @@ mod tests {
     #[test]
     fn nova_fold_three_blocks_and_verify() {
         let genesis = make_dual_commitment(0, 0);
-        let mut folder = NovaFolder::new(&genesis).expect("folder setup failed");
+        let mut folder = NovaFolder::new(&genesis, ChainLambda::default_genesis())
+            .expect("folder setup failed");
 
         let mut last_state = genesis.clone();
         let mut last_instance = NovaFoldedInstance::identity();
@@ -369,7 +374,8 @@ mod tests {
     #[test]
     fn nova_verify_rejects_below_energy_floor() {
         let genesis = make_dual_commitment(0, 0);
-        let mut folder = NovaFolder::new(&genesis).expect("folder setup failed");
+        let mut folder = NovaFolder::new(&genesis, ChainLambda::default_genesis())
+            .expect("folder setup failed");
         let block = make_block(1, 1);
         let new_state = make_dual_commitment(1, 1);
         let thermo = ThermodynamicWitness {

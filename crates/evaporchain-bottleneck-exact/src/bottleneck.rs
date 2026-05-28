@@ -274,10 +274,10 @@ mod tests {
             // Generate a deterministic 3x3 matrix from seed.
             let mut s = seed;
             let mut cost: Vec<Vec<u64>> = vec![vec![0u64; 3]; 3];
-            for i in 0..3 {
-                for j in 0..3 {
+            for row in cost.iter_mut() {
+                for cell in row.iter_mut() {
                     s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1442695040888963407);
-                    cost[i][j] = s % 100;
+                    *cell = s % 100;
                 }
             }
             let exact = bottleneck_exact(&cost).unwrap();

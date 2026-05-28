@@ -1,9 +1,18 @@
 //! `mcc_choose` — argmax-caliber selection over candidate forks.
 //!
 //! Tie-breaks deterministically: when multiple trajectories share the
-//! top caliber, the one with the larger `head()` block id (in
+//! top caliber, the one with the SMALLER `head()` block id (in
 //! lexicographic order) wins. This keeps the fork-choice deterministic
 //! across replicas without needing additional consensus rounds.
+//!
+//! The smaller-id direction matches `MccForkChoice::select_tip`
+//! (`evaporchain-consensus/src/fork_choice.rs`), which sorts leaves
+//! ascending by id ("smaller BlockId wins") off the BTreeMap iteration
+//! order. The two MUST agree: `select_tip` chooses the proposer's build
+//! tip while `mcc_choose` (via `evaluate`) accepts/rejects a peer's
+//! block — on a caliber tie a direction mismatch would let validators
+//! reject a correctly-proposed tip. Aligned 2026-05-22 (was larger-id;
+//! surfaced by `research/tla/MccForkChoice.tla`).
 
 use thiserror::Error;
 
@@ -19,7 +28,8 @@ pub enum McccError {
 }
 
 /// Pick the trajectory with the maximum caliber. Deterministic tie-
-/// break by head-block id (lexicographic, larger wins).
+/// break by head-block id (lexicographic, smaller wins — matches
+/// `MccForkChoice::select_tip`).
 pub fn mcc_choose<'a, I>(
     forks: I,
     lc: &LightCone,
@@ -35,10 +45,11 @@ where
             None => best = Some((t, c)),
             Some((_, prev_c)) if c > prev_c => best = Some((t, c)),
             Some((prev_t, prev_c)) if c == prev_c => {
-                // Tie-break by head id, lexicographic larger.
+                // Tie-break by head id, lexicographic smaller (matches
+                // select_tip's ascending-id rule so propose/accept agree).
                 let prev_head = prev_t.head().copied().unwrap_or([0u8; 32]);
                 let new_head = t.head().copied().unwrap_or([0u8; 32]);
-                if new_head > prev_head {
+                if new_head < prev_head {
                     best = Some((t, c));
                 }
             }
@@ -99,8 +110,22 @@ mod tests {
         let path_a = Trajectory::new(vec![id(0), id(1), id(3)]);
         let path_b = Trajectory::new(vec![id(0), id(2), id(4)]);
         let chosen = mcc_choose(vec![&path_a, &path_b], &lc, 0).unwrap();
-        // head(b) = id(4) > head(a) = id(3) → b wins the tie.
-        assert_eq!(chosen, &path_b);
+        // head(a) = id(3) < head(b) = id(4) → a wins the tie (smaller-id
+        // rule, aligned with select_tip 2026-05-22).
+        assert_eq!(chosen, &path_a);
+    }
+
+    #[test]
+    fn tie_break_smaller_id_independent_of_input_order() {
+        // Regression (2026-05-22): the smaller-id winner must not depend
+        // on the order candidates are supplied — both orderings pick a.
+        let lc = lc_with_two_forks();
+        let path_a = Trajectory::new(vec![id(0), id(1), id(3)]); // head id(3)
+        let path_b = Trajectory::new(vec![id(0), id(2), id(4)]); // head id(4)
+        let ab = mcc_choose(vec![&path_a, &path_b], &lc, 0).unwrap();
+        let ba = mcc_choose(vec![&path_b, &path_a], &lc, 0).unwrap();
+        assert_eq!(ab, &path_a);
+        assert_eq!(ba, &path_a);
     }
 
     #[test]

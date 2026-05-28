@@ -15,7 +15,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1"
 
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
+# NOTE: a `[profile.release]` block previously lived here with
+# `opt-level=3 / lto=fat / codegen-units=1` for the Nova benchmark.
+# Cargo ignores `[profile.*]` in non-root members of a workspace, so
+# the block was warn-only. Default release is opt-level=3 which is
+# what the prototype needs; lto/codegen-units belong in the workspace
+# root if globally desired, not here.

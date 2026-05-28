@@ -13149,6 +13149,34 @@ impl DeployedToken {
                     / old_supply as u128) as u64;
             }
         }
+
+        // 3. Compute the intended aggregate and the per-holder-decay residue.
+        let intended_aggregate =
+            evaporchain_types::energy_at_epoch(supply_before, self.decay_half_life, elapsed);
+        let actual_aggregate: u64 = self
+            .balances
+            .values()
+            .fold(0u64, |a, b| a.saturating_add(*b));
+        let residue = intended_aggregate.saturating_sub(actual_aggregate);
+
+        // 4. Redistribute residue to the highest-balance holder so supply
+        //    matches the chain-level `energy_at_epoch` formula. Deterministic
+        //    tie-break: lexicographic address ordering.
+        if residue > 0 {
+            let recipient = self
+                .balances
+                .iter()
+                .max_by(|(a_addr, a_bal), (b_addr, b_bal)| {
+                    a_bal.cmp(b_bal).then_with(|| b_addr.cmp(a_addr))
+                })
+                .map(|(addr, _)| *addr);
+            if let Some(addr) = recipient {
+                if let Some(bal) = self.balances.get_mut(&addr) {
+                    *bal = bal.saturating_add(residue);
+                }
+            }
+        }
+
         self.last_decay_epoch = epoch;
     }
 }
