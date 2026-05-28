@@ -52,7 +52,9 @@ make lint                 # clippy (no -D warnings; backlog of 1.94 lint hits)
 make lint-strict          # clippy -D warnings (post-cleanup target)
 make fmt                  # cargo fmt --all
 make fmt-check            # dry-run format check
-make check                # pre-PR gate: fmt-check + lint + build + test-compile
+make bench                # prototypes/fold-a-block release run
+make audit-canaries       # grep-regression gate for closed audit findings (scripts/audit-canaries.sh)
+make check                # pre-PR gate: fmt-check + lint + build + test-compile + audit-canaries
 
 # Single crate
 cargo test -p evaporchain-consensus
@@ -73,9 +75,9 @@ contracts/evaporscript/mortal_message.es   # reference pilot contract
 
 ## Workspace structure
 
-147 crates, ~1.09M LOC, 25,435+ tests. Two tiers:
+159 crate directories (140 active workspace members + 2 excluded WASM crates: `evaporchain-crypto-wasm`, `evaporchain-light-client-wasm`), ~1.09M LOC, 25,435+ tests. Two tiers:
 
-**Core stack (18 crates)** — the chain's production hot path:
+**Core stack (20 crates)** — the chain's production hot path:
 
 | Crate | Role |
 |---|---|
@@ -96,6 +98,8 @@ contracts/evaporscript/mortal_message.es   # reference pilot contract
 | `evaporchain-oracle` | BFT oracle data feeds |
 | `evaporchain-sharding` | Experimental shard assignment + cross-shard messaging |
 | `evaporchain-eth-bridge` | Ethereum bridge |
+| `evaporchain-nova-bridge` | T0.10 Path A — chain-side Nova RecursiveSNARK → L1 Groth16-on-BN254 verifier bridge |
+| `evaporchain-paymaster` | Paymaster sponsorship service for UserOpTxs (multi-token-gas Option B; see `docs/MULTI_TOKEN_GAS_OPTIONS.md`) |
 | `evaporchain-fee-controller` | Singh-Lyapunov PID fee controller crate |
 
 **Substrate (~60+ crates in `crates/`)** — doctrine primitives, VM paradigms, launch dApps. Each is independent with its own tests. Full list in `Cargo.toml`.
