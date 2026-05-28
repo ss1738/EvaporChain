@@ -201,6 +201,23 @@ impl Mempool {
             self.rejected_count += 1;
             return false;
         }
+        // v1: privacy disabled pending ZK circuit — see PRIV-001/002.
+        // Shielded transactions have no real zero-knowledge proof (the
+        // executor verifies attacker-supplied plaintext witnesses, so a
+        // single party can mint/steal the entire shielded pool). Reject
+        // Shield/Unshield/PrivateTransfer at admission so they never enter
+        // an honest mempool or get proposed. The executor dispatch
+        // (parallel.rs / block_stm.rs) gates on the same
+        // `SHIELDED_TX_DISABLED_V1` flag to neutralise a malicious proposer
+        // who embeds one directly in a block. Re-enabling MUST be a
+        // deliberate, reviewed change in both places.
+        if matches!(
+            tx,
+            Transaction::Shield(_) | Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
+        ) {
+            self.rejected_count += 1;
+            return false;
+        }
         // Phase 4.3 (2026-05-03) — NMT namespace-0 reject at admission.
         // Audit K-13: ns=0 is in active production use by the
         // tendermint proposal builder for "core transactions"
@@ -884,6 +901,81 @@ mod tests {
 
     fn dummy_tx() -> Transaction {
         dummy_tx_with_nonce(0)
+    }
+
+    // Regression for PRIV-001/002 (v1 privacy gate-off): shielded
+    // transactions MUST be rejected at mempool admission so they never
+    // enter an honest mempool or get proposed. FAILS-BEFORE: without the
+    // gate in `validate_submission`, these `submit`/`submit_priority`
+    // calls return `true`. PASSES-AFTER: all three are rejected.
+    #[test]
+    fn test_shielded_txs_rejected_at_admission_priv_001_002() {
+        use evaporchain_types::{PrivateTransferTx, ShieldTx, UnshieldTx};
+        let mut pool = Mempool::new();
+
+        let shield = Transaction::Shield(ShieldTx {
+            from: [1u8; 32],
+            amount: 100,
+            nonce: 0,
+            note_owner_hash: [0u8; 32],
+            value_blinding: [0u8; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        });
+        let unshield = Transaction::Unshield(UnshieldTx {
+            to: [2u8; 32],
+            amount: 100,
+            input_nullifiers: vec![],
+            anchor: [0u8; 32],
+            balance_binding: [0u8; 32],
+            input_amounts: vec![],
+            input_blindings: vec![],
+            input_value_commitments: vec![],
+            input_note_commitments: vec![],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![],
+            change_commitments: vec![],
+            energy_proofs: vec![],
+        });
+        let private_transfer = Transaction::PrivateTransfer(PrivateTransferTx {
+            input_nullifiers: vec![],
+            output_commitments: vec![],
+            anchor: [0u8; 32],
+            balance_binding: [0u8; 32],
+            fee: 0,
+            input_amounts: vec![],
+            input_blindings: vec![],
+            input_value_commitments: vec![],
+            input_note_commitments: vec![],
+            input_merkle_proofs: vec![],
+            output_amounts: vec![],
+            output_blindings: vec![],
+            energy_proofs: vec![],
+        });
+
+        assert!(
+            !pool.submit(shield.clone()),
+            "Shield must be rejected at admission (PRIV-001/002)"
+        );
+        assert!(
+            !pool.submit(unshield.clone()),
+            "Unshield must be rejected at admission (PRIV-001/002)"
+        );
+        assert!(
+            !pool.submit(private_transfer.clone()),
+            "PrivateTransfer must be rejected at admission (PRIV-001/002)"
+        );
+        // `submit_priority` shares `validate_submission`, so it must reject too.
+        assert!(!pool.submit_priority(shield), "Shield via submit_priority");
+        assert!(!pool.submit_priority(unshield), "Unshield via submit_priority");
+        assert!(
+            !pool.submit_priority(private_transfer),
+            "PrivateTransfer via submit_priority"
+        );
+        assert!(pool.is_empty(), "no shielded tx should have entered the pool");
     }
 
     #[test]
@@ -1807,12 +1899,17 @@ mod tests {
         }));
 
         // total_bytes should now be a non-trivial sum (every arm hit).
+        // PRIV-001/002 v1 stop-gap (SHIELDED_TX_DISABLED_V1): Shield,
+        // Unshield, PrivateTransfer are rejected at mempool admission.
+        // 24 submitted → 21 admitted; the gas-estimation arms are still
+        // covered for those 3 variants because estimate_tx_gas runs
+        // before the rejection gate.
         assert!(pool.total_bytes() > 0);
-        assert_eq!(pool.len(), 24);
+        assert_eq!(pool.len(), 21);
 
-        // Drain via take_with_gas_limit to exercise every arm in
-        // estimate_tx_gas. Use a high budget so all are taken.
+        // Drain via take_with_gas_limit to exercise every non-shielded
+        // arm in estimate_tx_gas. Use a high budget so all are taken.
         let taken = pool.take_with_gas_limit(100, u64::MAX);
-        assert_eq!(taken.len(), 24);
+        assert_eq!(taken.len(), 21);
     }
 }

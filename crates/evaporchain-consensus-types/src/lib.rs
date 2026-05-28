@@ -898,9 +898,13 @@ impl LightClientVerifier {
         }
 
         let total_stake = header.validator_set.total_stake();
-        if (signing_stake as u128) * 3 < (total_stake as u128) * 2 {
+        // SIB-004 (audit 2026-05-24): strict `> 2T/3` (reject when `<= 2T/3`).
+        // A light client accepting a commit cert at exactly 2/3 could, under
+        // the Q4 disjoint-quorum scenario, be made to trust a forked header
+        // that a strict full node rejects. Match has_supermajority's strict `>`.
+        if (signing_stake as u128) * 3 <= (total_stake as u128) * 2 {
             return Err(format!(
-                "Insufficient signing stake: {} < 2/3 of {}",
+                "Insufficient signing stake: {} is not strictly > 2/3 of {}",
                 signing_stake, total_stake
             ));
         }

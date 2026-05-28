@@ -1515,8 +1515,8 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
     if !args.mainnet_strict {
         return Ok(());
     }
-    // Keep this constant in sync with auth.rs::master_encryption_key().
-    const DEV_MASTER_KEY: &str = "EVAPORCHAIN_DEV_KEY_DO_NOT_USE_IN_PRODUCTION";
+    // API-001: single source of truth for the dev-key string + env-var name.
+    use crate::auth::{DEV_MASTER_KEY, ENV_KEY_MASTER};
 
     let mut issues: Vec<String> = Vec::new();
     if !args.tendermint_mode {
@@ -1558,7 +1558,7 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
             args.validator_count
         ));
     }
-    match std::env::var("EVAPORCHAIN_KEY_MASTER") {
+    match std::env::var(ENV_KEY_MASTER) {
         Err(_) => issues.push("EVAPORCHAIN_KEY_MASTER must be set in --mainnet mode".into()),
         Ok(v) if v == DEV_MASTER_KEY => issues.push(
             "EVAPORCHAIN_KEY_MASTER is set to the dev default; pick a real high-entropy value"
@@ -4349,11 +4349,18 @@ async fn main() -> Result<()> {
                 for action in commits.drain(..) {
                     if let ConsensusAction::SlashValidator { validator_id, amount, ref reason } = action {
                         let mut db_guard = safe_lock(&db);
+                        // ECON-001 (audit 2026-05-24): redistribute the slashed validator
+                        // stake to RefreshPool (via settle_slash below) by PERMANENTLY
+                        // cutting staked_amount — NOT by parking it in slashed_amount,
+                        // where it was double-counted: held in the SlashedPool compartment
+                        // (audit: live = staked - slashed) AND credited to RefreshPool,
+                        // inflating total accounted energy by `amount` on every slash.
+                        // Capture the pre-slash stake first for the delegation-slash %.
+                        let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                         if let Some(mut stake) = db_guard.get_stake(validator_id).cloned() {
-                            stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
+                            stake.staked_amount = stake.staked_amount.saturating_sub(amount);
                             db_guard.put_stake(stake);
                         }
-                        let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                         let delegation_pct = compute_delegation_slash_pct(reason, stake_total);
                         let delegated_slashed = slash_delegations_for_validator(
                             &mut *db_guard, validator_id, delegation_pct,
@@ -5507,11 +5514,16 @@ async fn main() -> Result<()> {
                         );
                         if let ConsensusAction::SlashValidator { validator_id, amount, ref reason } = action {
                             let mut db_guard = safe_lock(&db);
+                            // ECON-001 (audit 2026-05-24): SIBLING of the primary slash
+                            // path above — redistribute the slashed validator stake to
+                            // RefreshPool by permanently cutting staked_amount, not by
+                            // parking it in slashed_amount (which double-counted it). Keep
+                            // this path identical to the primary one.
+                            let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                             if let Some(mut stake) = db_guard.get_stake(validator_id).cloned() {
-                                stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
+                                stake.staked_amount = stake.staked_amount.saturating_sub(amount);
                                 db_guard.put_stake(stake);
                             }
-                            let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                             let delegation_pct = compute_delegation_slash_pct(reason, stake_total);
                             let delegated_slashed = slash_delegations_for_validator(
                                 &mut *db_guard, validator_id, delegation_pct,

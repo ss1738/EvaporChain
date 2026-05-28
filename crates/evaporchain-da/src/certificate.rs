@@ -120,31 +120,56 @@ impl DACertificate {
         self.verify_signatures() && self.is_supermajority()
     }
 
-    /// M4 (audit 2026-05-02): like `verify_signatures`, but only counts
-    /// attestations whose signer is currently active per
-    /// `is_active(validator_id)`. A stale cert with signers who have
-    /// since exited or been jailed will fail this check even if the
-    /// raw BLS signatures themselves verify. Use this method (not
-    /// `verify_signatures`) anywhere a cert reaches consensus or
-    /// finality gating.
-    pub fn verify_signatures_with_active(&self, is_active: &dyn Fn(u64) -> bool) -> bool {
+    /// DA-001 / CONS-003 / SIB-003 (audit 2026-05-24) — THE single
+    /// authoritative DA-certificate verifier for any path that has the
+    /// validator set. Every other set-aware verifier
+    /// (`verify_signatures_with_active`, `DAAttestationManager::verify_certificate`)
+    /// delegates here so they can never diverge again.
+    ///
+    /// `registered(validator_id)` returns the validator's REGISTERED
+    /// `(bls_public_key, stake)` from the live validator set, or `None`
+    /// if the validator is not active (jailed / exited / unknown).
+    ///
+    /// Closes the forgery class that the prior per-function fixes missed:
+    ///   1. **dedup by `validator_id`** — N copies of one attestation can't
+    ///      amplify stake (Q2, which `verify_signatures_with_active` lacked);
+    ///   2. **`att.public_key` MUST equal the registered key** — a signer
+    ///      can't authenticate with their own key while claiming another
+    ///      validator's id (CONS-003);
+    ///   3. **stake counted is the REGISTERED stake**, never the
+    ///      attestation's self-declared `att.stake` — no self-inflation
+    ///      (CONS-003 / DA-001);
+    ///   4. strict `> 2T/3` (Q4).
+    /// An inactive/unknown signer is skipped (not a hard reject), preserving
+    /// the M4 post-jail-filter semantics.
+    pub fn verify_signatures_bound(
+        &self,
+        registered: &dyn Fn(u64) -> Option<(Vec<u8>, u64)>,
+    ) -> bool {
         if self.attestations.is_empty() {
             return false;
         }
+        let mut seen_validators = std::collections::HashSet::<u64>::new();
         let mut recomputed_stake: u64 = 0;
         for att in &self.attestations {
             if att.block_number != self.block_number || att.data_root != self.data_root {
                 return false;
             }
-            if !is_active(att.validator_id) {
-                // Inactive / jailed signer — skip this attestation.
-                // We do NOT short-circuit return false; jailing a
-                // single signer post-hoc shouldn't invalidate the
-                // whole cert if the remaining signers still meet
-                // supermajority on their own.
-                continue;
+            // (1) dedup: a duplicate signer makes the whole cert invalid.
+            if !seen_validators.insert(att.validator_id) {
+                return false;
             }
-            // Q3: include stake in signed message (matches create_attestation + verify_signatures).
+            let (registered_key, registered_stake) = match registered(att.validator_id) {
+                Some(v) => v,
+                // Inactive / jailed / unknown signer — skip (M4 semantics).
+                None => continue,
+            };
+            // (2) the attestation MUST be signed by the validator's
+            // REGISTERED key, not an attacker-supplied one.
+            if att.public_key != registered_key {
+                return false;
+            }
+            // Reconstruct the signed message (stake bound in, Q3).
             let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
             msg.extend_from_slice(DA_ATTESTATION_DST);
             msg.extend_from_slice(&att.block_number.to_le_bytes());
@@ -157,11 +182,38 @@ impl DACertificate {
             if !BlsVerifier::verify(&msg, &sig, &pk) {
                 return false;
             }
-            recomputed_stake = recomputed_stake.saturating_add(att.stake);
+            // (3) count the REGISTERED stake, never the self-declared one.
+            recomputed_stake = recomputed_stake.saturating_add(registered_stake);
         }
-        // The active-only stake must still hit strict supermajority.
-        // Q4: strict > prevents two disjoint quorums at the boundary.
+        // (4) strict > 2T/3 (Q4) prevents two disjoint quorums at the boundary.
         (recomputed_stake as u128) * 3 > (self.total_stake as u128) * 2
+    }
+
+    /// M4 (audit 2026-05-02): post-jail-filter verifier.
+    ///
+    /// DEPRECATED for production (audit 2026-05-24, DA-001): this signature
+    /// only knows *whether* a signer is active, not their registered key or
+    /// stake, so it trusts the attestation's self-declared `public_key` and
+    /// `stake` — the DA-001/CONS-003 forgery surface. PRODUCTION/consensus
+    /// MUST call [`Self::verify_signatures_bound`] with a registered-validator
+    /// lookup. This wrapper is retained for legacy/structural tests only and
+    /// now delegates to the shared routine, supplying each active signer's
+    /// OWN attestation key/stake as the "registered" values — which is sound
+    /// ONLY when the caller already trusts the attestations (honest fixtures).
+    #[deprecated(
+        note = "DA-001: trusts self-declared key/stake. Use verify_signatures_bound with a registered-validator lookup on any consensus path."
+    )]
+    pub fn verify_signatures_with_active(&self, is_active: &dyn Fn(u64) -> bool) -> bool {
+        self.verify_signatures_bound(&|vid| {
+            if is_active(vid) {
+                self.attestations
+                    .iter()
+                    .find(|a| a.validator_id == vid)
+                    .map(|a| (a.public_key.clone(), a.stake))
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -298,7 +350,76 @@ impl CertificateBuilder {
 
 #[cfg(test)]
 mod tests {
+    // Legacy `verify_signatures_with_active` tests below intentionally call
+    // the deprecated wrapper to pin its (honest-fixture) behaviour.
+    #![allow(deprecated)]
     use super::*;
+
+    /// DA-001 / CONS-003 / SIB-003 regression (audit 2026-05-24).
+    /// FAILS-BEFORE: with the old `verify_signatures_with_active`, a single
+    /// party signing as any active validator with their OWN key and an
+    /// inflated self-declared stake minted a supermajority cert.
+    /// PASSES-AFTER: `verify_signatures_bound` binds `att.public_key` to the
+    /// REGISTERED key and counts the REGISTERED stake, with duplicate-signer
+    /// dedup — so the forgery and the amplification both fail, while an
+    /// honest cert with the correct registered lookup still verifies.
+    #[test]
+    fn da001_verify_signatures_bound_rejects_single_party_forgery() {
+        let data_root = [0xBBu8; 32];
+        let stake_per = 1000u64;
+        let total_stake = 3000u64;
+
+        // 3 honest validators with known keypairs (the "registered" set).
+        let kps: Vec<BlsKeypair> = (0..3).map(|_| BlsKeypair::generate()).collect();
+        let reg_keys: Vec<Vec<u8>> = kps.iter().map(|k| k.public_key_bytes().0).collect();
+        let mut builder = CertificateBuilder::new(1, data_root, total_stake);
+        for (i, kp) in kps.iter().enumerate() {
+            let att = create_attestation(1, &data_root, (i + 1) as u64, 8, stake_per, kp);
+            assert!(builder.add_attestation(att));
+        }
+        let honest = builder.try_build().unwrap();
+        // Registered lookup keyed to the REAL keys + REAL stake.
+        let reg = |vid: u64| -> Option<(Vec<u8>, u64)> {
+            let idx = (vid as usize).checked_sub(1)?;
+            reg_keys.get(idx).map(|k| (k.clone(), stake_per))
+        };
+
+        // (a) honest cert with the correct registered lookup verifies.
+        assert!(
+            honest.verify_signatures_bound(&reg),
+            "honest cert with registered keys must verify"
+        );
+
+        // (b) FORGERY: attacker signs as validator 1 with their OWN key and a
+        // huge self-declared stake. Must be rejected (key != registered key).
+        let attacker = BlsKeypair::generate();
+        let forged_att = create_attestation(1, &data_root, 1, 8, 10_000_000, &attacker);
+        let forged = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![forged_att],
+            attested_stake: 10_000_000,
+            total_stake,
+        };
+        assert!(
+            !forged.verify_signatures_bound(&reg),
+            "DA-001: attacker key + inflated self-stake must NOT mint a supermajority cert"
+        );
+
+        // (c) DEDUP: copies of one honest attestation must invalidate the cert.
+        let dup = honest.attestations[0].clone();
+        let dup_cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![dup.clone(), dup.clone(), dup],
+            attested_stake: 3000,
+            total_stake,
+        };
+        assert!(
+            !dup_cert.verify_signatures_bound(&reg),
+            "DA-001/Q2: duplicate signer must invalidate the cert"
+        );
+    }
 
     #[test]
     fn test_certificate_supermajority() {

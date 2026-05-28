@@ -144,18 +144,68 @@ fn generate_address_from_pubkey(pk_bytes: &[u8]) -> String {
     format!("0x{}", hex::encode(addr))
 }
 
+/// Env var holding the wallet master-encryption seed.
+pub const ENV_KEY_MASTER: &str = "EVAPORCHAIN_KEY_MASTER";
+/// The insecure development default. SINGLE SOURCE OF TRUTH — `main.rs`'s
+/// `--mainnet` preflight (and anything else) must reference this, not a
+/// duplicated literal.
+pub const DEV_MASTER_KEY: &str = "EVAPORCHAIN_DEV_KEY_DO_NOT_USE_IN_PRODUCTION";
+
+/// API-001 (audit 2026-05-24): resolve the wallet master seed, FAIL CLOSED.
+/// Returns `Err` if the env var is unset, empty, or set to the insecure dev
+/// default — so a production node never silently encrypts every custodial
+/// wallet secret key under a publicly-known key. Pure (env value passed in)
+/// for race-free unit testing.
+fn master_seed_from_env(raw: Option<&str>) -> Result<String, String> {
+    match raw {
+        None => Err(format!(
+            "{ENV_KEY_MASTER} is not set — refusing the insecure dev key (API-001)"
+        )),
+        Some(s) if s.is_empty() => Err(format!(
+            "{ENV_KEY_MASTER} is empty — refusing the insecure dev key (API-001)"
+        )),
+        Some(s) if s == DEV_MASTER_KEY => Err(format!(
+            "{ENV_KEY_MASTER} is set to the insecure dev default — refusing (API-001)"
+        )),
+        Some(s) => Ok(s.to_string()),
+    }
+}
+
+/// True iff a usable (non-dev) wallet master key is configured. The node uses
+/// this to refuse to start the custodial-wallet subsystem when the key is
+/// missing, mirroring `require_admin_auth`'s fail-closed posture.
+pub fn wallet_encryption_ready() -> bool {
+    master_seed_from_env(std::env::var(ENV_KEY_MASTER).ok().as_deref()).is_ok()
+}
+
 /// Derive the 32-byte master encryption key for wallet private keys.
-/// Uses EVAPORCHAIN_KEY_MASTER env var if set, otherwise a dev-only fallback.
-fn master_encryption_key() -> [u8; 32] {
-    let seed = std::env::var("EVAPORCHAIN_KEY_MASTER")
-        .unwrap_or_else(|_| "EVAPORCHAIN_DEV_KEY_DO_NOT_USE_IN_PRODUCTION".to_string());
-    blake3::derive_key("evaporchain wallet key encryption", seed.as_bytes())
+/// FAIL CLOSED (API-001): errors in production when no real key is set. The
+/// documented dev fallback is permitted ONLY in `cfg!(test)` builds so the
+/// wallet unit tests don't each need to provision a master key; it is
+/// compiled out of release/production binaries.
+fn master_encryption_key() -> Result<[u8; 32], String> {
+    match master_seed_from_env(std::env::var(ENV_KEY_MASTER).ok().as_deref()) {
+        Ok(seed) => Ok(blake3::derive_key(
+            "evaporchain wallet key encryption",
+            seed.as_bytes(),
+        )),
+        Err(e) => {
+            if cfg!(test) {
+                Ok(blake3::derive_key(
+                    "evaporchain wallet key encryption",
+                    DEV_MASTER_KEY.as_bytes(),
+                ))
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 /// Encrypt a hex-encoded secret key with XChaCha20-Poly1305.
 /// Returns hex(nonce || ciphertext).
 fn encrypt_secret_key(sk_hex: &str) -> Result<String, String> {
-    let key = master_encryption_key();
+    let key = master_encryption_key()?;
     let cipher =
         XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("invalid key: {e}"))?;
     let mut nonce_bytes = [0u8; 24];
@@ -177,7 +227,7 @@ pub fn decrypt_secret_key(encrypted_hex: &str) -> Result<String, String> {
         return Err("encrypted key too short".into());
     }
     let (nonce_bytes, ciphertext) = data.split_at(24);
-    let key = master_encryption_key();
+    let key = master_encryption_key()?;
     let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(|_| "invalid key".to_string())?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
@@ -188,13 +238,15 @@ pub fn decrypt_secret_key(encrypted_hex: &str) -> Result<String, String> {
 
 /// Generate a real ML-DSA (Dilithium3) keypair.
 /// Returns (address, public_key_hex, encrypted_secret_key_hex).
-fn generate_keypair() -> (String, String, String) {
+/// API-001: fails closed if wallet encryption is not configured (no silent
+/// dev-key fallback in production) — the caller must surface the error.
+fn generate_keypair() -> Result<(String, String, String), String> {
     let kp = MlDsaKeypair::generate();
     let pk_hex = hex::encode(kp.public_key());
     let sk_hex = hex::encode(kp.secret_key());
     let address = generate_address_from_pubkey(kp.public_key());
-    let encrypted_sk = encrypt_secret_key(&sk_hex).expect("wallet key encryption must not fail");
-    (address, pk_hex, encrypted_sk)
+    let encrypted_sk = encrypt_secret_key(&sk_hex)?;
+    Ok((address, pk_hex, encrypted_sk))
 }
 
 /// Extract user_id from Authorization header token.
@@ -545,7 +597,18 @@ pub async fn create_wallet(
     };
 
     let name = req.name.unwrap_or_else(|| "Main Wallet".into());
-    let (address, public_key, encrypted_private_key) = generate_keypair();
+    // API-001: fail closed if wallet encryption isn't configured.
+    let (address, public_key, encrypted_private_key) = match generate_keypair() {
+        Ok(t) => t,
+        Err(e) => {
+            return Json(WalletResp {
+                success: false,
+                message: format!("wallet key encryption unavailable: {e}"),
+                address: None,
+                public_key: None,
+            })
+        }
+    };
 
     match state.user_db.create_wallet(
         user_id,
@@ -629,7 +692,7 @@ mod tests {
 
     #[test]
     fn test_generate_keypair_produces_encrypted_mldsa() {
-        let (address, pk_hex, encrypted_sk) = generate_keypair();
+        let (address, pk_hex, encrypted_sk) = generate_keypair().unwrap();
         assert!(address.starts_with("0x"));
         assert_eq!(address.len(), 66);
         assert_eq!(pk_hex.len(), 1952 * 2);
@@ -641,6 +704,28 @@ mod tests {
                                             // Verify address derivation
         let pk_bytes = hex::decode(&pk_hex).unwrap();
         assert_eq!(address, generate_address_from_pubkey(&pk_bytes));
+    }
+
+    /// API-001 regression (audit 2026-05-24): the wallet master-key resolver
+    /// FAILS CLOSED — unset / empty / dev-default seeds are rejected, so a
+    /// production node refuses to encrypt custodial keys under the public dev
+    /// key. Pure (no env mutation) → race-free under parallel test runs.
+    #[test]
+    fn test_master_seed_fails_closed_api001() {
+        // unset
+        assert!(master_seed_from_env(None).is_err(), "unset must fail closed");
+        // empty
+        assert!(master_seed_from_env(Some("")).is_err(), "empty must fail closed");
+        // the insecure dev default
+        assert!(
+            master_seed_from_env(Some(DEV_MASTER_KEY)).is_err(),
+            "dev-default key must be refused"
+        );
+        // a real, high-entropy seed is accepted
+        assert_eq!(
+            master_seed_from_env(Some("a-real-high-entropy-master-seed")).unwrap(),
+            "a-real-high-entropy-master-seed"
+        );
     }
 
     #[test]

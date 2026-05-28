@@ -30,6 +30,28 @@ pub const GAS_PRIVATE_TRANSFER_BASE: u64 = 100_000;
 pub const GAS_PRIVATE_TRANSFER_PER_INPUT: u64 = 20_000;
 pub const GAS_PRIVATE_TRANSFER_PER_OUTPUT: u64 = 15_000;
 
+/// v1: shielded transactions are DISABLED on the live consensus path,
+/// pending a real zero-knowledge proof system — see audit findings
+/// PRIV-001/PRIV-002. The current executor verifies attacker-supplied
+/// *plaintext* witnesses (the note commitment is never bound to the value
+/// commitment, and the nullifier is never bound to the spent note), so a
+/// single party could mint/steal the entire shielded pool. Until a real ZK
+/// circuit replaces that, `Shield`/`Unshield`/`PrivateTransfer` are rejected
+/// (a) at mempool admission (`Mempool::validate_submission`) and (b) at the
+/// executor dispatch in `parallel.rs` and `block_stm.rs`, both of which gate
+/// on this single flag.
+///
+/// Re-enabling shielded transactions MUST be a deliberate, reviewed act:
+/// flip this to `false` ONLY after the ZK proof system lands and is audited.
+/// The privacy execution code below is intentionally retained (not deleted)
+/// so the v2 effort builds on it.
+pub const SHIELDED_TX_DISABLED_V1: bool = true;
+
+/// Error message surfaced when a shielded tx reaches the executor while
+/// `SHIELDED_TX_DISABLED_V1` is set. Single-source so both executors agree.
+pub const SHIELDED_TX_DISABLED_MSG: &str =
+    "shielded transactions are disabled in v1 (PRIV-001/002: no ZK proof system)";
+
 /// Errors specific to privacy transaction execution.
 #[derive(Debug, Error)]
 pub enum PrivacyExecError {

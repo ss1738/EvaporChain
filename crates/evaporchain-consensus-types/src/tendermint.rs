@@ -6718,9 +6718,17 @@ impl TendermintConsensus {
             // Must match the per-validator weight used by `total_stake()`
             // (which is what `stake_quorum_threshold` is computed from).
             // See audit P2-01.
+            // SIB-001 (audit 2026-05-24): exclude jailed validators from the
+            // numerator, consistent with the `total_stake()` denominator
+            // (which filters jailed). Without this a jailed validator's vote
+            // counts toward quorum while being excluded from the threshold,
+            // letting quorum form with < 2/3 of genuinely-active stake. Ports
+            // the fix already present in the main `evaporchain-consensus`
+            // crate to this WASM-extract twin so they cannot diverge.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
@@ -6742,9 +6750,17 @@ impl TendermintConsensus {
         let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         for (vid, hash) in &self.round_state.precommits {
             // Must match `total_stake()` weight function. See audit P2-01.
+            // SIB-001 (audit 2026-05-24): exclude jailed validators from the
+            // numerator, consistent with the `total_stake()` denominator
+            // (which filters jailed). Without this a jailed validator's vote
+            // counts toward quorum while being excluded from the threshold,
+            // letting quorum form with < 2/3 of genuinely-active stake. Ports
+            // the fix already present in the main `evaporchain-consensus`
+            // crate to this WASM-extract twin so they cannot diverge.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;

@@ -8241,16 +8241,22 @@ impl TendermintConsensus {
             return false;
         }
         // C-09 FIX: Verify all BLS signatures on attestations and recompute
-        // attested_stake from attestation data. Without this, a forged certificate
-        // with fabricated attested_stake and garbage signatures would be accepted.
-        // Q8 (audit 2026-05-17): use verify_signatures_with_active so attestations
-        // from jailed or exited validators are excluded. verify_signatures() ignores
-        // the current active set, allowing a cert built by validators who were since
-        // jailed to still pass — a liveness attack (stale quorum locks finalization).
-        if !cert.verify_signatures_with_active(&|vid| self.validator_set.get(vid).is_some()) {
+        // attested_stake from attestation data.
+        // DA-001 / CONS-003 (audit 2026-05-24): use verify_signatures_bound with a
+        // REGISTERED-validator lookup — binds each attestation to the validator's
+        // registered BLS key (so a signer can't authenticate with their own key
+        // while claiming another id), counts the REGISTERED stake (not the
+        // self-declared att.stake), dedups by validator_id, and excludes jailed/
+        // exited signers (Q8). A validator with no registered BLS key is treated
+        // as inactive (skipped). Closes the single-party DA-cert forgery class.
+        if !cert.verify_signatures_bound(&|vid| {
+            self.validator_set
+                .get(vid)
+                .and_then(|v| v.bls_public_key.clone().map(|k| (k, v.stake)))
+        }) {
             warn!(
                 block = block.number,
-                "DA certificate contains invalid BLS signatures, inflated stake, or inactive signers"
+                "DA certificate contains invalid BLS signatures, inflated/forged stake, unregistered key, or inactive signers"
             );
             return false;
         }
@@ -16856,12 +16862,44 @@ mod da_tests {
     use evaporchain_state::db::InMemoryStateDB;
     use evaporchain_types::{BlobTx, TransferTx};
 
+    /// Deterministic BLS keypair per validator id. Used by the DA-cert
+    /// fixtures (`make_test_tc_with_bls` + `make_valid_da_cert`) so
+    /// DA-001's `verify_signatures_bound` check
+    /// (`att.public_key == registered_key`) passes. Test-only: do NOT
+    /// reuse outside this module.
+    fn validator_kp(vid: u64) -> BlsKeypair {
+        let mut sk = [0u8; 32];
+        sk[0] = vid as u8;
+        BlsKeypair::from_secret_bytes(&sk).expect("deterministic test kp")
+    }
+
+    /// Default test consensus — validators have NO registered BLS key.
+    /// Use this for tests that exercise consensus paths with
+    /// `bls_signature: None` (equivocation, jailing, basic Tendermint
+    /// flow). The prevote/precommit handler skips BLS verification when
+    /// `validator.bls_public_key` is None AND `has_bls_keys()==false`
+    /// on the whole set, which is the case here.
     fn make_test_tc() -> TendermintConsensus {
         let mut vs = ValidatorSet::new();
         vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
         vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
         vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
         vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        TendermintConsensus::new_for_test(1, 100, vs)
+    }
+
+    /// Same as `make_test_tc()` but each validator has its registered
+    /// BLS public key set to `validator_kp(vid).public_key_bytes()`.
+    /// Only DA-cert verification tests need this — DA-001's
+    /// `verify_signatures_bound` requires the attestation's public_key
+    /// to match the validator's registered key.
+    fn make_test_tc_with_bls() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        for vid in 1..=4u64 {
+            let mut info = ValidatorInfo::new(vid, 1000, [vid as u8; 32]);
+            info.bls_public_key = Some(validator_kp(vid).public_key_bytes().0);
+            vs.add_validator(info);
+        }
         TendermintConsensus::new_for_test(1, 100, vs)
     }
 
@@ -17797,6 +17835,10 @@ mod da_tests {
     }
 
     /// Helper: create a valid DA certificate with BLS-signed attestations.
+    /// Signs each attestation with the *registered* validator keypair
+    /// (see `validator_kp` above) so DA-001's `verify_signatures_bound`
+    /// closure can match `att.public_key` to the validator's registered
+    /// `bls_public_key` field.
     fn make_valid_da_cert(block_number: u64, num_attesters: u64) -> Vec<u8> {
         use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
 
@@ -17808,7 +17850,7 @@ mod da_tests {
         let mut builder = CertificateBuilder::new(block_number, data_root, total_stake);
 
         for vid in 1..=num_attesters {
-            let kp = BlsKeypair::generate();
+            let kp = validator_kp(vid);
             let att = create_attestation(block_number, &data_root, vid, 8, stake_per, &kp);
             assert!(builder.add_attestation(att));
         }
@@ -17900,7 +17942,7 @@ mod da_tests {
     #[test]
     fn test_da_valid_cert_accepted_before_enforcement() {
         // Valid DA certificates should always be accepted, even before enforcement
-        let tc = make_test_tc();
+        let tc = make_test_tc_with_bls();
 
         // Block at height 5 (before default enforcement of 100) with valid cert
         let block = make_block_with_valid_da_cert(5, 3);
@@ -17913,7 +17955,7 @@ mod da_tests {
     #[test]
     fn test_da_valid_cert_accepted_after_enforcement() {
         // Valid DA certificates should be accepted at and after enforcement height
-        let tc = make_test_tc();
+        let tc = make_test_tc_with_bls();
 
         // Block at height 100 (at enforcement) with valid cert
         let block = make_block_with_valid_da_cert(100, 3);
@@ -18169,7 +18211,7 @@ mod da_tests {
     #[test]
     fn test_da_enforcement_height_zero_means_always_enforced() {
         // Setting enforcement height to 0 means enforcement from the very first block
-        let mut tc = make_test_tc();
+        let mut tc = make_test_tc_with_bls();
         tc.set_da_enforcement_height(0);
 
         let block = make_block_no_da_cert(0);
