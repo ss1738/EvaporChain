@@ -3700,6 +3700,26 @@ async fn main() -> Result<()> {
             faucet_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
             faucet_rate_limit_disabled: args.faucet_rate_limit_disabled,
             faucet_rate_limit_secs: args.faucet_rate_limit_secs,
+            // Optional per-IP faucet burst guard. Off unless an operator
+            // sets EVAPORCHAIN_FAUCET_IP_BURST_CAP=<N> (drips per IP
+            // before throttling; recovers via energy-decay).
+            faucet_ip_burst: {
+                let cap = std::env::var("EVAPORCHAIN_FAUCET_IP_BURST_CAP")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0);
+                if cap > 0 {
+                    Some(std::sync::Mutex::new(
+                        evaporchain_decay_rate_limit::DecayRateLimiter::new(
+                            cap,
+                            api::FAUCET_IP_BURST_HALF_LIFE_SECS,
+                        )
+                        .expect("cap > 0 and half-life > 0 are valid"),
+                    ))
+                } else {
+                    None
+                }
+            },
             pending_nonces: std::sync::Mutex::new(std::collections::HashMap::new()),
             nft_store,
             token_store,

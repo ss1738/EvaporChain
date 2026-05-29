@@ -3065,6 +3065,7 @@ dependencies = [
  "evaporchain-da",
  "evaporchain-decay-forget",
  "evaporchain-decay-lamport",
+ "evaporchain-decay-rate-limit",
  "evaporchain-demurrage",
  "evaporchain-dsn",
  "evaporchain-eb-fs",
