@@ -121,6 +121,40 @@ impl LightCone {
             .copied()
     }
 
+    /// Total causal relations `R` in the DAG = the number of direct
+    /// parent→child links (sum of every block's parent count). This is
+    /// the link-count reading of "#causal-relations"; see
+    /// [`Self::bd_action_doubled`].
+    pub fn causal_relation_count(&self) -> usize {
+        self.blocks.values().map(|b| b.parents.len()).sum()
+    }
+
+    /// Sorkin / Benincasa-Dowker action proxy, **doubled** to stay
+    /// integer-exact: `2·S = 2N − R`, where `N` is the block count and
+    /// `R` is [`Self::causal_relation_count`]. The doctrine action is
+    /// `S = N − R/2` (V1.5 leaderless-block-production §2.2, link-count
+    /// reading). Higher `S` ⇒ a more linear DAG (low fan-in); lower /
+    /// negative ⇒ wider.
+    ///
+    /// **Observability only** — a monitoring/telemetry metric, NOT
+    /// enforced at insert. Per the 2026-05-29 doctrine decision: the
+    /// simple proxy's insert-gate would merely duplicate the SUB-N6
+    /// fan-in cap, and the faithful interval-cardinality action's
+    /// antichain theorem is unproven (`research/IMPOSSIBLE_RESEARCH_STACK.md`).
+    /// Returns `i64` since a wide DAG (`R > 2N`) makes the action negative.
+    pub fn bd_action_doubled(&self) -> i64 {
+        2 * (self.blocks.len() as i64) - (self.causal_relation_count() as i64)
+    }
+
+    /// Per-block BD-action gradient (doubled): inserting a block with
+    /// `parent_count` parents shifts `2·S` by `2 − parent_count`. A
+    /// single-parent (linear) block adds `+1` (ΔS = +0.5); a 2-parent
+    /// merge is neutral (`0`); wider merges go negative. Observability
+    /// helper paired with [`Self::bd_action_doubled`] — not an insert gate.
+    pub fn bd_action_delta_doubled(parent_count: usize) -> i64 {
+        2 - parent_count as i64
+    }
+
     /// Insert a block. All parents must already be present (this is a
     /// causal-consistency requirement; the consensus layer enforces it
     /// at network ingest).
@@ -837,5 +871,74 @@ mod insert_policy_tests {
         lc.set_enforce_antichain_parents(true);
         assert!(lc.insert(Block::new(id(3), vec![id(1)], 100, 2)).is_ok());
         assert!(lc.insert(Block::new(id(4), vec![], 100, 0)).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod bd_action_tests {
+    //! Sorkin/BD-action observability metric (§2.2) — measure-only,
+    //! never enforced at insert (2026-05-29 doctrine decision).
+    use super::*;
+
+    fn id(b: u8) -> BlockId {
+        [b; 32]
+    }
+
+    #[test]
+    fn empty_dag_action_is_zero() {
+        let lc = LightCone::new();
+        assert_eq!(lc.causal_relation_count(), 0);
+        assert_eq!(lc.bd_action_doubled(), 0);
+    }
+
+    #[test]
+    fn lone_genesis_has_no_relations() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
+        // N=1, R=0 → 2S = 2.
+        assert_eq!(lc.causal_relation_count(), 0);
+        assert_eq!(lc.bd_action_doubled(), 2);
+    }
+
+    #[test]
+    fn linear_chain_action() {
+        // g(0) → a(1) → b(2): N=3, R=2 → 2S = 6 - 2 = 4 (S=2).
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 100, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(1)], 100, 2)).unwrap();
+        assert_eq!(lc.causal_relation_count(), 2);
+        assert_eq!(lc.bd_action_doubled(), 4);
+    }
+
+    #[test]
+    fn wider_dag_lowers_the_action() {
+        // g + 3 children of g: N=4, R=3 → 2S = 8 - 3 = 5.
+        let mut wide = LightCone::new();
+        wide.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
+        wide.insert(Block::new(id(1), vec![id(0)], 100, 1)).unwrap();
+        wide.insert(Block::new(id(2), vec![id(0)], 100, 1)).unwrap();
+        wide.insert(Block::new(id(3), vec![id(0)], 100, 1)).unwrap();
+        assert_eq!(wide.bd_action_doubled(), 5);
+
+        // A 2-parent merge adds 2 relations: g, a←g, b←g, m←{a,b}:
+        // N=4, R=1+1+2=4 → 2S = 8 - 4 = 4 (lower than 3-leaf width? equal
+        // N but the merge concentrates relations).
+        let mut merge = LightCone::new();
+        merge.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
+        merge.insert(Block::new(id(1), vec![id(0)], 100, 1)).unwrap();
+        merge.insert(Block::new(id(2), vec![id(0)], 100, 1)).unwrap();
+        merge.insert(Block::new(id(5), vec![id(1), id(2)], 100, 2)).unwrap();
+        assert_eq!(merge.causal_relation_count(), 4);
+        assert_eq!(merge.bd_action_doubled(), 4);
+    }
+
+    #[test]
+    fn per_block_delta_gradient() {
+        // ΔS doubled = 2 - parent_count.
+        assert_eq!(LightCone::bd_action_delta_doubled(0), 2); // genesis: +1
+        assert_eq!(LightCone::bd_action_delta_doubled(1), 1); // linear: +0.5
+        assert_eq!(LightCone::bd_action_delta_doubled(2), 0); // 2-merge: neutral
+        assert_eq!(LightCone::bd_action_delta_doubled(4), -2); // wide: negative
     }
 }
