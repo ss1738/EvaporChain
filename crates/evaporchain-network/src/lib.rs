@@ -3,6 +3,9 @@ use evaporchain_types::{Block, Transaction};
 use thiserror::Error;
 
 pub mod banlist;
+/// V1.5 causal-delivery future-block buffer (leaderless-block-production
+/// §2.3): holds blocks that arrive before their parents.
+pub mod future_block_buffer;
 pub mod service;
 pub mod tls;
 
