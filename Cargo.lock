@@ -2237,6 +2237,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "evaporchain-decay-quorum"
+version = "0.1.0"
+dependencies = [
+ "evaporchain-types",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "evaporchain-decay-rate-limit"
 version = "0.1.0"
 dependencies = [
