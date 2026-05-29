@@ -6,6 +6,37 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-29 (evening) — V1.5 leaderless block-production components pre-staged
+
+**Focus:** build + verify every leaderless-block-production component behind a default-off flag, then deliberately PAUSE before the consensus-monolith voting surgery (V1.5 is post-mainnet / Q4 2026).
+**Commits shipped:** 6 V1.5 PRs (#476–#480) + this doc/spec update; each squash-merged to main.
+**Deliverables:**
+| Phase | Item | PR |
+|---|---|---|
+| 1 | `LightCone::insert` antichain-parents enforcement, `set_enforce_antichain_parents`, default off | #476 |
+| 0 | `doctrine_v1_5` feature + `trait LeaderlessProposer` + `EligibilityContext` seam | #477 |
+| 2 | `VrfLeaderlessProposer` — stake-weighted VRF eligibility + liveness floor | #478 |
+| 3 | `FutureBlockBuffer` — causal-delivery buffer (evaporchain-network) | #479 |
+| 4a | `research/tla/LeaderlessConsensus.tla` safety/liveness theorem (gate #1) | #480 |
+**Empirical results:**
+- Every component default-off (`doctrine_v1_5` feature or off-by-default runtime flag); the V1 leader-rotation hot path is bit-for-bit unchanged. Verified on Mini-2 with `--features doctrine_v1_5`.
+- `LeaderlessConsensus.tla`: TLC green — 12 states, 4 invariants hold (no-conflicting-finalize, canonical-finalizes, non-canonical-sub-quorum, TypeOK). Companion to `MccForkChoice.tla`; together discharge acceptance gate #1.
+**Decisions made:**
+- Eligibility model = **VRF threshold** (owner choice over stake-stratified Poisson).
+- **PAUSED Phase 4b** (the `tendermint.rs` BFT-voting integration) by owner decision: multi-session, high-risk surgery (emission gate at `tick:4449`, relax single-leader check at `on_message:5056`, route competing proposals to MCC fork-choice at `:5555`, wire the buffer at `:5146`) and V1.5 is post-mainnet. Components pre-staged; surgery deferred to Q4 2026. Full seam map + plan in `docs/proposals/leaderless-block-production-v15.md` §7.
+- Deferred the Sorkin BD-action insert gate (§2.2) — threshold is doctrine-grade, antichain theorem unproven.
+**Mid-session infra:** Mini-2 hit ENOSPC during a consensus `--features` build (disk 100%); freed 9.6G of stale `target/debug/incremental`, recovered to ~6Gi. Recurring Mini disk pressure — pre-clear incremental before bulk `--features` builds.
+**What's next:**
+- V1.5 4b → 4c → 4d when scheduled (Q4 2026): BFT-voting surgery, adversarial harness, then the 72h soak (needs the cluster).
+- T3.1 cluster bring-up remains the standing operator blocker (**hel-2 offline at the network layer**).
+**Blockers / open questions:**
+- 4b voting surgery: owner-steered, deliberately post-mainnet.
+- BD-action threshold: needs a pinned doctrine spec.
+- hel-2 unreachable — blocks T3.1 + the 4d soak.
+**Cross-references:** PRs #476–#480; `docs/proposals/leaderless-block-production-v15.md` §7; `research/tla/LeaderlessConsensus.tla`; `crates/evaporchain-consensus/src/leaderless.rs`; `crates/evaporchain-network/src/future_block_buffer.rs`.
+
+---
+
 ## 2026-05-29 — decay-primitive suite + node integration + #461 doctrine fix (cont. from 2026-05-28)
 
 **Focus:** after a doc reconciliation + a full "what's left" audit, build the genuinely-greenfield work — a four-primitive decay-native trust stack, wire one into the node, then resolve the #461 MCC fork-choice doctrine question the 2026-05-28 entry parked.

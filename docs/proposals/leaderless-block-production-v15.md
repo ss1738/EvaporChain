@@ -2,7 +2,7 @@
 
 **Doctrine punch list:** Layer 6 ⏳ "Block-production protocol that emits parent sets without a leader (post-V1)"
 
-**Status:** design draft.  Not for V1 — V1 ships with leader-rotation Tendermint via the existing `MccForkChoice` + Light-Cone substrate.
+**Status:** design draft — **components pre-staged 2026-05-29** (all default-off behind the `doctrine_v1_5` feature; see §7). V1 still ships with leader-rotation Tendermint; the hot-path voting integration (§7 Phase 4b) is deliberately deferred to Q4 2026.
 
 **Target:** V1.5 protocol upgrade behind `--cfg doctrine_v1_5`.  Must coexist with V1 hot path so the chain can run either consensus mode at flag time.
 
@@ -82,6 +82,35 @@ Today's gossipsub doesn't guarantee that block `b` is delivered AFTER its `paren
 ## 6.  Status
 
 **Draft.**  Not blocking V1.  Ship V1.0 mainnet first; revisit V1.5 design in Q4 2026 after audit closure and operator stability.
+
+## 7. Implementation status (updated 2026-05-29)
+
+All leaderless **components** are built, tested, and merged — every one
+default-off behind the `doctrine_v1_5` Cargo feature (or an off-by-default
+runtime flag), so the V1 leader-rotation hot path is unaffected.
+
+| Phase | What | Status |
+|---|---|---|
+| 1 | `LightCone::insert` antichain-parents enforcement (§2.2), `set_enforce_antichain_parents`, default off | ✅ PR #476 |
+| 0 | `doctrine_v1_5` feature + `trait LeaderlessProposer` + `EligibilityContext` seam (consensus) | ✅ PR #477 |
+| 2 | `VrfLeaderlessProposer` — stake-weighted VRF eligibility (§2.1) + liveness floor | ✅ PR #478 |
+| 3 | `FutureBlockBuffer` — causal-delivery buffer (§2.3) in `evaporchain-network` | ✅ PR #479 |
+| 4a | `research/tla/LeaderlessConsensus.tla` — safety/liveness theorem (gate #1), TLC-green | ✅ PR #480 |
+
+**Deferred to Q4 2026 (the BFT-voting surgery — owner-steered):**
+- **4b** — wire the above into `tendermint.rs`: emission gate (`tick:4449`
+  `am_i_proposer` → `is_eligible`), relax the single-leader check
+  (`on_message:5056`, verify VRF ticket), route competing proposals to MCC
+  fork-choice instead of first-accepted-wins (`:5555`), wire the buffer at
+  ingest (`:5146`). Needs: a `recent_block_rate` helper (from `committed_at`),
+  a validator_id-scoped VRF input variant, a `block_production_mode`
+  governance key. Multi-session, high-risk; paused before mainnet by design.
+- **4c** — adversarial harness (split-brain, BD-action grinding, TTL gaming). Depends on 4b.
+- **4d** — 72h V1.5-alongside-V1 soak (gate #4). Gated on the cluster (T3.1).
+
+**Also deferred (needs a pinned doctrine spec):** the Sorkin BD-action
+gate from §2.2 — its threshold is doctrine-grade and the antichain theorem
+is unproven (`research/IMPOSSIBLE_RESEARCH_STACK.md`).
 
 ---
 
