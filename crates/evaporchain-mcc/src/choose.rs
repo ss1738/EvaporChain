@@ -1,24 +1,35 @@
 //! `mcc_choose` — argmax-caliber selection over candidate forks.
 //!
-//! Tie-breaks deterministically: when multiple trajectories share the
-//! top caliber, the one with the SMALLER `head()` block id (in
-//! lexicographic order) wins. This keeps the fork-choice deterministic
-//! across replicas without needing additional consensus rounds.
+//! Selection order (deterministic across replicas, no extra rounds):
+//!   1. **higher caliber** wins;
+//!   2. on a caliber tie — **lower path-energy** wins;
+//!   3. on an energy tie too — **smaller `head()` block id** wins.
 //!
-//! The smaller-id direction matches `MccForkChoice::select_tip`
-//! (`evaporchain-consensus/src/fork_choice.rs`), which sorts leaves
-//! ascending by id ("smaller BlockId wins") off the BTreeMap iteration
-//! order. The two MUST agree: `select_tip` chooses the proposer's build
-//! tip while `mcc_choose` (via `evaluate`) accepts/rejects a peer's
-//! block — on a caliber tie a direction mismatch would let validators
-//! reject a correctly-proposed tip. Aligned 2026-05-22 (was larger-id;
-//! surfaced by `research/tla/MccForkChoice.tla`).
+//! Rule 2 (`#461`, energy-first) matters under *caliber saturation*:
+//! caliber is a shift-quantised `Boltzmann(E, β)`, so two paths with
+//! distinct energies can collapse to the *same* caliber (quantisation,
+//! or the floor where both shifts ≥ 32 → caliber 0). MaxCaliber's whole
+//! intent is to pick the lowest-energy / least-dissipation path; under
+//! saturation the quantisation hides that, and a pure id tie-break could
+//! pick the *heavier* path. Comparing `path_energy` first restores the
+//! doctrine where saturation defeats it. Rule 3 keeps it deterministic
+//! when energies are exactly equal.
+//!
+//! This order MUST match `MccForkChoice::select_tip` /
+//! `enumerate_with_caliber` (`evaporchain-consensus/src/fork_choice.rs`):
+//! `select_tip` chooses the proposer's build tip while `mcc_choose` (via
+//! `evaluate`) accepts/rejects a peer's block — a mismatch would let
+//! validators reject a correctly-proposed tip (the `#461` liveness
+//! hazard). The id direction was aligned 2026-05-22 (smaller-id, matches
+//! `select_tip`); the energy-first refinement was added for `#461` and
+//! applied to both seams together.
 
 use thiserror::Error;
 
 use evaporchain_light_cone::LightCone;
+use evaporchain_types::Energy;
 
-use crate::caliber::path_caliber;
+use crate::caliber::{path_caliber, path_energy};
 use crate::trajectory::Trajectory;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -27,9 +38,9 @@ pub enum McccError {
     NoCandidates,
 }
 
-/// Pick the trajectory with the maximum caliber. Deterministic tie-
-/// break by head-block id (lexicographic, smaller wins — matches
-/// `MccForkChoice::select_tip`).
+/// Pick the trajectory with the maximum caliber. Deterministic
+/// tie-break: caliber desc, then path-energy asc, then head-block id
+/// asc (matches `MccForkChoice::select_tip` / `enumerate_with_caliber`).
 pub fn mcc_choose<'a, I>(
     forks: I,
     lc: &LightCone,
@@ -38,25 +49,31 @@ pub fn mcc_choose<'a, I>(
 where
     I: IntoIterator<Item = &'a Trajectory>,
 {
-    let mut best: Option<(&Trajectory, u64)> = None;
+    // best = (trajectory, caliber, path-energy)
+    let mut best: Option<(&Trajectory, u64, Energy)> = None;
     for t in forks {
+        let e = path_energy(t, lc);
         let c = path_caliber(t, lc, beta_mb);
-        match best {
-            None => best = Some((t, c)),
-            Some((_, prev_c)) if c > prev_c => best = Some((t, c)),
-            Some((prev_t, prev_c)) if c == prev_c => {
-                // Tie-break by head id, lexicographic smaller (matches
-                // select_tip's ascending-id rule so propose/accept agree).
-                let prev_head = prev_t.head().copied().unwrap_or([0u8; 32]);
-                let new_head = t.head().copied().unwrap_or([0u8; 32]);
-                if new_head < prev_head {
-                    best = Some((t, c));
+        let replace = match best {
+            None => true,
+            Some((prev_t, prev_c, prev_e)) => {
+                if c != prev_c {
+                    c > prev_c // higher caliber wins
+                } else if e != prev_e {
+                    e < prev_e // caliber tie → lower energy wins (#461)
+                } else {
+                    // energy tie too → smaller head id (determinism)
+                    let prev_head = prev_t.head().copied().unwrap_or([0u8; 32]);
+                    let new_head = t.head().copied().unwrap_or([0u8; 32]);
+                    new_head < prev_head
                 }
             }
-            _ => {}
+        };
+        if replace {
+            best = Some((t, c, e));
         }
     }
-    best.map(|(t, _)| t).ok_or(McccError::NoCandidates)
+    best.map(|(t, _, _)| t).ok_or(McccError::NoCandidates)
 }
 
 #[cfg(test)]
@@ -104,28 +121,61 @@ mod tests {
     }
 
     #[test]
-    fn beta_zero_ties_resolved_lexicographically() {
+    fn beta_zero_tie_resolved_by_lower_energy() {
         let lc = lc_with_two_forks();
-        // β=0 → both paths have equal caliber → tie-break by head id.
+        // β=0 → both paths share the (max) caliber → energy-first
+        // tie-break. path_a energy 2100 < path_b energy 2300 → a wins.
         let path_a = Trajectory::new(vec![id(0), id(1), id(3)]);
         let path_b = Trajectory::new(vec![id(0), id(2), id(4)]);
         let chosen = mcc_choose(vec![&path_a, &path_b], &lc, 0).unwrap();
-        // head(a) = id(3) < head(b) = id(4) → a wins the tie (smaller-id
-        // rule, aligned with select_tip 2026-05-22).
         assert_eq!(chosen, &path_a);
     }
 
     #[test]
-    fn tie_break_smaller_id_independent_of_input_order() {
-        // Regression (2026-05-22): the smaller-id winner must not depend
-        // on the order candidates are supplied — both orderings pick a.
+    fn tie_break_independent_of_input_order() {
+        // The energy-first winner must not depend on input order — both
+        // orderings pick the lower-energy path_a (2100 < 2300).
         let lc = lc_with_two_forks();
-        let path_a = Trajectory::new(vec![id(0), id(1), id(3)]); // head id(3)
-        let path_b = Trajectory::new(vec![id(0), id(2), id(4)]); // head id(4)
+        let path_a = Trajectory::new(vec![id(0), id(1), id(3)]);
+        let path_b = Trajectory::new(vec![id(0), id(2), id(4)]);
         let ab = mcc_choose(vec![&path_a, &path_b], &lc, 0).unwrap();
         let ba = mcc_choose(vec![&path_b, &path_a], &lc, 0).unwrap();
         assert_eq!(ab, &path_a);
         assert_eq!(ba, &path_a);
+    }
+
+    /// #461 — under a caliber tie, LOWER ENERGY must beat SMALLER ID.
+    /// Build a fork where the lower-energy path has the *larger* head id,
+    /// so the old id-only rule would pick the wrong (heavier) path.
+    #[test]
+    fn energy_first_beats_smaller_id_on_caliber_tie() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 0, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap(); // smaller id, HEAVY
+        lc.insert(Block::new(id(2), vec![id(0)], 100, 1)).unwrap(); // larger id, LIGHT
+        let heavy = Trajectory::new(vec![id(0), id(1)]); // energy 900, head id(1)
+        let light = Trajectory::new(vec![id(0), id(2)]); // energy 100, head id(2)
+        // β=0 → caliber tie. Energy-first must pick `light` (head id(2)),
+        // i.e. the LARGER id — proving energy wins over id.
+        let chosen = mcc_choose(vec![&heavy, &light], &lc, 0).unwrap();
+        assert_eq!(chosen, &light);
+        // order-independent.
+        let chosen2 = mcc_choose(vec![&light, &heavy], &lc, 0).unwrap();
+        assert_eq!(chosen2, &light);
+    }
+
+    /// When caliber AND energy both tie, fall back to smaller head id.
+    #[test]
+    fn id_fallback_when_caliber_and_energy_tie() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 0, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 500, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 500, 1)).unwrap();
+        let p1 = Trajectory::new(vec![id(0), id(1)]); // energy 500, head id(1)
+        let p2 = Trajectory::new(vec![id(0), id(2)]); // energy 500, head id(2)
+        // β=0 caliber tie + equal energy → smaller id (id(1)) wins.
+        let chosen = mcc_choose(vec![&p2, &p1], &lc, 0).unwrap();
+        assert_eq!(chosen, &p1);
     }
 
     #[test]
