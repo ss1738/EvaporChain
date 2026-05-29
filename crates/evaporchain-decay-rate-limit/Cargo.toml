@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-decay-rate-limit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-pressure rate-limiting substrate primitive. Each action adds 'pressure' to a bucket; pressure decays through evaporchain_types::energy_at_epoch (the canonical halving curve), so the bucket recovers on its own. An action is allowed only while decayed-pressure + cost stays within capacity. The doctrine-native rate limiter: load you create evaporates, exactly like energy — O(1) state (one u64 + last-update epoch), no sliding-window timestamp lists. Keyed DecayRateLimiter throttles per subject."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde             = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+proptest   = "1"
+serde_json = { workspace = true }
