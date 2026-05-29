@@ -1666,3 +1666,102 @@ contract Tiny {
         );
     }
 }
+
+#[cfg(test)]
+mod decay_access_pass_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/decay_access_pass.es` via `ScriptEngine`
+    //! and exercises the decay-credential pattern on-chain — validity
+    //! tracks the contract's energy lifecycle (the bare `energy`
+    //! builtin), issuer-gated issue/revoke, holder-gated exercise.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/decay_access_pass.es");
+
+    fn issuer() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn holder() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    fn issue_args() -> Vec<Value> {
+        vec![Value::Address(holder()), Value::U64(250_000)]
+    }
+
+    #[test]
+    fn pass_is_totality_clean() {
+        // Must pass the script_vm_mode=total deploy gate (no `while`).
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn validity_tracks_energy_decay() {
+        let mut engine = ScriptEngine::new();
+        // strength 1_000_000, half-life 100, deployed at epoch 0.
+        let id = engine.deploy(SRC, issuer(), 1_000_000, 100, 0).unwrap();
+        engine.call(id, "issue", issue_args(), issuer(), 0).unwrap();
+
+        // epoch 0: energy 1_000_000 >= floor 250_000 → valid.
+        assert_eq!(
+            engine.call(id, "is_valid", vec![], issuer(), 0).unwrap().return_value,
+            Value::Bool(true)
+        );
+        // epoch 200 (two half-lives): energy == 250_000 == floor → valid.
+        assert_eq!(
+            engine.call(id, "is_valid", vec![], issuer(), 200).unwrap().return_value,
+            Value::Bool(true)
+        );
+        // epoch 260: energy 175_000 < floor → invalid (decayed out).
+        assert_eq!(
+            engine.call(id, "is_valid", vec![], issuer(), 260).unwrap().return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn require_valid_is_holder_gated() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, issuer(), 1_000_000, 100, 0).unwrap();
+        engine.call(id, "issue", issue_args(), issuer(), 0).unwrap();
+        // holder may exercise while valid.
+        assert_eq!(
+            engine.call(id, "require_valid", vec![], holder(), 0).unwrap().return_value,
+            Value::Bool(true)
+        );
+        // a non-holder is rejected.
+        assert!(engine.call(id, "require_valid", vec![], stranger(), 0).is_err());
+    }
+
+    #[test]
+    fn revoke_is_terminal_and_issuer_only() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, issuer(), 1_000_000, 100, 0).unwrap();
+        engine.call(id, "issue", issue_args(), issuer(), 0).unwrap();
+        // non-issuer cannot revoke.
+        assert!(engine.call(id, "revoke", vec![], stranger(), 0).is_err());
+        // issuer revokes → invalid even at full energy.
+        engine.call(id, "revoke", vec![], issuer(), 0).unwrap();
+        assert_eq!(
+            engine.call(id, "is_valid", vec![], issuer(), 0).unwrap().return_value,
+            Value::Bool(false)
+        );
+        // double revoke rejected (terminal).
+        assert!(engine.call(id, "revoke", vec![], issuer(), 0).is_err());
+    }
+
+    #[test]
+    fn issue_is_once_and_issuer_only() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, issuer(), 1_000_000, 100, 0).unwrap();
+        // non-issuer cannot issue.
+        assert!(engine.call(id, "issue", issue_args(), stranger(), 0).is_err());
+        engine.call(id, "issue", issue_args(), issuer(), 0).unwrap();
+        // issuing twice rejected.
+        assert!(engine.call(id, "issue", issue_args(), issuer(), 0).is_err());
+    }
+}
