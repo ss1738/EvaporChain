@@ -6,6 +6,41 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-29 — decay-primitive suite + node integration + #461 doctrine fix (cont. from 2026-05-28)
+
+**Focus:** after a doc reconciliation + a full "what's left" audit, build the genuinely-greenfield work — a four-primitive decay-native trust stack, wire one into the node, then resolve the #461 MCC fork-choice doctrine question the 2026-05-28 entry parked.
+**Commits shipped:** ~11 on main (PRs #470–#475 + direct doc/runbook commits). First → last: `f0dd35d2` (CLAUDE.md reconcile) → `e22fe3d7` (#461).
+**Deliverables:**
+| Item | Action |
+|---|---|
+| CLAUDE.md reconcile | Crate count 147→159, documented `bench`/`audit-canaries`/`energy-guard` make targets, audit closure date 05-18→05-28, substrate ~60→~120; fixed stale 31-crate/5,531-test numbers in `~/CLAUDE.md` too. `f0dd35d2`, `cc4032d0`. |
+| "What's left" audit | 6-angle parallel audit: V1 is code-complete (0 open issues/PRs, all AUDIT_2026_05_17 findings closed). Remaining path is ops (T3.1 → soak → external audit), not engineering. |
+| T3.1 runbook | `docs/runbooks/t3.1-cluster-bringup.md` — cold 0/5→5/5 bring-up (operator pre-decisions, per-host build, key/genesis checks, `/api/network/health` gate, failure modes, d-track handoff). `5b2a5606`. |
+| EvaporScript totality gate | `evaporchain_script::totality::check_total_contract` (V1 no-`while`, recurses if/else); wired into `execute_deploy_script` under `script_vm_mode=total` (replaced dead-code branch); un-ignored the reject test. 8 tests. ff-merge `9806a2b7`. |
+| Bell `/api/bell/latest` | Feature was ALREADY implemented (per-block CHSH S persisted at `tendermint.rs:6282`, `last_bell_reading`); only the `ApiDocEntry` strings were stale → corrected. `72a4e8ac`. |
+| Energy-shift Layer-0 guard | `scripts/energy-shift-guard.sh` enforcing the `energy_at_epoch`-only invariant (comment-stripped detection + `// energy-shift-guard:allow` escape); wired into `make energy-guard` + `make check`. Zero hits tree-wide. `423810e6`. |
+| Decay suite (4 primitives) | `evaporchain-decay-credential` (26 tests, PR #470), `-rate-limit` (22, #471), `-quorum` (19, #472), `-reputation` (20, #473). All route decay through `energy_at_epoch` (guard-verified); compose into an identity→vote→reputation→throttle trust stack. |
+| Faucet integration | Opt-in (`EVAPORCHAIN_FAUCET_IP_BURST_CAP`, default off) per-IP burst guard on `/api/faucet` using `decay-rate-limit` — closes the multi-recipient-spray gap the per-(IP,recipient) cooldown leaves open. PR #474 → `be58f76b`. |
+| Git credential fix | MacBook HTTPS git was broken (stale osxkeychain cred + 2-account gh). `gh auth setup-git` repaired it; local clone re-synced. Unblocks local push + background automation. |
+| #461 MCC tie-break | Resolved the parked doctrine question (option B): both fork-choice seams (`mcc_choose` + `enumerate_with_caliber`/`select_tip`) now break caliber ties by lower path-energy then smaller id — symmetric, so propose/accept agree. `MccForkChoice.tla` caught up + TLC green. PR #475 → `e22fe3d7`. |
+**Empirical results:**
+- All primitive + integration tests green on Mini-2 (warm cache; incremental builds 0.8–30s).
+- #461: 7 mcc + 19 consensus fork_choice tests pass; TLC `MccForkChoice` 27 states, no errors, `TieBreakRulesAgree` now holds (was the #460 diagnostic).
+- energy-shift guard: 0 hits across the whole tree — all energy decay routes through `energy_at_epoch`.
+**Decisions made:**
+- #461 → option B (energy-first tie-break), NOT id-only (A) or precision-bump (C). Restores MaxCaliber's least-dissipation intent under caliber saturation; applied symmetrically + TLC-reverified to avoid reintroducing the propose/accept liveness hazard the 2026-05-28 test-fix sidestepped. Gated behind default-off `mcc`/`mcc_full`.
+- Faucet: ADDED a default-off per-IP burst guard rather than REPLACING the audit-hardened per-(IP,recipient) cooldown (zero behaviour change unless an operator opts in). The node's other limiters (snapshot) are precise hard-window mechanisms that don't want decay-pressure semantics — left untouched.
+- Stopped at 4 decay primitives — judged further isolated primitives as filler (distinct mechanisms exhausted: floor / ceiling / ratio / signed-accumulator). Bell turned out already-built; verified before (not) re-implementing.
+**Infra note (git):** MacBook git HTTPS broke mid-session ("Repository not found"); routed all landings through the Minis' SSH + `gh pr merge` until `gh auth setup-git` fixed the osxkeychain credential. Two gh accounts (`ss1738` active, `satyawansinghinuk-stack` inactive) were the root cause. 33 pre-existing stashes left untouched.
+**What's next:**
+- T3.1 cluster bring-up — the only remaining high-value item; blocked on **hel-2 (`100.91.235.22`) offline at the network layer** (needs Hetzner console: power on / re-auth Tailscale) + the second-VPS decision. hel-1 (`100.66.208.20`) is up; all 3 Minis reachable. Runbook ready.
+- Optionally consume the decay suite from an EvaporScript contract / dApp (its natural home; only `rate-limit` fit the node HTTP layer).
+**Blockers / open questions:**
+- T3.1: hel-2 unreachable (ping 100% loss, not on the tailnet) — operator action required before a 5-node bring-up (BFT can't launch 2-down).
+**Cross-references:** PRs #470–#475; commits `9806a2b7`, `72a4e8ac`, `423810e6`, `be58f76b`, `e22fe3d7`; runbook `docs/runbooks/t3.1-cluster-bringup.md`; `research/tla/MccForkChoice.tla` (TLC green); `scripts/energy-shift-guard.sh`.
+
+---
+
 ## 2026-05-28 — last 2 audit PRs (#461, #469) merged + 5 CI relaxations reverted
 
 **Focus:** finish what the 2026-05-24/25 marathon couldn't (#461 MCC test, #469 security remediation), then restore the temporary CI relaxations that the bulk merge had needed.
