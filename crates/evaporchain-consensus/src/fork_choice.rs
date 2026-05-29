@@ -220,14 +220,14 @@ impl ForkChoice for MccForkChoice {
     /// Phase 1.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — DAG-aware tip
     /// selection. Walks every leaf in the DAG, scores its first-parent
     /// trajectory by `path_caliber`, returns the leaf with max score.
-    /// Tie-break: smaller BlockId wins (deterministic across validators
-    /// since `LightCone::leaves` returns BTreeMap-sorted output).
-    /// Returns `None` only when the DAG is empty.
+    /// Tie-break: lower path-energy first, then smaller BlockId
+    /// (deterministic across validators). Returns `None` only when the
+    /// DAG is empty.
     fn select_tip(&self) -> Option<[u8; 32]> {
         // Reuse the enumeration done by `enumerate_with_caliber` so
         // both methods share the same scoring code path. The argmax
-        // is the first entry of the descending-caliber list with
-        // smaller-BlockId tiebreak.
+        // is the first entry of the (caliber desc, energy asc, id asc)
+        // ordering — so propose (this) and accept (mcc_choose) agree.
         self.enumerate_with_caliber()
             .into_iter()
             .next()
@@ -238,8 +238,9 @@ impl ForkChoice for MccForkChoice {
 impl MccForkChoice {
     /// Phase A.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` — score-and-sort
     /// every leaf in the DAG. Returns `Vec<(BlockId, caliber)>`
-    /// sorted by caliber descending; ties broken by smaller BlockId
-    /// first (validator-deterministic).
+    /// sorted by caliber descending; ties broken by lower path-energy
+    /// first (the #461 doctrine fix for caliber saturation), then by
+    /// smaller BlockId (validator-deterministic).
     ///
     /// Powers the multi-parent enumeration: `select_tip` already
     /// returns the argmax, but Phase B's state-replay and Phase C's
@@ -249,19 +250,26 @@ impl MccForkChoice {
     ///
     /// Empty DAG → empty Vec.
     pub fn enumerate_with_caliber(&self) -> Vec<([u8; 32], u64)> {
-        let mut scored: Vec<([u8; 32], u64)> = self
+        // (leaf, caliber, path-energy) — energy is the #461 tie-break key.
+        let mut scored: Vec<([u8; 32], u64, u64)> = self
             .lc
             .leaves()
             .map(|leaf| {
                 let traj = self.first_parent_trajectory(&leaf);
                 let caliber = evaporchain_mcc::path_caliber(&traj, &self.lc, self.beta_mb);
-                (leaf, caliber)
+                let energy = evaporchain_mcc::path_energy(&traj, &self.lc);
+                (leaf, caliber, energy)
             })
             .collect();
-        // Sort: caliber descending, then BlockId ascending (smaller
-        // BlockId tiebreak — same rule as `select_tip`'s argmax).
-        scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        scored
+        // Sort: caliber desc, then path-energy ASC (lower energy =
+        // doctrine-preferred under caliber saturation, #461), then
+        // BlockId asc. MUST match `mcc_choose` or propose/accept diverge.
+        scored.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        scored.into_iter().map(|(id, cal, _e)| (id, cal)).collect()
     }
 }
 
@@ -412,9 +420,10 @@ mod tests {
 
     #[test]
     fn mcc_rejects_larger_id_candidate_at_zero_beta() {
-        // β=0 → caliber ties → tie-break by head id (lexicographic
-        // SMALLER wins, aligned with select_tip 2026-05-22).
-        // local id(3) < candidate id(4) → local wins → reject candidate.
+        // β=0 → caliber ties → energy-first tie-break (#461). Here the
+        // A-path (id 3, energy 2100) is lower-energy AND smaller-id than
+        // the B-path (id 4, energy 2300), so it wins either way: local
+        // id(3) is preferred → reject candidate id(4).
         let lc = lc_two_forks();
         let fc = MccForkChoice::new(lc, 0);
         let v = fc.evaluate(&id(3), &id(4));
@@ -423,13 +432,34 @@ mod tests {
 
     #[test]
     fn mcc_accepts_smaller_id_candidate_at_zero_beta() {
-        // β=0 tie, candidate id(3) < local id(4) → candidate wins → accept.
-        // Confirms the smaller-id rule favors the candidate when it has
-        // the smaller head id (the symmetric case to the test above).
+        // β=0 tie: candidate id(3) is the lower-energy A-path → candidate
+        // wins → accept (symmetric case to the test above).
         let lc = lc_two_forks();
         let fc = MccForkChoice::new(lc, 0);
         let v = fc.evaluate(&id(4), &id(3));
         assert!(v.accept);
+    }
+
+    /// #461 — under a caliber tie, lower path-energy must win over a
+    /// smaller head id. Anti-correlated fork: the lower-energy leaf has
+    /// the LARGER id, so the old id-only rule would have picked the
+    /// heavier path. Verifies the consensus seam (select_tip + evaluate)
+    /// matches `mcc_choose`'s energy-first rule.
+    #[test]
+    fn mcc_energy_first_beats_smaller_id_at_zero_beta() {
+        // Genesis → P (id 1, energy 900, heavy) and → Q (id 2, energy
+        // 100, light). Lower energy (Q) has the larger id.
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 0, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 100, 1)).unwrap();
+        let fc = MccForkChoice::new(lc, 0);
+        // Proposer tip = the lower-energy leaf Q (id 2), the LARGER id.
+        assert_eq!(fc.select_tip(), Some(id(2)));
+        // Accept the lower-energy candidate Q over heavier local P.
+        assert!(fc.evaluate(&id(1), &id(2)).accept);
+        // Reject the heavier candidate P when local is the lighter Q.
+        assert!(!fc.evaluate(&id(2), &id(1)).accept);
     }
 
     #[test]
