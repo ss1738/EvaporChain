@@ -1,0 +1,10 @@
+{
+  "name": "decay-access-pass",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Decay Access Pass dApp — chain-client core (deploy/issue/revoke/validity for contracts/evaporscript/decay_access_pass.es) + client-side validity forecast. UI is TODO (needs a live node to verify).",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
