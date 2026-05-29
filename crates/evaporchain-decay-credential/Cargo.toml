@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-decay-credential"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-credential substrate primitive. Attestations carry energy that decays at a half-life; a credential is valid only while its strength stays above a floor, so credentials evaporate unless the issuer refreshes them. No permanent stamps — KYC/reputation/eligibility grants must be actively maintained. Issuer-only refresh + revoke; decay routed through evaporchain_types::energy_at_epoch."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde             = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+proptest   = "1"
+serde_json = { workspace = true }
