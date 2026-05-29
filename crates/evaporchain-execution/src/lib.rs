@@ -1714,19 +1714,11 @@ impl SimpleExecutor {
         // separation between governance-gating and engine
         // implementation.
         if matches!(db.get_governance_param("script_vm_mode"), Some("total")) {
-            // TODO(pre-existing tech debt unblocked 2026-05-09): the
-            // `evaporchain_script::totality` module referenced here was
-            // never landed in `evaporchain-script` (only `parser`,
-            // `compiler`, `vm` are exported). The standalone crate
-            // `evaporchain-total-evaporscript` has the totality checker
-            // but with a different signature (`check_total(&Term)`).
-            // The runtime gate for `script_vm_mode == "total"` therefore
-            // cannot enforce totality today; this branch is dead code
-            // pending a refactor to wire `evaporchain-total-evaporscript`.
-            // Leaving the runtime-gate intact so when the wiring lands
-            // operators can flip the flag without code changes here.
-            let _ast = evaporchain_script::parser::parse(&tx.source_code).map_err(|e| {
+            let ast = evaporchain_script::parser::parse(&tx.source_code).map_err(|e| {
                 ExecutionError::ScriptError(format!("DeployScript parse (totality gate): {e}"))
+            })?;
+            evaporchain_script::totality::check_total_contract(&ast).map_err(|e| {
+                ExecutionError::ScriptError(format!("DeployScript totality gate: {e}"))
             })?;
         }
 
@@ -5624,7 +5616,6 @@ contract Looper {
     }
 
     #[test]
-    #[ignore = "blocked on evaporchain_script::totality module — see TODO in execute_deploy_script (lib.rs ~1600)"]
     fn test_deploy_script_under_total_mode_rejects_while() {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 10_000);
