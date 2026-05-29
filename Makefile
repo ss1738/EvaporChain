@@ -1,4 +1,4 @@
-.PHONY: build test test-compile lint lint-strict fmt fmt-check bench check audit-canaries
+.PHONY: build test test-compile lint lint-strict fmt fmt-check bench check audit-canaries energy-guard
 
 build:
 	cargo build --workspace
@@ -38,5 +38,10 @@ bench:
 audit-canaries:
 	./scripts/audit-canaries.sh
 
+# Layer 0 CI lint: no raw `>>` on energy values outside
+# evaporchain-types (energy must route through energy_at_epoch).
+energy-guard:
+	./scripts/energy-shift-guard.sh
+
 # Pre-PR gate. Excludes lint-strict until the backlog is cleared.
-check: fmt-check lint build test-compile audit-canaries
+check: fmt-check lint build test-compile audit-canaries energy-guard

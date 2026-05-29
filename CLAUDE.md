@@ -54,7 +54,8 @@ make fmt                  # cargo fmt --all
 make fmt-check            # dry-run format check
 make bench                # prototypes/fold-a-block release run
 make audit-canaries       # grep-regression gate for closed audit findings (scripts/audit-canaries.sh)
-make check                # pre-PR gate: fmt-check + lint + build + test-compile + audit-canaries
+make energy-guard         # Layer 0 lint: no raw `>>` on energy outside evaporchain-types (scripts/energy-shift-guard.sh)
+make check                # pre-PR gate: fmt-check + lint + build + test-compile + audit-canaries + energy-guard
 
 # Single crate
 cargo test -p evaporchain-consensus
@@ -115,7 +116,7 @@ Key substrate groups:
 
 ### 1. Energy routes through `energy_at_epoch` only
 
-**Never** use `>>` on energy values outside `evaporchain-types`. All decay logic — in every crate — must call `evaporchain_types::energy_at_epoch`. The Coq-verified canonical formula lives there. Using raw bit-shifts elsewhere silently breaks the conservation invariant and will be caught by the Layer 0 CI lint.
+**Never** use `>>` on energy values outside `evaporchain-types`. All decay logic — in every crate — must call `evaporchain_types::energy_at_epoch`. The Coq-verified canonical formula lives there. Using raw bit-shifts elsewhere silently breaks the conservation invariant and is caught by the Layer 0 CI lint (`make energy-guard` / `scripts/energy-shift-guard.sh`, run as part of `make check`). To exempt a genuinely non-energy `>>`, annotate the line with a trailing `// energy-shift-guard:allow` comment.
 
 ### 2. New business logic = EvaporScript contract first
 
