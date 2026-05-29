@@ -16,6 +16,24 @@ pub struct LightCone {
     /// Inverse adjacency for `causal_future` — `children[id]` is the
     /// set of blocks that name `id` as a parent.
     children: BTreeMap<BlockId, BTreeSet<BlockId>>,
+    /// doctrine_v1_5 (leaderless-block-production §2.2): when true, a
+    /// multi-parent block whose `parents` are not a valid antichain is
+    /// rejected at INSERT (SUB-N7 enforced here, not only when a leader
+    /// builds the parent set in `propose_parents`). Default `false`, so
+    /// V1 behaviour is bit-for-bit unchanged.
+    ///
+    /// NOTE: the Sorkin BD-action gate from the V1.5 draft §2.2 is a
+    /// separate follow-up — its threshold is doctrine-grade and the
+    /// underlying antichain theorem is still unproven (see
+    /// `research/IMPOSSIBLE_RESEARCH_STACK.md`), so it is intentionally
+    /// NOT enforced here pending a pinned spec.
+    ///
+    /// Runtime policy, NOT DAG data — `#[serde(skip)]` keeps it out of
+    /// the serialized form entirely (zero wire-format change to a
+    /// persisted/checkpointed LightCone) and the consensus layer
+    /// re-applies it after load.
+    #[serde(skip)]
+    enforce_antichain_parents: bool,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -32,6 +50,11 @@ pub enum LightConeError {
     /// `concurrency::is_antichain`.
     #[error("block {0:?} has too many parents: {1} > MAX_PARENTS_PER_BLOCK")]
     TooManyParents(BlockId, usize),
+    /// doctrine_v1_5 (leaderless §2.2): the block's `parents` are not a
+    /// valid antichain (two parents are causally comparable). Only
+    /// raised when `enforce_antichain_parents` is enabled.
+    #[error("block {0:?} parents are not an antichain")]
+    NotAntichain(BlockId),
 }
 
 /// SUB-N6: hard cap on the number of parents a Light-Cone block
@@ -44,6 +67,19 @@ pub const MAX_PARENTS_PER_BLOCK: usize = 16;
 impl LightCone {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable/disable insert-time antichain-parents enforcement
+    /// (doctrine_v1_5 §2.2). Off by default — enabling it makes
+    /// `insert` reject a multi-parent block whose parents are causally
+    /// comparable (not a valid antichain).
+    pub fn set_enforce_antichain_parents(&mut self, enforce: bool) {
+        self.enforce_antichain_parents = enforce;
+    }
+
+    /// Whether insert-time antichain-parents enforcement is active.
+    pub fn enforce_antichain_parents(&self) -> bool {
+        self.enforce_antichain_parents
     }
 
     pub fn len(&self) -> usize {
@@ -107,6 +143,17 @@ impl LightCone {
                     parent: *parent,
                 });
             }
+        }
+        // doctrine_v1_5 §2.2: when enabled, reject a multi-parent block
+        // whose parents aren't a valid antichain (two parents causally
+        // comparable). Enforced at INSERT so the rule holds for every
+        // block in the DAG, not only the ones a leader proposed. All
+        // parents are present by this point, so `is_antichain` resolves.
+        if self.enforce_antichain_parents
+            && block.parents.len() > 1
+            && !crate::concurrency::is_antichain(self, &block.parents)
+        {
+            return Err(LightConeError::NotAntichain(block.id));
         }
         // Update inverse adjacency.
         for parent in &block.parents {
@@ -735,5 +782,60 @@ mod tests {
         // the forward direction:
         let forward = block_path_from_to(&lc, lca, id(1)).unwrap();
         assert_eq!(forward, vec![id(1)]);
+    }
+}
+
+#[cfg(test)]
+mod insert_policy_tests {
+    //! doctrine_v1_5 §2.2 — insert-time antichain-parents enforcement.
+    use super::*;
+
+    fn id(b: u8) -> BlockId {
+        [b; 32]
+    }
+
+    // Genesis g(0); a(1)←g; b(2)←g — a and b are concurrent siblings.
+    fn forks() -> LightCone {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 100, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 100, 1)).unwrap();
+        lc
+    }
+
+    #[test]
+    fn default_off_allows_non_antichain_parents() {
+        // {g, a} are causally comparable (g < a); default policy admits
+        // them so V1 behaviour is unchanged.
+        let mut lc = forks();
+        assert!(!lc.enforce_antichain_parents());
+        assert!(lc.insert(Block::new(id(3), vec![id(0), id(1)], 100, 2)).is_ok());
+    }
+
+    #[test]
+    fn enforced_rejects_non_antichain_parents() {
+        let mut lc = forks();
+        lc.set_enforce_antichain_parents(true);
+        // {g, a} comparable → rejected at insert.
+        assert_eq!(
+            lc.insert(Block::new(id(3), vec![id(0), id(1)], 100, 2)),
+            Err(LightConeError::NotAntichain(id(3)))
+        );
+    }
+
+    #[test]
+    fn enforced_allows_antichain_parents() {
+        let mut lc = forks();
+        lc.set_enforce_antichain_parents(true);
+        // {a, b} concurrent siblings → valid antichain → accepted.
+        assert!(lc.insert(Block::new(id(3), vec![id(1), id(2)], 100, 2)).is_ok());
+    }
+
+    #[test]
+    fn enforced_allows_single_and_zero_parent() {
+        let mut lc = forks();
+        lc.set_enforce_antichain_parents(true);
+        assert!(lc.insert(Block::new(id(3), vec![id(1)], 100, 2)).is_ok());
+        assert!(lc.insert(Block::new(id(4), vec![], 100, 0)).is_ok());
     }
 }
