@@ -31,6 +31,8 @@ evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-state = { path = "../evaporchain-state" }
 evaporchain-consensus = { path = "../evaporchain-consensus" }
 evaporchain-execution = { path = "../evaporchain-execution" }
+# Optional per-IP faucet burst guard (decay-pressure rate limiter).
+evaporchain-decay-rate-limit = { path = "../evaporchain-decay-rate-limit" }
 # Tier 0 — app-templates pipeline (BACKEND_INTEGRATION_BACKLOG.md).
 # Used by `/api/templates/catalogue` to enumerate registered primitives.
 evaporchain-app-templates = { path = "../evaporchain-app-templates" }

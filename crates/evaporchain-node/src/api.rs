@@ -74,6 +74,15 @@ pub struct ApiState {
     /// `--faucet-rate-limit-secs <N>` CLI flag. A value of 0 effectively
     /// disables the cooldown (every request passes the elapsed check).
     pub faucet_rate_limit_secs: u64,
+    /// Optional per-IP faucet *burst* guard (default off). The
+    /// per-(IP, recipient) cooldown above lets one IP drip to many
+    /// distinct recipients; this caps the total burst per IP so a
+    /// single source can't spray thousands of fresh addresses to drain
+    /// the faucet. Pressure decays via `energy_at_epoch`
+    /// (`evaporchain-decay-rate-limit`), so the cap recovers smoothly.
+    /// Enabled by `EVAPORCHAIN_FAUCET_IP_BURST_CAP=<N>`; `None` =
+    /// disabled (no behaviour change). Honors `faucet_rate_limit_disabled`.
+    pub faucet_ip_burst: Option<Mutex<evaporchain_decay_rate_limit::DecayRateLimiter>>,
     /// NFT marketplace store.
     pub nft_store: Arc<Mutex<NftStore>>,
     /// Token store.
@@ -12842,6 +12851,22 @@ pub(crate) fn check_and_record_faucet_rate_limit(
     FaucetRateOutcome::Allowed
 }
 
+/// Half-life (seconds) for the optional per-IP faucet burst guard:
+/// accumulated burst pressure recovers ~50% per minute.
+pub(crate) const FAUCET_IP_BURST_HALF_LIFE_SECS: u64 = 60;
+
+/// Map a client IP to a 32-byte key for the per-IP faucet burst guard
+/// (`DecayRateLimiter` is keyed by `[u8; 32]`). IPv4 octets occupy the
+/// first 4 bytes, IPv6 the first 16; the rest stay zero.
+pub(crate) fn faucet_ip_key(ip: std::net::IpAddr) -> [u8; 32] {
+    let mut k = [0u8; 32];
+    match ip {
+        std::net::IpAddr::V4(v4) => k[..4].copy_from_slice(&v4.octets()),
+        std::net::IpAddr::V6(v6) => k[..16].copy_from_slice(&v6.octets()),
+    }
+    k
+}
+
 async fn wallet_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/wallet.html"))
 }
@@ -13158,6 +13183,35 @@ async fn post_faucet(
                 )),
             }),
         );
+    }
+
+    // Optional per-IP burst guard (default off; enabled via
+    // EVAPORCHAIN_FAUCET_IP_BURST_CAP). Closes the multi-recipient spray
+    // gap the per-(IP, recipient) cooldown leaves open — one IP funding
+    // thousands of fresh addresses. Skipped when rate-limiting is
+    // globally disabled, and for loopback (local harness).
+    if !state.faucet_rate_limit_disabled && !client_ip.is_loopback() {
+        if let Some(burst) = &state.faucet_ip_burst {
+            let now_secs = state.start_time.elapsed().as_secs();
+            let blocked = {
+                let mut limiter = safe_lock(burst);
+                limiter
+                    .try_consume(faucet_ip_key(client_ip), 1, now_secs)
+                    .is_err()
+            };
+            if blocked {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(FaucetResponse {
+                        success: false,
+                        balance: 0,
+                        message: Some(
+                            "Per-IP faucet burst limit exceeded. Slow down.".into(),
+                        ),
+                    }),
+                );
+            }
+        }
     }
 
     // Submit faucet as a transfer from the "faucet account" (all-zeros address)
@@ -22320,6 +22374,41 @@ mod r1_parse_hex_length_cap {
     fn parse_hex_address_accepts_exact_64_chars() {
         let valid = "0".repeat(64);
         assert!(parse_hex_address(&valid).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod faucet_ip_burst_guard {
+    use super::*;
+    use evaporchain_decay_rate_limit::DecayRateLimiter;
+    use std::net::IpAddr;
+
+    #[test]
+    fn ip_key_is_deterministic_and_distinct() {
+        let a: IpAddr = "1.2.3.4".parse().unwrap();
+        let b: IpAddr = "1.2.3.5".parse().unwrap();
+        assert_eq!(faucet_ip_key(a), faucet_ip_key(a));
+        assert_ne!(faucet_ip_key(a), faucet_ip_key(b));
+        // v4 and v6 of similar prefix don't collide.
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
+        assert_ne!(faucet_ip_key(a), faucet_ip_key(v6));
+    }
+
+    #[test]
+    fn burst_guard_caps_then_recovers() {
+        // capacity 3 drips per IP, half-life 60s.
+        let mut rl = DecayRateLimiter::new(3, FAUCET_IP_BURST_HALF_LIFE_SECS).unwrap();
+        let ip = faucet_ip_key("9.9.9.9".parse().unwrap());
+        for _ in 0..3 {
+            assert!(rl.try_consume(ip, 1, 0).is_ok());
+        }
+        // 4th drip in the same instant is blocked.
+        assert!(rl.try_consume(ip, 1, 0).is_err());
+        // a different IP is unaffected.
+        let other = faucet_ip_key("8.8.8.8".parse().unwrap());
+        assert!(rl.try_consume(other, 1, 0).is_ok());
+        // after many half-lives the pressure decays and the IP recovers.
+        assert!(rl.try_consume(ip, 1, 10_000).is_ok());
     }
 }
 
