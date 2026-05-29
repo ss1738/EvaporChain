@@ -108,9 +108,15 @@ runtime flag), so the V1 leader-rotation hot path is unaffected.
 - **4c** — adversarial harness (split-brain, BD-action grinding, TTL gaming). Depends on 4b.
 - **4d** — 72h V1.5-alongside-V1 soak (gate #4). Gated on the cluster (T3.1).
 
-**Also deferred (needs a pinned doctrine spec):** the Sorkin BD-action
-gate from §2.2 — its threshold is doctrine-grade and the antichain theorem
-is unproven (`research/IMPOSSIBLE_RESEARCH_STACK.md`).
+**BD-action (§2.2) — resolved 2026-05-29 as measure-only (PR #483).**
+Doctrine decision: ship the Sorkin/BD-action as an *observability metric*
+(`LightCone::bd_action_doubled` = `2N − R`, link-count reading), NOT an
+insert gate. Rationale: the simple-proxy insert-gate reduces to a
+duplicate of the SUB-N6 fan-in cap, and the faithful interval-cardinality
+action's antichain theorem is unproven (`research/IMPOSSIBLE_RESEARCH_STACK.md`).
+A real enforcement gate stays deferred pending a proven theorem — not a
+threshold guess. (The antichain-at-insert rule from §2.2 *is* enforced,
+opt-in, via Phase 1 / PR #476.)
 
 ---
 
