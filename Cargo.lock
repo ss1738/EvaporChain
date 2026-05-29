@@ -2259,6 +2259,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "evaporchain-decay-reputation"
+version = "0.1.0"
+dependencies = [
+ "evaporchain-types",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "evaporchain-decay-sealed-regions"
 version = "0.1.0"
 dependencies = [
