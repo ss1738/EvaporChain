@@ -63,3 +63,9 @@ test-utils = []
 # nova-snark + halo2curves transitive dep tree, so default builds
 # stay fast.
 lambda_fold_nova = ["evaporchain-lambda-fold/nova"]
+# V1.5 leaderless block production (docs/proposals/
+# leaderless-block-production-v15.md). OFF by default — gates the
+# `leaderless` module (trait LeaderlessProposer + VRF eligibility) so
+# the V1 leader-rotation hot path is wholly unaffected until an operator
+# opts in at a fork epoch. Coexists with V1 per the draft's design.
+doctrine_v1_5 = []

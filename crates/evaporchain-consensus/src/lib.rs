@@ -10,6 +10,10 @@ pub mod da_attestation;
 pub mod encrypted_mempool;
 pub mod finality;
 pub mod fork_choice;
+/// V1.5 leaderless block-production seam — compiled only under the
+/// default-off `doctrine_v1_5` feature.
+#[cfg(feature = "doctrine_v1_5")]
+pub mod leaderless;
 pub mod ib_integration;
 pub mod light_client;
 pub mod mempool;
