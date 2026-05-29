@@ -131,6 +131,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-refresh-market",
         )
         .expect("RefreshMarket descriptor is constant"),
+        TemplateDescriptor::new(
+            DECAY_ACCESS_PASS,
+            "Decay Access Pass (Credential)",
+            "Marketplace",
+            json!({"energy": 1000, "half_life": 100, "validity_floor": 250}),
+            "On-chain decaying credential — validity rides the contract's energy lifecycle; valid only while strength >= floor, evaporates unless the issuer refreshes. Issuer-gated issue/revoke. Reference contract: contracts/evaporscript/decay_access_pass.es.",
+            "evaporchain-decay-credential",
+        )
+        .expect("DecayAccessPass descriptor is constant"),
         // ── Wallet UX lane ──────────────────────────────────────────
         TemplateDescriptor::new(
             SINGH_TRIAGE_CONTRACT,
@@ -297,12 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_21_templates() {
+    fn catalogue_lists_22_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
-        // 21 includes RefreshMarket added 2026-05-09 (Tier 1 backlog).
+        // 21 added RefreshMarket (2026-05-09); 22 adds the Decay Access
+        // Pass credential (2026-05-29).
         let cat = catalogue();
-        assert_eq!(cat.len(), 21);
+        assert_eq!(cat.len(), 22);
     }
 
     #[test]

@@ -53,6 +53,13 @@ pub const SAP_AQ: TemplateClass = TemplateClass(0x0001_0105);
 /// economic activity. Each namespace declares max-slots capacity +
 /// base coefficient; per-epoch rent = `base × (used + 1)² / capacity²`.
 pub const REFRESH_MARKET_NAMESPACE: TemplateClass = TemplateClass(0x0001_0106);
+/// Decay Access Pass — on-chain decaying credential. The pass's strength
+/// is the contract's own energy (decayed via `energy_at_epoch`); valid
+/// only while strength stays at or above a floor, so it evaporates unless
+/// the issuer refreshes. Deployable reference contract at
+/// `contracts/evaporscript/decay_access_pass.es`; substrate lib is
+/// `evaporchain-decay-credential`.
+pub const DECAY_ACCESS_PASS: TemplateClass = TemplateClass(0x0001_0107);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -94,6 +101,7 @@ mod tests {
             SCL_LEASE,
             SAP_AQ,
             REFRESH_MARKET_NAMESPACE,
+            DECAY_ACCESS_PASS,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
