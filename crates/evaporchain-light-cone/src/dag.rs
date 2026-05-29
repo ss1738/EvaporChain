@@ -27,7 +27,12 @@ pub struct LightCone {
     /// underlying antichain theorem is still unproven (see
     /// `research/IMPOSSIBLE_RESEARCH_STACK.md`), so it is intentionally
     /// NOT enforced here pending a pinned spec.
-    #[serde(default)]
+    ///
+    /// Runtime policy, NOT DAG data — `#[serde(skip)]` keeps it out of
+    /// the serialized form entirely (zero wire-format change to a
+    /// persisted/checkpointed LightCone) and the consensus layer
+    /// re-applies it after load.
+    #[serde(skip)]
     enforce_antichain_parents: bool,
 }
 
@@ -832,14 +837,5 @@ mod insert_policy_tests {
         lc.set_enforce_antichain_parents(true);
         assert!(lc.insert(Block::new(id(3), vec![id(1)], 100, 2)).is_ok());
         assert!(lc.insert(Block::new(id(4), vec![], 100, 0)).is_ok());
-    }
-
-    #[test]
-    fn policy_survives_serde_roundtrip() {
-        let mut lc = forks();
-        lc.set_enforce_antichain_parents(true);
-        let json = serde_json::to_string(&lc).unwrap();
-        let back: LightCone = serde_json::from_str(&json).unwrap();
-        assert!(back.enforce_antichain_parents());
     }
 }
