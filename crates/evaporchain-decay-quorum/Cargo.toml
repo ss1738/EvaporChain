@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-decay-quorum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-weighted quorum substrate primitive. Members hold voting weight that decays through evaporchain_types::energy_at_epoch; a decision passes only when approving members' LIVE weight clears a basis-point threshold of the total LIVE weight. Influence reflects current engagement — dormant members' grip fades unless they refresh. Distinct from conviction-vote (which integrates conviction upward); here weight evaporates. Composes with evaporchain-decay-credential."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde             = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+proptest   = "1"
+serde_json = { workspace = true }
