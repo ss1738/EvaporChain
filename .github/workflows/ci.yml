@@ -8,6 +8,15 @@ on:
   pull_request:
     branches: [main]
 
+# The single self-hosted runner drains serially, so a burst of pushes /
+# PRs can back the queue up ~20 deep (see SESSION_PROGRESS 2026-05-29).
+# Group by ref and cancel superseded runs so only the latest commit on a
+# given branch or PR occupies the runner. Distinct PRs use distinct refs,
+# so they still run independently.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Audit canaries — fast pure-bash regression gate over previously-closed
   # audit findings.  Runs first because it's <1s and catches the dropped-
