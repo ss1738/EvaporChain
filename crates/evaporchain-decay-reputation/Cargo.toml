@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-decay-reputation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-reputation substrate primitive. A signed reputation score built from two accumulators — merit and demerit — that each decay through evaporchain_types::energy_at_epoch. Net reputation = merit - demerit. Both good and bad standing fade, so a recent event outweighs an equal stale one (an exponentially-weighted moving accumulator) and a subject can live down a fault by staying active. Keyed ReputationLedger with leaderboard + prune. Composes with evaporchain-decay-credential / evaporchain-decay-quorum."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde             = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+proptest   = "1"
+serde_json = { workspace = true }

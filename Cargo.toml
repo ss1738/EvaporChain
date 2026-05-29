@@ -113,6 +113,7 @@ members = [
     "crates/evaporchain-decay-credential",
     "crates/evaporchain-decay-rate-limit",
     "crates/evaporchain-decay-quorum",
+    "crates/evaporchain-decay-reputation",
     "crates/evaporchain-decay-sealed-regions",
     "crates/evaporchain-dfri",
     "crates/evaporchain-happy-code",
