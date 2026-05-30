@@ -63,7 +63,7 @@ export const BELL_ORACLE_SOURCE = `contract BellOracle {
         if self.readings_accepted == 0 {
             return false
         }
-        if (epoch - self.latest_recorded_epoch) > self.max_age_epochs {
+        if epoch > self.latest_recorded_epoch + self.max_age_epochs {
             return false
         }
         if self.latest_s_milli <= self.threshold_milli {

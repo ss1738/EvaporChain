@@ -88,7 +88,10 @@ contract BellOracle {
         if self.readings_accepted == 0 {
             return false
         }
-        if (epoch - self.latest_recorded_epoch) > self.max_age_epochs {
+        // Equivalent to `(epoch - recorded) > max_age`, but the
+        // parser only accepts `field op field`/`field op field+field`
+        // shapes in if conditions — no paren-wrapped LHS.
+        if epoch > self.latest_recorded_epoch + self.max_age_epochs {
             return false
         }
         // submit_reading ensures stored values strictly exceed the
