@@ -1,0 +1,10 @@
+{
+  "name": "childkey",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ChildKey dApp — chain client for contracts/evaporscript/childkey.es. Sealed letter unlocked by recipient's age (inverted decay), with an m-of-n committee fallback for unexpected events.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

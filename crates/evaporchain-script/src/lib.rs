@@ -3468,3 +3468,379 @@ mod mayfly_pilot {
     }
 }
 
+#[cfg(test)]
+mod childkey_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/childkey.es` via `ScriptEngine`. The
+    //! contract composes the multisig committee pattern + a time-lock
+    //! + a sealed payload into the "sealed letter unlocked by
+    //! recipient's age" template (e.g., a parent writing to a child
+    //! on their 18th birthday with a committee fallback in case of
+    //! premature death or recipient incapacitation).
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/childkey.es");
+
+    fn writer() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn recipient_addr() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn committee_a() -> AccountAddress {
+        [0xA1; 32]
+    }
+    fn committee_b() -> AccountAddress {
+        [0xA2; 32]
+    }
+    fn committee_c() -> AccountAddress {
+        [0xA3; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    /// Deploy and pre-stage 3 committee members + arm with recipient,
+    /// unlock_epoch=100, threshold=2.
+    fn deploy_arm() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, writer(), 1_000_000, 100, 0).unwrap();
+        for m in [committee_a(), committee_b(), committee_c()] {
+            engine
+                .call(
+                    id,
+                    "add_committee_member",
+                    vec![Value::Address(m)],
+                    writer(),
+                    0,
+                )
+                .unwrap();
+        }
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(recipient_addr()),
+                    Value::U64(100),
+                    Value::Str("ipfs://bafy...".to_string()),
+                    Value::U64(2),
+                ],
+                writer(),
+                0,
+            )
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn childkey_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn arm_input_validation_and_one_shot() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, writer(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot add committee.
+        assert!(engine
+            .call(
+                id,
+                "add_committee_member",
+                vec![Value::Address(committee_a())],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Owner adds one.
+        engine
+            .call(
+                id,
+                "add_committee_member",
+                vec![Value::Address(committee_a())],
+                writer(),
+                0,
+            )
+            .unwrap();
+        // Duplicate committee member rejected.
+        assert!(engine
+            .call(
+                id,
+                "add_committee_member",
+                vec![Value::Address(committee_a())],
+                writer(),
+                0
+            )
+            .is_err());
+        // Arm with threshold > committee_size rejected (committee=1, t=2).
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(recipient_addr()),
+                    Value::U64(100),
+                    Value::Str("hash".to_string()),
+                    Value::U64(2)
+                ],
+                writer(),
+                0
+            )
+            .is_err());
+        // Arm with unlock_at in the past rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(recipient_addr()),
+                    Value::U64(0),
+                    Value::Str("hash".to_string()),
+                    Value::U64(1)
+                ],
+                writer(),
+                5
+            )
+            .is_err());
+        // Threshold 0 rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(recipient_addr()),
+                    Value::U64(100),
+                    Value::Str("hash".to_string()),
+                    Value::U64(0)
+                ],
+                writer(),
+                0
+            )
+            .is_err());
+        // OK: t=1, committee=1.
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(recipient_addr()),
+                    Value::U64(100),
+                    Value::Str("hash".to_string()),
+                    Value::U64(1),
+                ],
+                writer(),
+                0,
+            )
+            .unwrap();
+        // Second arm rejected (sealed).
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(recipient_addr()),
+                    Value::U64(200),
+                    Value::Str("again".to_string()),
+                    Value::U64(1)
+                ],
+                writer(),
+                0
+            )
+            .is_err());
+        // add_committee post-arm rejected.
+        assert!(engine
+            .call(
+                id,
+                "add_committee_member",
+                vec![Value::Address(committee_b())],
+                writer(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn natural_unlock_requires_epoch_elapsed() {
+        let (mut engine, id) = deploy_arm();
+        // Before unlock_epoch (=100), natural finalize reverts.
+        assert!(engine
+            .call(id, "finalize_natural_unlock", vec![], stranger(), 99)
+            .is_err());
+        // At/after unlock_epoch, anyone can finalize.
+        engine
+            .call(id, "finalize_natural_unlock", vec![], stranger(), 100)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_unlocked", vec![], stranger(), 100)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Double-finalize rejected.
+        assert!(engine
+            .call(id, "finalize_natural_unlock", vec![], stranger(), 100)
+            .is_err());
+    }
+
+    #[test]
+    fn emergency_unlock_requires_threshold() {
+        let (mut engine, id) = deploy_arm();
+        // threshold = 2. Single vote NOT enough.
+        engine
+            .call(id, "vote_emergency", vec![], committee_a(), 5)
+            .unwrap();
+        assert!(engine
+            .call(id, "finalize_emergency_unlock", vec![], stranger(), 5)
+            .is_err());
+        // Second vote → threshold reached → finalize works.
+        engine
+            .call(id, "vote_emergency", vec![], committee_b(), 6)
+            .unwrap();
+        engine
+            .call(id, "finalize_emergency_unlock", vec![], stranger(), 6)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_unlocked", vec![], stranger(), 6)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn votes_gated_to_committee_no_dupes() {
+        let (mut engine, id) = deploy_arm();
+        // Non-committee member rejected.
+        assert!(engine
+            .call(id, "vote_emergency", vec![], stranger(), 5)
+            .is_err());
+        // Committee_a votes once.
+        engine
+            .call(id, "vote_emergency", vec![], committee_a(), 5)
+            .unwrap();
+        // Same member cannot double-vote.
+        assert!(engine
+            .call(id, "vote_emergency", vec![], committee_a(), 5)
+            .is_err());
+        // vote_progress reflects 1.
+        assert_eq!(
+            engine
+                .call(id, "vote_progress", vec![], stranger(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+    }
+
+    #[test]
+    fn content_read_gated_to_recipient_or_committee_post_unlock() {
+        let (mut engine, id) = deploy_arm();
+        // Pre-unlock reads revert.
+        assert!(engine
+            .call(id, "read_content", vec![], recipient_addr(), 50)
+            .is_err());
+        // Natural-unlock.
+        engine
+            .call(id, "finalize_natural_unlock", vec![], stranger(), 100)
+            .unwrap();
+        // Recipient can read.
+        assert_eq!(
+            engine
+                .call(id, "read_content", vec![], recipient_addr(), 100)
+                .unwrap()
+                .return_value,
+            Value::Str("ipfs://bafy...".to_string())
+        );
+        // Committee member can read.
+        assert_eq!(
+            engine
+                .call(id, "read_content", vec![], committee_a(), 100)
+                .unwrap()
+                .return_value,
+            Value::Str("ipfs://bafy...".to_string())
+        );
+        // Stranger (non-committee, non-recipient) cannot.
+        assert!(engine
+            .call(id, "read_content", vec![], stranger(), 100)
+            .is_err());
+    }
+
+    #[test]
+    fn epochs_until_unlock_counts_down() {
+        let (mut engine, id) = deploy_arm();
+        // unlock_epoch = 100.
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_unlock", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(100)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_unlock", vec![], stranger(), 50)
+                .unwrap()
+                .return_value,
+            Value::U64(50)
+        );
+        // At/after unlock, returns 0.
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_unlock", vec![], stranger(), 100)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_unlock", vec![], stranger(), 150)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn pre_arm_views_safe_defaults() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, writer(), 1_000_000, 100, 0).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_armed", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_unlocked", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_recipient",
+                    vec![Value::Address(recipient_addr())],
+                    stranger(),
+                    0
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_unlock", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+}
+

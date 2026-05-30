@@ -174,7 +174,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "ChildKey (Singh Letter)",
             "Consumer",
             json!({"unlock_age_years": 18, "epochs_per_year": 365, "m_threshold": 3, "n_committee": 5}),
-            "Sealed letters unlocked by recipient's age. Inverted decay. Today Show segment.",
+            "Sealed letters unlocked by recipient's age. Inverted decay — accumulates accessibility instead of shedding it. m-of-n committee provides the safety valve for unexpected events (writer death, recipient incapacitation). Today Show segment. Reference contract: contracts/evaporscript/childkey.es.",
             "evaporchain-childkey",
         )
         .expect("ChildKey descriptor is constant"),
