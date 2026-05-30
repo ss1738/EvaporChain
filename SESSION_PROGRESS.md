@@ -6,6 +6,36 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (late night) — Mayfly + ChildKey backfills (NFT lane 5/5, Consumer 2/3)
+
+**Focus:** continue the catalogue-backfill arc. Two contracts this sub-session — Mayfly (NFT lane #5, closing it 5/5 backed) + ChildKey (Consumer lane #2). Plus one quiet correction: my "8 catalogue gaps" claim from earlier was wrong; the audit had missed pre-existing MAYFLY + SINGH_POSTHUMA descriptors. Real remaining gaps: 5 unbacked-by-.es-file (sfsv, scl, sap, mnemochain, gallery-forgets).
+**Commits shipped:** 3 on main (`fc1cdddf` → `790632cd`). Branches `mayfly` and `childkey` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/mayfly.es` | Doctrine-purest NFT: hatch + transfer + read while alive; no expire method, no terminal state, contract energy IS the lifespan. on_refresh hook flags "defying nature" so dApps can warn the holder that refresh is doctrinally unusual here. |
+| `mod mayfly_pilot` (7 tests) | totality-clean, hatch owner-only + one-shot, metadata read open post-hatch, transfer owner-chain (minter→alice→bob with rejected former-holder transfer), transfer requires hatch, age_epochs counts from hatch (uses sealed sentinel — applied pre-emptively from the witnessfit lesson), hatch-at-epoch-0 regression. **7/7 PASS** after the duplicate-descriptor + long-lived-deploy fixes. |
+| Mayfly catalogue descriptor | UPDATED in place — pre-existing descriptor pointed at `evaporchain-gallery-forgets` crate; updated description to also reference the new .es file. No new entry (the original was a duplicate of my added one; catalogue dedup-by-class-id sorted my entry away on first cargo run). Catalogue count stays at 24. |
+| `contracts/evaporscript/childkey.es` | "Sealed letter unlocked by recipient's age." Inverted decay — accumulates accessibility rather than shedding it. Writer adds committee members (multisig-style), arms with recipient + unlock_epoch + content_hash + threshold. Two unlock paths: `finalize_natural_unlock` (anyone, post epoch≥unlock) OR `vote_emergency` (committee) → `finalize_emergency_unlock` (anyone, post threshold). Read gate: recipient OR committee member, post-unlock. Lifecycle hooks distinguish evaporated-unread vs evaporated-post-read. |
+| `mod childkey_pilot` (8 tests) | totality-clean, **arm input validation** (threshold > committee size / past unlock_at / threshold=0 / double-arm / add_committee post-arm all rejected), natural unlock at boundary (epoch=99 reject, epoch=100 accept), emergency unlock requires threshold votes, votes committee-gated no-dupes, content read recipient-or-committee-only post-unlock, epochs_until_unlock counts down, pre-arm views safe defaults. **8/8 PASS on first compile.** |
+| dApp clients | `dapps/mayfly/` (6 tests) + `dapps/childkey/` (7 tests). Mayfly = deploy + hatch + transfer + views. ChildKey = full lifecycle payload builders (add committee, arm, vote, finalize natural, finalize emergency, read content). All node:test, no install. |
+| Two catalogue descriptor edits | Mayfly description updated to point at .es; ChildKey description extended to reference the .es file + the inverted-decay + safety-valve framing. |
+**Empirical results:**
+- Two cargo cycles for Mayfly: first run had (a) duplicate MAYFLY descriptor (catalogue had one, audit missed it), (b) `age_epochs` test used short-life deploy params and tripped the chain's energy-zero gate when probing at epoch=100. Both fixed in `1380dc0d`. Second run: 7/7 green.
+- ChildKey: green on first compile. The pattern of testing argument validation (threshold>committee, past unlock_at, threshold=0, double-arm, post-arm committee add) caught all the edge cases upfront.
+- Local TS: 6/6 (mayfly), 7/7 (childkey). Total day's TS test count: 44 across 6 dApps.
+**Decisions made:**
+- **Audit correction.** My "8 catalogue gaps remain" claim from the late-evening entry was wrong by 2 — the real gap count was 6 (sfsv, scl, sap, mnemochain, gallery-forgets, plus the now-closed childkey + mayfly). MAYFLY + SINGH_POSTHUMA were already in the catalogue under different framings; my grep window had cut off before reaching them. Mayfly's descriptor was UPDATED in place to point at the new .es backing, not added.
+- **Sealed-bool sentinel applied pre-emptively in mayfly.** Lesson from witnessfit + mortal_dao stuck — the contract's `sealed: bool = false` gates every view that depends on `born_epoch`, so epoch=0 hatch works correctly.
+- **Stored content hash + off-chain cleartext** for ChildKey. The chain holds a hash; the dApp handles the encryption + decryption with a key derived from the recipient's identity + a committee secret-share scheme. Keeps the contract small + leaves the cryptography to a layer that can be upgraded without a contract migration.
+**What's next:**
+- 5 catalogue gaps remain: sfsv, scl, sap (Marketplace), mnemochain (Consumer), gallery-forgets (Cultural). Plus SINGH_POSTHUMA's class id has a catalogue descriptor pointing at the substrate crate but no .es backing — could backfill that too.
+- T3.1 cluster bring-up still gated only on Tailscale auth key.
+**Blockers / open questions:** none new.
+**Cross-references:** commits `fc1cdddf` (mayfly), `1380dc0d` (mayfly fixes), `790632cd` (childkey); files `contracts/evaporscript/{mayfly,childkey}.es`, `crates/evaporchain-script/src/lib.rs` (`mod mayfly_pilot` + `mod childkey_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/{mayfly,childkey}/{src,test}`.
+
+---
+
 ## 2026-05-30 (night) — WitnessFit reference contract (Consumer lane #1)
 
 **Focus:** continue the catalogue-backfill arc — pick the next-strongest gap among the 9 unbacked classes. WitnessFit lands as the FIRST .es contract in the Consumer lane (previously zero backed).
