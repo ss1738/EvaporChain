@@ -242,7 +242,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             json!({
                 "energy": 1000,
                 "half_life": 100,
-                "freshness_window": 100,
+                "freshness_window": 500,
                 "proposal_cap": 3,
                 "voting_window": 50
             }),

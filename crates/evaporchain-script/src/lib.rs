@@ -1868,9 +1868,10 @@ mod mortal_dao_pilot {
 
     #[test]
     fn open_proposal_blocked_by_stale_membership() {
-        // decay-credential: alice joined at epoch 0; freshness_window
-        // is 100. At epoch 101 she's stale and cannot open a proposal
-        // until she refreshes.
+        // decay-credential: alice joined at epoch 0, members[alice] = 1
+        // (epoch + 1). freshness_window = 500, so the gate
+        // `members[addr] + freshness > epoch` requires 1 + 500 > epoch,
+        // i.e. fresh through epoch 500, stale at epoch 501.
         let (mut engine, id) = deploy_with_members();
         assert!(engine
             .call(
@@ -1878,20 +1879,21 @@ mod mortal_dao_pilot {
                 "open_proposal",
                 vec![Value::Str("p".to_string())],
                 alice(),
-                101
+                501
             )
             .is_err());
         engine
-            .call(id, "refresh_membership", vec![], alice(), 101)
+            .call(id, "refresh_membership", vec![], alice(), 501)
             .unwrap();
-        // Now within the freshness window again.
+        // Refresh sets members[alice] = 502; fresh again
+        // (502 + 500 == 1002 > 501).
         engine
             .call(
                 id,
                 "open_proposal",
                 vec![Value::Str("p".to_string())],
                 alice(),
-                101,
+                501,
             )
             .unwrap();
     }

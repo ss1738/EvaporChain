@@ -18,7 +18,7 @@ export const MORTAL_DAO_SOURCE = `contract MortalDAO {
     state {
         members: map[address -> u64]
         member_count: u64 = 0
-        freshness_window: u64 = 100
+        freshness_window: u64 = 500
 
         participations: map[address -> u64]
 
@@ -46,7 +46,7 @@ export const MORTAL_DAO_SOURCE = `contract MortalDAO {
     fn add_member(who: address) {
         require(caller == owner, "only owner adds members")
         require(self.members[who] == 0, "already a member")
-        self.members[who] = epoch
+        self.members[who] = epoch + 1
         self.participations[who] = 0
         self.proposals_opened[who] = 0
         self.member_count += 1
@@ -55,7 +55,7 @@ export const MORTAL_DAO_SOURCE = `contract MortalDAO {
 
     fn refresh_membership() {
         require(self.members[caller] > 0, "not a member")
-        self.members[caller] = epoch
+        self.members[caller] = epoch + 1
         self.proposals_opened[caller] = 0
         emit("membership refreshed")
     }

@@ -19,11 +19,16 @@
 contract MortalDAO {
     state {
         // ── decay-credential: membership freshness ─────────────────
-        // member -> last_refresh_epoch (also = join_epoch on add).
-        // Active iff (epoch - last_refresh_epoch) < freshness_window.
+        // member -> (last_refresh_epoch + 1). The +1 shift means a
+        // member added at epoch 0 has members[addr] == 1, never 0 —
+        // so the `members[addr] == 0` sentinel reliably means
+        // "not a member". Active iff (members[addr] - 1 + freshness_window) > epoch,
+        // equivalently members[addr] + freshness_window > epoch + 1.
         members: map[address -> u64]
         member_count: u64 = 0
-        freshness_window: u64 = 100
+        // 500 epochs covers proposal_cap (3) × voting_window (50) = 150
+        // with a comfortable buffer for human cadence between proposals.
+        freshness_window: u64 = 500
 
         // ── decay-reputation: weight grows with participation ──────
         // member -> votes cast across all proposals. Voting weight
@@ -68,7 +73,9 @@ contract MortalDAO {
     fn add_member(who: address) {
         require(caller == owner, "only owner adds members")
         require(self.members[who] == 0, "already a member")
-        self.members[who] = epoch
+        // +1 shift so epoch=0 joiners are distinguishable from
+        // never-joined (members[addr] == 0).
+        self.members[who] = epoch + 1
         self.participations[who] = 0
         self.proposals_opened[who] = 0
         self.member_count += 1
@@ -79,7 +86,7 @@ contract MortalDAO {
     // your proposal-cap counter in one call (engagement reset).
     fn refresh_membership() {
         require(self.members[caller] > 0, "not a member")
-        self.members[caller] = epoch
+        self.members[caller] = epoch + 1
         self.proposals_opened[caller] = 0
         emit("membership refreshed")
     }
