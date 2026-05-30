@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (early morning) — SFSV reference contract (future-self vault)
+
+**Focus:** backfill SFSV_VAULT (0x0001_0102) — "Sell your future-self's claim — third parties bid for delayed-payout vaults via SDDC." Doctrine point spelled out in the on_evaporate hook: structural-uncertainty forfeit is exactly why the future-self claim trades at a discount, not just time-value-of-money.
+**Commits shipped:** 1 on main (`044ef7d1`). Branch `sfsv-backfill` (renamed from collision with existing `sfsv/deploy-tsview-api-script-correction`) ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/sfsv.es` | ~170 LOC. arm(future_self, amount, release_epoch) owner-one-shot. Current beneficiary may sell(buyer) ONE TIME (chain of sales = chain of contracts; intentional audit-traceability). withdraw() after release, beneficiary-only. on_evaporate distinguishes evaporated-unwithdrawn (DEPOSIT FORFEIT — the doctrine point) vs evaporated-post-withdrawal. |
+| `mod sfsv_pilot` (9 tests) | totality-clean, arm input validation + one-shot, withdraw pre-release rejected / at-release accepted / double-withdraw rejected, withdraw beneficiary-only (depositor + stranger rejected — depositor is owner, not necessarily beneficiary), sell transfers claim (is_beneficiary flips to buyer, is_original_future_self still tracks the seed for audit, post-sell former beneficiary rejected, buyer can withdraw), sell one-shot (stranger/depositor/buyer-resell all rejected), epochs_until_release counts down, is_releasable composite gate, pre-arm views all safe. **9/9 PASS on Mini-2.** |
+| dApp client | `dapps/sfsv/` — full vault lifecycle + every view. 7/7 node:test PASS. |
+| Catalogue pointer | SFSV_VAULT descriptor extended to spell out the structural-uncertainty framing. |
+**Empirical results:** 9/9 cargo + 7/7 TS PASS. First-compile green. The branching mishap (see "Decisions made" below) was a workflow error not a correctness error — no rework of contract or tests needed.
+**Decisions made:**
+- **Branch naming collision recovery.** `git checkout -b sfsv` failed because `sfsv/deploy-tsview-api-script-correction` existed (pre-Claude session, from an earlier engineer). Without checking the error code, the script proceeded to `git add + commit`, landing the commit on main. Recovery: `git branch sfsv-backfill 044ef7d1` to capture the commit, `git reset --keep 5292339f` to back main off, push the branch, verify on Mini-2, ff-merge. **Workflow lesson for the future:** when creating branches, set up an error trap so failed checkout-b doesn't silently proceed to commit, OR check `git symbolic-ref HEAD` before commit to confirm we're on the expected branch.
+- **One-shot sell, not a chain.** A SECOND sale would require a second contract (recoded with the buyer as the new "future_self"). This is intentional — each sale event has its own audit-traceable contract address, and the doctrine of "structural uncertainty discounts" stays clean (each contract has its own decay clock).
+- **`is_original_future_self` view kept post-sell.** When the claim is sold, `is_beneficiary` shifts to the buyer, but the contract still tracks the SEED address for audit trail purposes. Downstream auditors can verify "this vault was originally for X, sold once, now belongs to Y."
+**What's next:**
+- 2 catalogue gaps remain: sap (Attention Quantum, Marketplace) + mnemochain (FSRS Card, Consumer). Both involve continuous-decay math which is harder to express in EvaporScript V1 (no `>>`, no `**`).
+- T3.1 still gated only on Tailscale auth key.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `044ef7d1`; files `contracts/evaporscript/sfsv.es`, `crates/evaporchain-script/src/lib.rs` (`mod sfsv_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/sfsv/{src,test}`. Pairs naturally with `sddc.es` — SDDC is the auction primitive third parties use to bid on the claim while it's locked; SFSV is the vault side.
+
+---
+
 ## 2026-05-30 (dawn) — GalleryThatForgets reference contract (Cultural lane opened)
 
 **Focus:** open the Cultural lane (previously 0/1 backed) with GALLERY_FORGETS — the catalogue's sharpest doctrine framing ("the first thing humans have made that is provably going to die").
