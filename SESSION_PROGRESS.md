@@ -6,6 +6,34 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (late evening) — Refresh-Market reference contract (catalogue gap closed)
+
+**Focus:** close the biggest catalogue gap — REFRESH_MARKET_NAMESPACE was registered at 0x0001_0106 with the descriptor "the chain's primary economic activity," but had no .es backing. Audit found 10 such gaps; this is the doctrine-weightiest one.
+**Commits shipped:** 1 on main (`2e295ab0`). Branch `refresh-market` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/refresh_market.es` | ~210 LOC — per-namespace AMM rent contract. `arm(cap, base, eviction)` (owner-only one-shot, rejects cap=0 or eviction=0) → `claim_slot()` (one-per-caller, capacity-gated) → `refresh_slot()` (reset eviction clock) → `release_slot()` (voluntary) → `evict(who)` (anyone, after window). Quadratic rate formula `base * (used + 1)^2 / capacity^2` in `current_rate()`; `rate_at_used(used)` for hypothetical previews. Used the +1-shift pattern + `epoch >= last_refresh + eviction_window` form (no paren-wrapped LHS — lessons from mortal_dao + bell_oracle stuck). |
+| `mod refresh_market_pilot` (10 tests) | totality-clean, arm input validation + one-shot, claim-blocked-until-armed, claim semantics + double-claim rejection, **capacity gate at 10 distinct callers**, release semantics, **evict only after window** (with both is_evictable + evict() verified at boundary epochs), refresh resets clock, **current_rate quadratic verification at 0/5/9/post-claim**, pre-arm-safe-defaults. |
+| Catalogue descriptor update | REFRESH_MARKET_NAMESPACE descriptor now points at `contracts/evaporscript/refresh_market.es` + adds `eviction_window: 10` to the JSON defaults. No class.rs change (already registered). |
+| `dapps/refresh-market/` | TS chain-client with the usual builder/view pattern + `rate.ts`: BigInt port of the on-chain formula so UIs preview pricing byte-for-byte without a node round-trip. Includes `firstUsedAboveRate()` helper for "when does this namespace get expensive?" timelines. **10/10 node:test PASS** locally. |
+**Empirical results:**
+- `cargo test -p evaporchain-script refresh_market_pilot` on Mini-2: **10/10 PASS on first compile**, 0.01s execution.
+- `cargo test -p evaporchain-app-templates`: 20 lib + 16 e2e PASS.
+- TS rate.ts: client-side `currentRate(5, 10, 100) = 36n` matches the on-chain `rate_at_used(5) = 36` byte-for-byte; pre-arm safety (capacity=0 → 0) also matches.
+**Decisions made:**
+- **Backfilled existing catalogue entry rather than adding a new class.** REFRESH_MARKET_NAMESPACE was a "registered but unbacked" gap — closing it is more important than opening another fresh lane. 9 such gaps remain (singh-posthuma, mayfly, sfsv, scl, sap, childkey, mnemochain, witnessfit, gallery-forgets) but most are NFT/Consumer/Cultural primitives less central to the doctrine than refresh_market.
+- **No on-chain payment mechanism in the reference contract** — payment is the substrate crate `evaporchain-refresh-market`'s job. The .es contract publishes the rate + tracks occupancy + enforces eviction. Off-chain pay → on-chain refresh_slot is the documented pattern.
+- **Eviction open to anyone** (not just the operator). Incentivises third parties to police staleness — the social mechanism that keeps capacity from leaking under operator absence.
+**What's next:**
+- Other catalogue gaps if helpful (sap, scl, sfsv = Marketplace lane — already 4 contracts there; or childkey / mnemochain / witnessfit in Consumer lane).
+- Block explorer (gated on cluster).
+- T3.1 still gated only on Tailscale auth key.
+**Blockers / open questions:** none new — same as previous entries.
+**Cross-references:** commit `2e295ab0`; files `contracts/evaporscript/refresh_market.es`, `crates/evaporchain-script/src/lib.rs` (`mod refresh_market_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/refresh-market/{src,test}`; substrate crate at `crates/evaporchain-refresh-market/` (the on-chain payment layer, not touched today).
+
+---
+
 ## 2026-05-30 (evening) — Bell-Oracle reference contract (Paradigm lane #4)
 
 **Focus:** ship the doctrine-novel pick from the post-Mortal-DAO menu — an on-chain consumer of EvaporChain's per-block Bell-CHSH S-value beacon (a primitive no other chain has natively).
