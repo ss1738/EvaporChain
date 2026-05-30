@@ -3168,3 +3168,298 @@ mod witnessfit_pilot {
         );
     }
 }
+
+#[cfg(test)]
+mod mayfly_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/mayfly.es` via `ScriptEngine` and
+    //! exercises the doctrine-purest NFT — hatch + transfer +
+    //! metadata read, with the contract's own energy as the
+    //! lifespan.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/mayfly.es");
+
+    fn minter() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn alice() -> AccountAddress {
+        [0x21; 32]
+    }
+    fn bob() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    #[test]
+    fn mayfly_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn hatch_owner_only_one_shot() {
+        let mut engine = ScriptEngine::new();
+        // strength 1000, half-life 10 — the mayfly catalogue defaults.
+        let id = engine.deploy(SRC, minter(), 1000, 10, 0).unwrap();
+        // Stranger cannot hatch.
+        assert!(engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("brief life".to_string())],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Minter hatches successfully.
+        engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("brief life".to_string())],
+                minter(),
+                0,
+            )
+            .unwrap();
+        // Second hatch rejected.
+        assert!(engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("again".to_string())],
+                minter(),
+                0
+            )
+            .is_err());
+        // is_hatched flips true.
+        assert_eq!(
+            engine
+                .call(id, "is_hatched", vec![], minter(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn metadata_read_open_after_hatch() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, minter(), 1000, 10, 0).unwrap();
+        // Read before hatch reverts.
+        assert!(engine
+            .call(id, "read_metadata", vec![], stranger(), 0)
+            .is_err());
+        engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("nymph→imago".to_string())],
+                minter(),
+                0,
+            )
+            .unwrap();
+        // Anyone (incl. stranger) can read after hatch.
+        assert_eq!(
+            engine
+                .call(id, "read_metadata", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Str("nymph→imago".to_string())
+        );
+    }
+
+    #[test]
+    fn transfer_only_by_current_holder() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, minter(), 1000, 10, 0).unwrap();
+        engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("nymph".to_string())],
+                minter(),
+                0,
+            )
+            .unwrap();
+        // Minter is the initial holder.
+        assert_eq!(
+            engine
+                .call(id, "is_holder", vec![Value::Address(minter())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Stranger cannot transfer (not the holder).
+        assert!(engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(alice())],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Minter transfers to alice.
+        engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(alice())],
+                minter(),
+                0,
+            )
+            .unwrap();
+        // is_holder updates.
+        assert_eq!(
+            engine
+                .call(id, "is_holder", vec![Value::Address(alice())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_holder", vec![Value::Address(minter())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Minter (former holder) can no longer transfer.
+        assert!(engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(bob())],
+                minter(),
+                0
+            )
+            .is_err());
+        // Alice can now transfer to bob.
+        engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(bob())],
+                alice(),
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "transfers_total", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+    }
+
+    #[test]
+    fn transfer_requires_hatch_first() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, minter(), 1000, 10, 0).unwrap();
+        // Pre-hatch transfer reverts.
+        assert!(engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(alice())],
+                minter(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn age_epochs_counts_from_hatch_epoch() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, minter(), 1000, 10, 0).unwrap();
+        // Pre-hatch age is 0 (sentinel handled by sealed bool).
+        assert_eq!(
+            engine
+                .call(id, "age_epochs", vec![], stranger(), 50)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // Hatch at epoch 7.
+        engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("mayfly".to_string())],
+                minter(),
+                7,
+            )
+            .unwrap();
+        // Same-epoch age: 0.
+        assert_eq!(
+            engine
+                .call(id, "age_epochs", vec![], stranger(), 7)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // 12 epochs later: 12.
+        assert_eq!(
+            engine
+                .call(id, "age_epochs", vec![], stranger(), 19)
+                .unwrap()
+                .return_value,
+            Value::U64(12)
+        );
+        // born() returns the hatch epoch.
+        assert_eq!(
+            engine
+                .call(id, "born", vec![], stranger(), 100)
+                .unwrap()
+                .return_value,
+            Value::U64(7)
+        );
+    }
+
+    #[test]
+    fn hatch_at_epoch_zero_works_via_sealed_sentinel() {
+        // Regression for the witnessfit sentinel bug — born_epoch=0
+        // must NOT be indistinguishable from "never hatched."
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, minter(), 1000, 10, 0).unwrap();
+        engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("epoch zero".to_string())],
+                minter(),
+                0,
+            )
+            .unwrap();
+        // is_hatched + read_metadata still work despite born_epoch=0.
+        assert_eq!(
+            engine
+                .call(id, "is_hatched", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        assert_eq!(
+            engine
+                .call(id, "read_metadata", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Str("epoch zero".to_string())
+        );
+        // Re-hatch still rejected (sealed gate works).
+        assert!(engine
+            .call(
+                id,
+                "hatch",
+                vec![Value::Str("again".to_string())],
+                minter(),
+                0
+            )
+            .is_err());
+    }
+}
+

@@ -1,0 +1,10 @@
+{
+  "name": "mayfly",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Mayfly dApp — chain client for contracts/evaporscript/mayfly.es. The doctrine-purest NFT: hatch + transfer + read while alive; no expire method, no terminal state, contract energy IS the lifespan.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

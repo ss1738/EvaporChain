@@ -59,6 +59,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("Singh-Resonance descriptor is constant"),
         TemplateDescriptor::new(
+            MAYFLY,
+            "Mayfly (Ephemeral NFT)",
+            "NFT",
+            json!({"initial_energy": 1000, "half_life": 10}),
+            "Ephemeral NFT — the doctrine-purest NFT, with a half-life measured in epochs not years. No expire method, no terminal state; the contract's own energy IS the NFT's lifespan. Refresh works but the on_refresh hook explicitly notes the holder is defying the mayfly's nature. Reference contract: contracts/evaporscript/mayfly.es.",
+            "evaporchain-mayfly",
+        )
+        .expect("Mayfly descriptor is constant"),
+        TemplateDescriptor::new(
             SINGH_POSTHUMA,
             "Singh-Posthuma (Sealed Testament)",
             "NFT",
@@ -338,15 +347,18 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_24_templates() {
+    fn catalogue_lists_25_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
         // Access Pass credential (2026-05-29); 23 added Mortal-DAO
-        // and opened the Governance lane (2026-05-30); 24 adds the
-        // Bell-Oracle in the Paradigm lane (2026-05-30 cont.).
+        // and opened the Governance lane (2026-05-30); 24 added the
+        // Bell-Oracle in the Paradigm lane; 25 adds the Mayfly
+        // descriptor — class id existed in class.rs since the original
+        // NFT lane definition, but no catalogue entry until today
+        // (2026-05-30 night). NFT lane is now 5/5 backed.
         let cat = catalogue();
-        assert_eq!(cat.len(), 24);
+        assert_eq!(cat.len(), 25);
     }
 
     #[test]
