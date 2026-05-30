@@ -1876,7 +1876,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p".to_string())],
+                vec![Value::Str("p".to_string())],
                 alice(),
                 101
             )
@@ -1889,7 +1889,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p".to_string())],
+                vec![Value::Str("p".to_string())],
                 alice(),
                 101,
             )
@@ -1909,7 +1909,7 @@ mod mortal_dao_pilot {
                 .call(
                     id,
                     "open_proposal",
-                    vec![Value::String("p".to_string())],
+                    vec![Value::Str("p".to_string())],
                     alice(),
                     e_open,
                 )
@@ -1924,7 +1924,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p".to_string())],
+                vec![Value::Str("p".to_string())],
                 alice(),
                 180
             )
@@ -1937,7 +1937,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p".to_string())],
+                vec![Value::Str("p".to_string())],
                 alice(),
                 180,
             )
@@ -1967,7 +1967,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p1".to_string())],
+                vec![Value::Str("p1".to_string())],
                 alice(),
                 0,
             )
@@ -2002,7 +2002,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p2".to_string())],
+                vec![Value::Str("p2".to_string())],
                 alice(),
                 60,
             )
@@ -2027,7 +2027,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p1".to_string())],
+                vec![Value::Str("p1".to_string())],
                 alice(),
                 0,
             )
@@ -2058,7 +2058,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p2".to_string())],
+                vec![Value::Str("p2".to_string())],
                 alice(),
                 60,
             )
@@ -2083,7 +2083,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p".to_string())],
+                vec![Value::Str("p".to_string())],
                 alice(),
                 0,
             )
@@ -2106,7 +2106,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p".to_string())],
+                vec![Value::Str("p".to_string())],
                 alice(),
                 0,
             )
@@ -2130,7 +2130,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("p".to_string())],
+                vec![Value::Str("p".to_string())],
                 alice(),
                 0,
             )
@@ -2151,7 +2151,7 @@ mod mortal_dao_pilot {
             .call(
                 id,
                 "open_proposal",
-                vec![Value::String("hi".to_string())],
+                vec![Value::Str("hi".to_string())],
                 stranger(),
                 50
             )
