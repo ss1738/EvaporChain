@@ -324,13 +324,14 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_22_templates() {
+    fn catalogue_lists_23_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
-        // 21 added RefreshMarket (2026-05-09); 22 adds the Decay Access
-        // Pass credential (2026-05-29).
+        // 21 added RefreshMarket (2026-05-09); 22 added the Decay
+        // Access Pass credential (2026-05-29); 23 adds Mortal-DAO and
+        // opens the Governance lane (2026-05-30).
         let cat = catalogue();
-        assert_eq!(cat.len(), 22);
+        assert_eq!(cat.len(), 23);
     }
 
     #[test]
