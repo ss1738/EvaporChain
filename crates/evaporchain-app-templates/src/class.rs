@@ -83,6 +83,13 @@ pub const GALLERY_FORGETS: TemplateClass = TemplateClass(0x0001_0401);
 pub const SGB_TYPE_SYSTEM: TemplateClass = TemplateClass(0x0001_0501);
 pub const SBAV_RUNTIME: TemplateClass = TemplateClass(0x0001_0502);
 pub const SSM_GAME_SEMANTICS: TemplateClass = TemplateClass(0x0001_0503);
+/// Bell-Oracle — on-chain consumer of the per-block CHSH S-value
+/// beacon. Structurally rejects readings at or below the
+/// local-realism floor (2000 milli-units = S = 2.0) so the stored
+/// state is *certifiably* quantum-grade. Downstream contracts gate
+/// quantum-randomness-requiring actions on `is_certified_now()`.
+/// Reference contract: `contracts/evaporscript/bell_oracle.es`.
+pub const BELL_ORACLE: TemplateClass = TemplateClass(0x0001_0504);
 
 // Governance lane — on-chain coordination primitives that compose
 // the decay substrate (credential / rate-limit / reputation / quorum)
@@ -125,6 +132,7 @@ mod tests {
             SGB_TYPE_SYSTEM,
             SBAV_RUNTIME,
             SSM_GAME_SEMANTICS,
+            BELL_ORACLE,
             MORTAL_DAO,
         ] {
             assert!(c.is_in_app_range(), "{:#010x} not in app range", c.0);
@@ -155,6 +163,7 @@ mod tests {
         assert!((0x0001_0400..=0x0001_04FF).contains(&GALLERY_FORGETS.0));
         // Paradigm: 0x0001_0500..
         assert!((0x0001_0500..=0x0001_05FF).contains(&SGB_TYPE_SYSTEM.0));
+        assert!((0x0001_0500..=0x0001_05FF).contains(&BELL_ORACLE.0));
         // Governance: 0x0001_0600..
         assert!((0x0001_0600..=0x0001_06FF).contains(&MORTAL_DAO.0));
     }

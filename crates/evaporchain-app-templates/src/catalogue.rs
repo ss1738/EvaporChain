@@ -234,6 +234,20 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-ssm",
         )
         .expect("SSM descriptor is constant"),
+        TemplateDescriptor::new(
+            BELL_ORACLE,
+            "Bell-Oracle (Quantum-Certified Beacon)",
+            "Paradigm",
+            json!({
+                "energy": 1000,
+                "half_life": 100,
+                "threshold_milli": 2000,
+                "max_age_epochs": 10
+            }),
+            "On-chain consumer of EvaporChain's per-block CHSH S-value beacon. Structurally rejects readings at or below the local-realism floor (2000 milli = S=2.0) so the stored state is certifiably quantum-derived. Downstream contracts gate quantum-randomness-requiring actions on is_certified_now(). Reference contract: contracts/evaporscript/bell_oracle.es.",
+            "evaporchain-bell-oracle",
+        )
+        .expect("BellOracle descriptor is constant"),
         // ── Governance lane ────────────────────────────────────────
         TemplateDescriptor::new(
             MORTAL_DAO,
@@ -324,14 +338,15 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_23_templates() {
+    fn catalogue_lists_24_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
-        // Access Pass credential (2026-05-29); 23 adds Mortal-DAO and
-        // opens the Governance lane (2026-05-30).
+        // Access Pass credential (2026-05-29); 23 added Mortal-DAO
+        // and opened the Governance lane (2026-05-30); 24 adds the
+        // Bell-Oracle in the Paradigm lane (2026-05-30 cont.).
         let cat = catalogue();
-        assert_eq!(cat.len(), 23);
+        assert_eq!(cat.len(), 24);
     }
 
     #[test]

@@ -1,0 +1,10 @@
+{
+  "name": "bell-oracle",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Bell-Oracle dApp — chain client for contracts/evaporscript/bell_oracle.es. On-chain consumer of the per-block Bell-CHSH S-value beacon (a primitive unique to EvaporChain). Includes a relayer helper that reads /api/bell/latest and posts above-floor readings on-chain.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

@@ -2160,3 +2160,356 @@ mod mortal_dao_pilot {
             .is_err());
     }
 }
+
+#[cfg(test)]
+mod bell_oracle_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/bell_oracle.es` via `ScriptEngine`
+    //! and exercises the chain's only-on-EvaporChain primitive — the
+    //! per-block Bell-CHSH S-value beacon. The contract structurally
+    //! REJECTS sub-threshold readings (S ≤ 2.0 = classical, no
+    //! Bell-inequality violation); only above-floor readings are
+    //! stored, so the contract's accepted state is provably
+    //! quantum-derived.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/bell_oracle.es");
+
+    fn operator() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    fn deploy_and_arm() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        // strength 1_000_000, half-life 100, deployed at epoch 0.
+        let id = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        // Arm with max_age = 10 epochs (matches the catalogue default).
+        engine
+            .call(id, "arm", vec![Value::U64(10)], operator(), 0)
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn bell_oracle_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn arm_is_owner_only_and_once() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot arm.
+        assert!(engine
+            .call(id, "arm", vec![Value::U64(10)], stranger(), 0)
+            .is_err());
+        // Owner arms once successfully.
+        engine
+            .call(id, "arm", vec![Value::U64(10)], operator(), 0)
+            .unwrap();
+        // Second arm rejected (sealed).
+        assert!(engine
+            .call(id, "arm", vec![Value::U64(10)], operator(), 0)
+            .is_err());
+        // Arm with zero max_age rejected upfront.
+        let id2 = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        assert!(engine
+            .call(id2, "arm", vec![Value::U64(0)], operator(), 0)
+            .is_err());
+    }
+
+    #[test]
+    fn submit_requires_arm() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        // Submitting before arming reverts.
+        assert!(engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2828), Value::U64(1)],
+                operator(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn submit_is_owner_only() {
+        let (mut engine, id) = deploy_and_arm();
+        // Stranger cannot submit.
+        assert!(engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2828), Value::U64(1)],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Owner submits successfully.
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2828), Value::U64(1)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "accepted_total", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+    }
+
+    #[test]
+    fn reading_at_or_below_floor_rejected() {
+        // The local-realism floor is exactly 2000 milli (S = 2.0).
+        // Both classical (< 2000) and exactly-at-the-floor (= 2000)
+        // readings are STRUCTURALLY REJECTED — the gate is strict.
+        let (mut engine, id) = deploy_and_arm();
+        // 1500 milli (S = 1.5, classical) — rejected but recorded.
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(1500), Value::U64(1)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "rejected_below_floor", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // 2000 milli (S = 2.0, exactly at the classical maximum) —
+        // also rejected (strict `>` check).
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2000), Value::U64(2)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "rejected_below_floor", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        // Nothing accepted yet.
+        assert_eq!(
+            engine
+                .call(id, "accepted_total", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // is_certified_now is FALSE — no accepted reading.
+        assert_eq!(
+            engine
+                .call(id, "is_certified_now", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn above_floor_reading_accepted_and_certifies() {
+        let (mut engine, id) = deploy_and_arm();
+        // 2828 milli ≈ S = 2√2, the Tsirelson bound — maximally
+        // quantum. Should be accepted.
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2828), Value::U64(7)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        // is_certified_now flips true.
+        assert_eq!(
+            engine
+                .call(id, "is_certified_now", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Stored values match.
+        assert_eq!(
+            engine
+                .call(id, "latest_s_milli_view", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(2828)
+        );
+        assert_eq!(
+            engine
+                .call(id, "last_height", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(7)
+        );
+    }
+
+    #[test]
+    fn stale_height_rejected() {
+        let (mut engine, id) = deploy_and_arm();
+        // Accept a reading at height 10.
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2500), Value::U64(10)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        // Submitting at the same height bumps stale counter.
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2500), Value::U64(10)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        // And submitting at a lower height also.
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2700), Value::U64(5)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "rejected_stale_height", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        // Strict-greater height accepted.
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2700), Value::U64(11)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "accepted_total", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+    }
+
+    #[test]
+    fn freshness_window_expires() {
+        // max_age = 10 epochs. Reading recorded at epoch 0 is fresh
+        // through epoch 10 and stale at epoch 11.
+        let (mut engine, id) = deploy_and_arm();
+        engine
+            .call(
+                id,
+                "submit_reading",
+                vec![Value::U64(2500), Value::U64(1)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        // is_fresh at epoch 10 still true.
+        assert_eq!(
+            engine
+                .call(id, "is_fresh", vec![], operator(), 10)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // At epoch 11, stale.
+        assert_eq!(
+            engine
+                .call(id, "is_fresh", vec![], operator(), 11)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // is_certified_now also flips to false past the window.
+        assert_eq!(
+            engine
+                .call(id, "is_certified_now", vec![], operator(), 11)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn views_have_correct_initial_state() {
+        let (mut engine, id) = deploy_and_arm();
+        // No reading yet — latest_s_milli_view reverts.
+        assert!(engine
+            .call(id, "latest_s_milli_view", vec![], operator(), 0)
+            .is_err());
+        // Counters all zero.
+        assert_eq!(
+            engine
+                .call(id, "accepted_total", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "rejected_below_floor", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // Floor + max_age match deployed values.
+        assert_eq!(
+            engine
+                .call(id, "floor", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(2000)
+        );
+        assert_eq!(
+            engine
+                .call(id, "max_age", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(10)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_armed", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+}
