@@ -91,7 +91,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "SFSV (Future-Self Vault)",
             "Marketplace",
             json!({"future_self": "0x00", "predicate_type": 0, "release_param": 10000, "deposit_amount": 1000}),
-            "Sell your future-self's claim — third parties bid for delayed-payout vaults via SDDC.",
+            "Sell your future-self's claim — third parties bid for delayed-payout vaults via SDDC. The vault's own energy is the deposit's structural lifespan; on_evaporate before release = deposit forfeit. That structural uncertainty is exactly why the future-self's claim trades at a discount. Reference contract: contracts/evaporscript/sfsv.es.",
             "evaporchain-sfsv",
         )
         .expect("SFSV descriptor is constant"),

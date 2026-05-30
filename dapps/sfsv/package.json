@@ -1,0 +1,10 @@
+{
+  "name": "sfsv",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SFSV dApp — chain client for contracts/evaporscript/sfsv.es. Future-Self Vault: time-locked deposit with one-shot claim transfer; on_evaporate before withdrawal = forfeit (the structural uncertainty behind the discount).",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

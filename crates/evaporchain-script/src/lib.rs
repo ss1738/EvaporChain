@@ -4621,3 +4621,387 @@ mod gallery_forgets_pilot {
     }
 }
 
+#[cfg(test)]
+mod sfsv_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/sfsv.es` via `ScriptEngine` and
+    //! exercises the "future-self vault" doctrine — time-locked
+    //! deposit with one-shot sale + structural-uncertainty forfeit.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/sfsv.es");
+
+    fn depositor() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn future_self_addr() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn buyer() -> AccountAddress {
+        [0x33; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x44; 32]
+    }
+
+    /// Deploy + arm with (future_self, 1000, release_at=50).
+    fn deploy_arm() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, depositor(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(future_self_addr()),
+                    Value::U64(1000),
+                    Value::U64(50),
+                ],
+                depositor(),
+                0,
+            )
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn sfsv_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn arm_owner_only_validates_one_shot() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, depositor(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot arm.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(future_self_addr()),
+                    Value::U64(1000),
+                    Value::U64(50)
+                ],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Zero deposit rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(future_self_addr()),
+                    Value::U64(0),
+                    Value::U64(50)
+                ],
+                depositor(),
+                0
+            )
+            .is_err());
+        // release_at in past rejected (epoch = 10, release_at = 5).
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(future_self_addr()),
+                    Value::U64(1000),
+                    Value::U64(5)
+                ],
+                depositor(),
+                10
+            )
+            .is_err());
+        // OK.
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(future_self_addr()),
+                    Value::U64(1000),
+                    Value::U64(50),
+                ],
+                depositor(),
+                0,
+            )
+            .unwrap();
+        // Second arm rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(future_self_addr()),
+                    Value::U64(2000),
+                    Value::U64(100)
+                ],
+                depositor(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn withdraw_blocked_pre_release() {
+        let (mut engine, id) = deploy_arm();
+        // Pre-release: can't withdraw.
+        assert!(engine
+            .call(id, "withdraw", vec![], future_self_addr(), 49)
+            .is_err());
+        // At release: OK.
+        engine
+            .call(id, "withdraw", vec![], future_self_addr(), 50)
+            .unwrap();
+    }
+
+    #[test]
+    fn withdraw_only_current_beneficiary() {
+        let (mut engine, id) = deploy_arm();
+        // Depositor (owner, ≠ beneficiary) cannot withdraw.
+        assert!(engine
+            .call(id, "withdraw", vec![], depositor(), 60)
+            .is_err());
+        // Stranger cannot withdraw.
+        assert!(engine
+            .call(id, "withdraw", vec![], stranger(), 60)
+            .is_err());
+        // future_self (current beneficiary) can.
+        engine
+            .call(id, "withdraw", vec![], future_self_addr(), 60)
+            .unwrap();
+        // Double withdraw rejected.
+        assert!(engine
+            .call(id, "withdraw", vec![], future_self_addr(), 60)
+            .is_err());
+    }
+
+    #[test]
+    fn sell_transfers_claim_to_buyer() {
+        let (mut engine, id) = deploy_arm();
+        // future_self sells to buyer at epoch 10 (pre-release).
+        engine
+            .call(
+                id,
+                "sell",
+                vec![Value::Address(buyer())],
+                future_self_addr(),
+                10,
+            )
+            .unwrap();
+        // is_beneficiary flips: buyer is now the beneficiary; future_self is not.
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_beneficiary",
+                    vec![Value::Address(buyer())],
+                    stranger(),
+                    10
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_beneficiary",
+                    vec![Value::Address(future_self_addr())],
+                    stranger(),
+                    10
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // is_original_future_self still tracks the seed address (audit trail).
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_original_future_self",
+                    vec![Value::Address(future_self_addr())],
+                    stranger(),
+                    10
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // After sell, future_self can NO LONGER withdraw.
+        assert!(engine
+            .call(id, "withdraw", vec![], future_self_addr(), 60)
+            .is_err());
+        // Buyer withdraws after release.
+        engine
+            .call(id, "withdraw", vec![], buyer(), 60)
+            .unwrap();
+    }
+
+    #[test]
+    fn sell_one_shot_only_current_beneficiary() {
+        let (mut engine, id) = deploy_arm();
+        // Stranger cannot sell.
+        assert!(engine
+            .call(
+                id,
+                "sell",
+                vec![Value::Address(buyer())],
+                stranger(),
+                10
+            )
+            .is_err());
+        // Depositor (owner ≠ beneficiary here) cannot sell.
+        assert!(engine
+            .call(
+                id,
+                "sell",
+                vec![Value::Address(buyer())],
+                depositor(),
+                10
+            )
+            .is_err());
+        // future_self sells.
+        engine
+            .call(
+                id,
+                "sell",
+                vec![Value::Address(buyer())],
+                future_self_addr(),
+                10,
+            )
+            .unwrap();
+        // Buyer cannot resell (one-shot; chain of sales = multiple contracts).
+        assert!(engine
+            .call(
+                id,
+                "sell",
+                vec![Value::Address(stranger())],
+                buyer(),
+                10
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn epochs_until_release_counts_down() {
+        let (mut engine, id) = deploy_arm();
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_release", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(50)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_release", vec![], stranger(), 30)
+                .unwrap()
+                .return_value,
+            Value::U64(20)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_release", vec![], stranger(), 49)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_release", vec![], stranger(), 50)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn is_releasable_composite_gate() {
+        let (mut engine, id) = deploy_arm();
+        assert_eq!(
+            engine
+                .call(id, "is_releasable", vec![], stranger(), 49)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_releasable", vec![], stranger(), 50)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        engine
+            .call(id, "withdraw", vec![], future_self_addr(), 60)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_releasable", vec![], stranger(), 60)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn pre_arm_views_safe() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, depositor(), 1_000_000, 100, 0).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_armed", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_releasable", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_release", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_beneficiary",
+                    vec![Value::Address(future_self_addr())],
+                    stranger(),
+                    0
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Withdraw + sell pre-arm rejected.
+        assert!(engine
+            .call(id, "withdraw", vec![], depositor(), 100)
+            .is_err());
+        assert!(engine
+            .call(
+                id,
+                "sell",
+                vec![Value::Address(buyer())],
+                depositor(),
+                10
+            )
+            .is_err());
+    }
+}
+
