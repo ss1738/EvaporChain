@@ -6,6 +6,33 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (night) — WitnessFit reference contract (Consumer lane #1)
+
+**Focus:** continue the catalogue-backfill arc — pick the next-strongest gap among the 9 unbacked classes. WitnessFit lands as the FIRST .es contract in the Consumer lane (previously zero backed).
+**Commits shipped:** 2 on main (`1384e8dc` → `db93f275`). Branch `witnessfit` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/witnessfit.es` | ~155 LOC, one-contract-per-wearer. check_in() inside the half_life window grows the streak; outside it resets to 1 (peak preserved). has_boost() = `streak * 10000 >= boost_threshold_bp * peak` — graceful fade in the boost gate as the streak drops, no cliff. reset_peak() voluntary new-chapter op. Views: current_streak (decay-aware), window_remaining (epochs until reset), peak, checkins_total. |
+| `mod witnessfit_pilot` (10 tests) | totality-clean, owner-only check_in, **double-checkin-same-epoch rejected**, streak grows within window across 5 checkins at 5-epoch cadence, **streak resets past window but peak preserved**, current_streak decays at the boundary, has_boost at threshold + below (50% peak gate), **window_remaining counts down to 0 at boundary + 0 past it**, reset_peak owner-only, pre-checkin views all return 0/false. |
+| `dapps/witnessfit/` | TS client + `streak.ts` BigInt projections of currentStreak / hasBoost / windowRemaining + a `checkInPreview()` pure function that returns the would-be next state (UI can show "if you check in NOW, your streak becomes …" previews without a node round-trip). 10/10 node:test PASS. |
+| Catalogue pointer | WITNESSFIT_STREAK descriptor now points at the .es file. |
+**Empirical results:**
+- `cargo test -p evaporchain-script witnessfit_pilot` on Mini-2: **10/10 PASS** after the sentinel fix (first cargo run was 3/10 — the +1-shift lesson re-bit).
+- TS dApp: 10/10 in ~77 ms locally.
+**Decisions made:**
+- **`has_checked_in: bool` sentinel, not the mortal_dao +1 shift.** WitnessFit's `last_checkin_epoch` participates in arithmetic comparisons (`epoch <= last + half_life`, `last + half_life - epoch`), and a +1 shift would require off-by-one adjustments at every site. A boolean costs ~1 byte and keeps the arithmetic transparent. Logged this variant of the sentinel pattern for future contracts.
+- **First-checkin branch handles the seed.** `if has_checked_in == false { streak = 1; has_checked_in = true }` — atomic in one branch. The else branch handles the increment + same-epoch rejection + window check.
+- **Per-wearer = per-contract**, not a multi-user map. Matches mortal_message.es / decay_access_pass.es / mortal_dao.es-as-one-DAO idiom. Real consumer apps would deploy one contract per user; trivial at MVP scale. Multi-user-in-one-contract would need a different design (map of streaks) which is a different doctrine bet.
+**What's next:**
+- 8 catalogue gaps remain (singh-posthuma, mayfly, sfsv, scl, sap, childkey, mnemochain, gallery-forgets).
+- The +1-shift / sentinel pattern is now a known hazard — should add a brief note to the EvaporScript reference docs so the next contract avoids the trap pre-emptively.
+- Cluster (T3.1) still gated only on Tailscale auth key.
+**Blockers / open questions:** none new.
+**Cross-references:** commits `1384e8dc` (feat), `db93f275` (sentinel fix); files `contracts/evaporscript/witnessfit.es`, `crates/evaporchain-script/src/lib.rs` (`mod witnessfit_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/witnessfit/{src,test}`; class `WITNESSFIT_STREAK = 0x0001_0303` (Consumer lane, registered since `40dbe2`-era).
+
+---
+
 ## 2026-05-30 (late evening) — Refresh-Market reference contract (catalogue gap closed)
 
 **Focus:** close the biggest catalogue gap — REFRESH_MARKET_NAMESPACE was registered at 0x0001_0106 with the descriptor "the chain's primary economic activity," but had no .es backing. Audit found 10 such gaps; this is the doctrine-weightiest one.
