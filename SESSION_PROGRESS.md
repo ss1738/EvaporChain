@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (after-midnight) — SCL reference contract (Marketplace, the thesis applied)
+
+**Focus:** the doctrine-strongest remaining gap. SCL_LEASE was registered at 0x0001_0104 with the description "Permission market with structural revocation — capabilities can't outlive their purpose" — the closest the catalogue gets to spelling out EvaporChain's THESIS as a single contract type. No .es backing until now.
+**Commits shipped:** 1 on main (`8a4d192f`). Branch `scl` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/scl.es` | ~190 LOC, one contract = ONE leased capability (lessor → lessee). `arm(to, verb, object_hex, dur)` owner-one-shot. `exercise()` lessee-only with soft-expiry gate. `revoke()` owner-terminal. `is_active()` is the composite gate downstream contracts consult. on_evaporate emits "structurally revoked" — the doctrine point: chain decay IS the revocation primitive. |
+| `mod scl_pilot` (8 tests) | totality-clean, arm input validation + one-shot, exercise lessee-only across (lessor, lessee, stranger), **soft expiry at exactly granted_at+duration** boundary (49 OK / 50 reject with duration=50), revoke owner-only-terminal, epochs_remaining counts down to 0 + 0-after-revoke, pre-arm-views-safe, verb/object immutable post-arm. **8/8 PASS first compile.** |
+| dApp client | `dapps/scl/` — deploy + arm + exercise + revoke + every view as a TS payload builder. 6/6 node:test PASS. |
+| Catalogue pointer | SCL_LEASE descriptor now references the .es file + spells out the structural-revocation framing (chain decay IS the revocation primitive). |
+**Empirical results:** First-compile green on Mini-2 (8/8 + 18 lib + 16 e2e in app-templates). No fixes needed.
+**Decisions made:**
+- **Attestation primitive, not enforcement primitive.** The contract publishes (verb, object_hex, lessee, duration); downstream contracts / off-chain layers consult `is_active + is_lessee + verb_view + object_view` before honouring the action. Keeps the lease portable across enforcement layers + leaves the verb/object semantics open (callers interpret).
+- **Three independent revocation paths**: (1) `revoke()` explicit, (2) soft expiry at granted_at + duration, (3) structural via chain decay. The third is the doctrine point — the chain GUARANTEES termination even if the lessor goes silent + the lessee abuses the soft expiry.
+- **Counter-bump on exercise, not gate on max-count.** The exercise counter is observability, not a budget. The budget is the contract's energy; once it evaporates, exercise()'s require gates can't even fire. Matches the bell_oracle pattern.
+**What's next:**
+- 4 catalogue gaps remain: sfsv (Future-Self Vault, Marketplace), sap (Attention Quantum, Marketplace), mnemochain (FSRS Card, Consumer), gallery-forgets (Cultural). Marketplace lane has 2 left, Consumer 1, Cultural 1.
+- T3.1 still gated only on Tailscale auth key.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `8a4d192f`; files `contracts/evaporscript/scl.es`, `crates/evaporchain-script/src/lib.rs` (`mod scl_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/scl/{src,test}`. Related but distinct: `crates/evaporchain-cap-decay-vm/` is the broader cap-decay VM primitive (a Tier-2 paradigm); SCL is the narrow lease-between-two-parties application.
+
+---
+
 ## 2026-05-30 (late night) — Mayfly + ChildKey backfills (NFT lane 5/5, Consumer 2/3)
 
 **Focus:** continue the catalogue-backfill arc. Two contracts this sub-session — Mayfly (NFT lane #5, closing it 5/5 backed) + ChildKey (Consumer lane #2). Plus one quiet correction: my "8 catalogue gaps" claim from earlier was wrong; the audit had missed pre-existing MAYFLY + SINGH_POSTHUMA descriptors. Real remaining gaps: 5 unbacked-by-.es-file (sfsv, scl, sap, mnemochain, gallery-forgets).
