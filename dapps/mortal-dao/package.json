@@ -1,0 +1,10 @@
+{
+  "name": "mortal-dao",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Mortal-DAO dApp — chain client for contracts/evaporscript/mortal_dao.es. Composes all four decay primitives (credential / rate-limit / reputation / quorum) in one governance contract. UI is TODO (needs a live node to verify against).",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

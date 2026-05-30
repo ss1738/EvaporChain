@@ -1765,3 +1765,396 @@ mod decay_access_pass_pilot {
         assert!(engine.call(id, "issue", issue_args(), issuer(), 0).is_err());
     }
 }
+
+#[cfg(test)]
+mod mortal_dao_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/mortal_dao.es` via `ScriptEngine` and
+    //! exercises the four-decay-primitive composition.
+    //!
+    //!   decay-credential → membership staleness gate
+    //!   decay-rate-limit → per-member proposal cap
+    //!   decay-reputation → vote weight grows with participation
+    //!   decay-quorum     → quorum tracks a running peak
+    //!
+    //! Together: a governance contract whose behaviour is impossible
+    //! to express cleanly on a chain without per-contract energy decay.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/mortal_dao.es");
+
+    fn founder() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn alice() -> AccountAddress {
+        [0x21; 32]
+    }
+    fn bob() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    fn deploy_with_members() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        // strength 1_000_000, half-life 100 (slow decay, so the
+        // contract's own energy doesn't expire mid-test).
+        let id = engine.deploy(SRC, founder(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(
+                id,
+                "add_member",
+                vec![Value::Address(alice())],
+                founder(),
+                0,
+            )
+            .unwrap();
+        engine
+            .call(id, "add_member", vec![Value::Address(bob())], founder(), 0)
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn dao_is_totality_clean() {
+        // Must pass the V1 totality gate (no `while`).
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn add_member_owner_only_and_no_duplicates() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, founder(), 1_000_000, 100, 0).unwrap();
+        // Non-owner cannot add.
+        assert!(engine
+            .call(
+                id,
+                "add_member",
+                vec![Value::Address(alice())],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Owner adds successfully.
+        engine
+            .call(
+                id,
+                "add_member",
+                vec![Value::Address(alice())],
+                founder(),
+                0,
+            )
+            .unwrap();
+        // Double-add rejected.
+        assert!(engine
+            .call(
+                id,
+                "add_member",
+                vec![Value::Address(alice())],
+                founder(),
+                0
+            )
+            .is_err());
+        assert_eq!(
+            engine
+                .call(id, "member_count_now", vec![], founder(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+    }
+
+    #[test]
+    fn open_proposal_blocked_by_stale_membership() {
+        // decay-credential: alice joined at epoch 0; freshness_window
+        // is 100. At epoch 101 she's stale and cannot open a proposal
+        // until she refreshes.
+        let (mut engine, id) = deploy_with_members();
+        assert!(engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p".to_string())],
+                alice(),
+                101
+            )
+            .is_err());
+        engine
+            .call(id, "refresh_membership", vec![], alice(), 101)
+            .unwrap();
+        // Now within the freshness window again.
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p".to_string())],
+                alice(),
+                101,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn proposal_rate_limit_caps_at_three() {
+        // decay-rate-limit: proposal_cap = 3. Alice opens + closes
+        // three proposals; the fourth open is rejected until she
+        // refreshes.
+        let (mut engine, id) = deploy_with_members();
+        for round in 0..3u64 {
+            let e_open = round * 60;
+            let e_close = e_open + 50;
+            engine
+                .call(
+                    id,
+                    "open_proposal",
+                    vec![Value::String("p".to_string())],
+                    alice(),
+                    e_open,
+                )
+                .unwrap();
+            engine.call(id, "vote_for", vec![], alice(), e_open).unwrap();
+            engine
+                .call(id, "close_proposal", vec![], alice(), e_close)
+                .unwrap();
+        }
+        // 4th open at epoch 180 — rate-limit fires (cap=3).
+        assert!(engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p".to_string())],
+                alice(),
+                180
+            )
+            .is_err());
+        // Refresh resets the counter (and the freshness clock).
+        engine
+            .call(id, "refresh_membership", vec![], alice(), 180)
+            .unwrap();
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p".to_string())],
+                alice(),
+                180,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn vote_weight_grows_with_participation() {
+        // decay-reputation: weight = participations + 1.
+        let (mut engine, id) = deploy_with_members();
+        // Initial weight = 1 (participations 0 + 1).
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "weight_of",
+                    vec![Value::Address(alice())],
+                    founder(),
+                    0
+                )
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // P1: alice votes for, weight = 1.
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p1".to_string())],
+                alice(),
+                0,
+            )
+            .unwrap();
+        engine.call(id, "vote_for", vec![], alice(), 0).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "for_count", vec![], founder(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        engine
+            .call(id, "close_proposal", vec![], alice(), 50)
+            .unwrap();
+        // Post-P1: alice's weight should now be 2.
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "weight_of",
+                    vec![Value::Address(alice())],
+                    founder(),
+                    50
+                )
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        // P2: same vote, but weight = 2.
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p2".to_string())],
+                alice(),
+                60,
+            )
+            .unwrap();
+        engine.call(id, "vote_for", vec![], alice(), 60).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "for_count", vec![], founder(), 60)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+    }
+
+    #[test]
+    fn quorum_gates_against_running_peak() {
+        // decay-quorum: observed_peak rises with engagement;
+        // weight_collected * 2 >= observed_peak gates close.
+        let (mut engine, id) = deploy_with_members();
+        // P1: both vote, weight collected = 2 (1 + 1).
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p1".to_string())],
+                alice(),
+                0,
+            )
+            .unwrap();
+        engine.call(id, "vote_for", vec![], alice(), 0).unwrap();
+        engine.call(id, "vote_for", vec![], bob(), 0).unwrap();
+        engine
+            .call(id, "close_proposal", vec![], alice(), 50)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "peak", vec![], founder(), 50)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        assert_eq!(
+            engine
+                .call(id, "carried_total", vec![], founder(), 50)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // P2: alice alone, weight = 2 (participations=1 + 1).
+        // weight_collected = 2, prev_peak = 2 → peak unchanged at 2,
+        // quorum 2*2=4 >= 2 passes.
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p2".to_string())],
+                alice(),
+                60,
+            )
+            .unwrap();
+        engine.call(id, "vote_for", vec![], alice(), 60).unwrap();
+        engine
+            .call(id, "close_proposal", vec![], alice(), 110)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "carried_total", vec![], founder(), 110)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+    }
+
+    #[test]
+    fn close_requires_voting_window_elapsed() {
+        let (mut engine, id) = deploy_with_members();
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p".to_string())],
+                alice(),
+                0,
+            )
+            .unwrap();
+        engine.call(id, "vote_for", vec![], alice(), 0).unwrap();
+        // voting_window = 50; epoch 49 < 0 + 50 → reject.
+        assert!(engine
+            .call(id, "close_proposal", vec![], alice(), 49)
+            .is_err());
+        // epoch 50 = exactly the window → accept.
+        engine
+            .call(id, "close_proposal", vec![], alice(), 50)
+            .unwrap();
+    }
+
+    #[test]
+    fn double_vote_rejected_on_same_proposal() {
+        let (mut engine, id) = deploy_with_members();
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p".to_string())],
+                alice(),
+                0,
+            )
+            .unwrap();
+        engine.call(id, "vote_for", vec![], alice(), 0).unwrap();
+        // Second vote on same proposal rejected.
+        assert!(engine.call(id, "vote_for", vec![], alice(), 0).is_err());
+        // Bob can still vote (different member).
+        engine.call(id, "vote_against", vec![], bob(), 0).unwrap();
+        // But Bob can't double-vote either.
+        assert!(engine
+            .call(id, "vote_against", vec![], bob(), 0)
+            .is_err());
+    }
+
+    #[test]
+    fn stranger_cannot_vote_or_propose() {
+        let (mut engine, id) = deploy_with_members();
+        // Open a proposal so the active slot exists.
+        engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("p".to_string())],
+                alice(),
+                0,
+            )
+            .unwrap();
+        // Non-member is rejected at every gate.
+        assert!(engine
+            .call(id, "vote_for", vec![], stranger(), 0)
+            .is_err());
+        assert!(engine
+            .call(id, "refresh_membership", vec![], stranger(), 0)
+            .is_err());
+        // After close, stranger still can't open one.
+        engine.call(id, "vote_for", vec![], alice(), 0).unwrap();
+        engine
+            .call(id, "close_proposal", vec![], alice(), 50)
+            .unwrap();
+        assert!(engine
+            .call(
+                id,
+                "open_proposal",
+                vec![Value::String("hi".to_string())],
+                stranger(),
+                50
+            )
+            .is_err());
+    }
+}

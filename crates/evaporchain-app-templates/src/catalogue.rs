@@ -234,6 +234,22 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-ssm",
         )
         .expect("SSM descriptor is constant"),
+        // ── Governance lane ────────────────────────────────────────
+        TemplateDescriptor::new(
+            MORTAL_DAO,
+            "Mortal-DAO (Decay-Native Governance)",
+            "Governance",
+            json!({
+                "energy": 1000,
+                "half_life": 100,
+                "freshness_window": 100,
+                "proposal_cap": 3,
+                "voting_window": 50
+            }),
+            "Single-instance DAO that composes all four decay primitives in one contract: members refresh to stay active (decay-credential); per-member proposal cap resets on refresh (decay-rate-limit); vote weight grows with participation (decay-reputation); quorum threshold tracks a running peak of engagement (decay-quorum). Reference contract: contracts/evaporscript/mortal_dao.es.",
+            "evaporchain-mortal-dao",
+        )
+        .expect("MortalDAO descriptor is constant"),
     ];
 
     // Sort by class id; dedupe (defensive).
@@ -289,10 +305,11 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_covers_all_six_lanes() {
+    fn catalogue_covers_all_seven_lanes() {
         let cat = catalogue();
         let lanes: std::collections::BTreeSet<&str> = cat.iter().map(|d| d.lane.as_str()).collect();
-        // The 6 lanes the doctrine ships.
+        // The 7 lanes the doctrine ships (Governance added 2026-05-30
+        // with MortalDAO — see class.rs comment block).
         for l in [
             "NFT",
             "Marketplace",
@@ -300,6 +317,7 @@ mod tests {
             "Consumer",
             "Cultural",
             "Paradigm",
+            "Governance",
         ] {
             assert!(lanes.contains(l), "lane {l} missing from catalogue");
         }

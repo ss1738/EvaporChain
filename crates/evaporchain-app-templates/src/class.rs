@@ -34,6 +34,7 @@ impl TemplateClass {
 //   0x0001_0300..=0x0001_03FF — Consumer launch lane
 //   0x0001_0400..=0x0001_04FF — Cultural launch wedge
 //   0x0001_0500..=0x0001_05FF — Smart-contract paradigm
+//   0x0001_0600..=0x0001_06FF — Governance lane
 
 // NFT lane
 pub const SINGH_SABI: TemplateClass = TemplateClass(0x0001_0001);
@@ -83,6 +84,18 @@ pub const SGB_TYPE_SYSTEM: TemplateClass = TemplateClass(0x0001_0501);
 pub const SBAV_RUNTIME: TemplateClass = TemplateClass(0x0001_0502);
 pub const SSM_GAME_SEMANTICS: TemplateClass = TemplateClass(0x0001_0503);
 
+// Governance lane — on-chain coordination primitives that compose
+// the decay substrate (credential / rate-limit / reputation / quorum)
+// into runnable contracts.
+/// Mortal-DAO — single-instance governance contract whose lifecycle
+/// rides the contract's own energy. Members refresh to stay active
+/// (decay-credential); per-member proposal cap resets on refresh
+/// (decay-rate-limit); vote weight = participations + 1
+/// (decay-reputation); quorum gate tracks a running peak of engagement
+/// (decay-quorum). Reference contract:
+/// `contracts/evaporscript/mortal_dao.es`.
+pub const MORTAL_DAO: TemplateClass = TemplateClass(0x0001_0601);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +125,7 @@ mod tests {
             SGB_TYPE_SYSTEM,
             SBAV_RUNTIME,
             SSM_GAME_SEMANTICS,
+            MORTAL_DAO,
         ] {
             assert!(c.is_in_app_range(), "{:#010x} not in app range", c.0);
         }
@@ -141,6 +155,8 @@ mod tests {
         assert!((0x0001_0400..=0x0001_04FF).contains(&GALLERY_FORGETS.0));
         // Paradigm: 0x0001_0500..
         assert!((0x0001_0500..=0x0001_05FF).contains(&SGB_TYPE_SYSTEM.0));
+        // Governance: 0x0001_0600..
+        assert!((0x0001_0600..=0x0001_06FF).contains(&MORTAL_DAO.0));
     }
 
     #[test]
