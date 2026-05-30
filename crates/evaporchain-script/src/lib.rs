@@ -3374,8 +3374,13 @@ mod mayfly_pilot {
 
     #[test]
     fn age_epochs_counts_from_hatch_epoch() {
+        // Deploy with long-lived params so the contract doesn't
+        // evaporate mid-test (catalogue defaults are intentionally
+        // short — energy=1000 half_life=10 evaporates by ~epoch 100;
+        // here we use the chain's standard long-lived defaults so we
+        // can probe at epoch 100+ without "no energy" errors).
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(SRC, minter(), 1000, 10, 0).unwrap();
+        let id = engine.deploy(SRC, minter(), 1_000_000, 100, 0).unwrap();
         // Pre-hatch age is 0 (sentinel handled by sealed bool).
         assert_eq!(
             engine
