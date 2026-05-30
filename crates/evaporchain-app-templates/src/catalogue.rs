@@ -109,7 +109,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "SCL (Capability Lease)",
             "Marketplace",
             json!({"verb": "0x...", "object": "0x...", "duration_epochs": 1000}),
-            "Permission market with structural revocation — capabilities can't outlive their purpose.",
+            "Permission market with structural revocation — capabilities can't outlive their purpose. The chain's decay IS the revocation primitive: once the contract evaporates, no exercise() call can succeed. Soft expiry (granted_at + duration_epochs) + manual revoke() supplement the structural floor. Reference contract: contracts/evaporscript/scl.es.",
             "evaporchain-scl",
         )
         .expect("SCL descriptor is constant"),

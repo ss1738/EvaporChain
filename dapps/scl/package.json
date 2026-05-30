@@ -1,0 +1,10 @@
+{
+  "name": "scl",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SCL dApp — chain client for contracts/evaporscript/scl.es. Singh-Capability-Lease: permission market with structural revocation; the chain's decay IS the revocation primitive.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

@@ -3844,3 +3844,325 @@ mod childkey_pilot {
     }
 }
 
+#[cfg(test)]
+mod scl_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/scl.es` via `ScriptEngine` and
+    //! exercises the doctrine claim — capability with structural
+    //! revocation via contract decay, supplemented by soft expiry
+    //! + explicit revoke.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/scl.es");
+
+    fn lessor() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn lessee_addr() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    fn deploy_arm() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, lessor(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(lessee_addr()),
+                    Value::Str("read".to_string()),
+                    Value::Str("0xabcd".to_string()),
+                    Value::U64(50),
+                ],
+                lessor(),
+                0,
+            )
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn scl_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn arm_owner_only_one_shot_validates() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, lessor(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot arm.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(lessee_addr()),
+                    Value::Str("read".to_string()),
+                    Value::Str("0xabcd".to_string()),
+                    Value::U64(50)
+                ],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Duration 0 rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(lessee_addr()),
+                    Value::Str("read".to_string()),
+                    Value::Str("0xabcd".to_string()),
+                    Value::U64(0)
+                ],
+                lessor(),
+                0
+            )
+            .is_err());
+        // OK now.
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(lessee_addr()),
+                    Value::Str("read".to_string()),
+                    Value::Str("0xabcd".to_string()),
+                    Value::U64(50),
+                ],
+                lessor(),
+                0,
+            )
+            .unwrap();
+        // Second arm rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(lessee_addr()),
+                    Value::Str("write".to_string()),
+                    Value::Str("0xabcd".to_string()),
+                    Value::U64(50)
+                ],
+                lessor(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn exercise_lessee_only_pre_expiry() {
+        let (mut engine, id) = deploy_arm();
+        // Lessor (= owner, ≠ lessee) cannot exercise.
+        assert!(engine
+            .call(id, "exercise", vec![], lessor(), 5)
+            .is_err());
+        // Stranger cannot exercise.
+        assert!(engine
+            .call(id, "exercise", vec![], stranger(), 5)
+            .is_err());
+        // Lessee can.
+        engine
+            .call(id, "exercise", vec![], lessee_addr(), 5)
+            .unwrap();
+        // Counter bumps.
+        assert_eq!(
+            engine
+                .call(id, "exercises_total", vec![], stranger(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // Lessee can exercise multiple times.
+        engine
+            .call(id, "exercise", vec![], lessee_addr(), 10)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "exercises_total", vec![], stranger(), 10)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+    }
+
+    #[test]
+    fn expiry_via_soft_epoch_gate() {
+        // duration = 50, granted at 0 → expiry at epoch 50.
+        let (mut engine, id) = deploy_arm();
+        // Just inside: epoch 49 OK.
+        engine
+            .call(id, "exercise", vec![], lessee_addr(), 49)
+            .unwrap();
+        // At/past expiry: reject.
+        assert!(engine
+            .call(id, "exercise", vec![], lessee_addr(), 50)
+            .is_err());
+        assert_eq!(
+            engine
+                .call(id, "is_active", vec![], stranger(), 50)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn revoke_owner_only_and_terminal() {
+        let (mut engine, id) = deploy_arm();
+        // Stranger cannot revoke.
+        assert!(engine
+            .call(id, "revoke", vec![], stranger(), 5)
+            .is_err());
+        // Lessee cannot revoke (only the lessor).
+        assert!(engine
+            .call(id, "revoke", vec![], lessee_addr(), 5)
+            .is_err());
+        // Lessor revokes.
+        engine
+            .call(id, "revoke", vec![], lessor(), 5)
+            .unwrap();
+        // Post-revoke: exercise reverts, is_active false.
+        assert!(engine
+            .call(id, "exercise", vec![], lessee_addr(), 5)
+            .is_err());
+        assert_eq!(
+            engine
+                .call(id, "is_active", vec![], stranger(), 5)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Double revoke rejected (terminal).
+        assert!(engine
+            .call(id, "revoke", vec![], lessor(), 5)
+            .is_err());
+    }
+
+    #[test]
+    fn epochs_remaining_counts_down() {
+        let (mut engine, id) = deploy_arm();
+        // granted at 0, duration 50 → expires at 50.
+        assert_eq!(
+            engine
+                .call(id, "epochs_remaining", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(50)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_remaining", vec![], stranger(), 30)
+                .unwrap()
+                .return_value,
+            Value::U64(20)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_remaining", vec![], stranger(), 49)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        assert_eq!(
+            engine
+                .call(id, "epochs_remaining", vec![], stranger(), 50)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // After revoke: 0 even pre-expiry.
+        engine
+            .call(id, "revoke", vec![], lessor(), 10)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "epochs_remaining", vec![], stranger(), 10)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn pre_arm_views_safe() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, lessor(), 1_000_000, 100, 0).unwrap();
+        // is_active false pre-arm.
+        assert_eq!(
+            engine
+                .call(id, "is_active", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // is_lessee(any) false pre-arm.
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_lessee",
+                    vec![Value::Address(lessee_addr())],
+                    stranger(),
+                    0
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // verb_view + object_view revert pre-arm.
+        assert!(engine
+            .call(id, "verb_view", vec![], stranger(), 0)
+            .is_err());
+        assert!(engine
+            .call(id, "object_view", vec![], stranger(), 0)
+            .is_err());
+        // epochs_remaining = 0.
+        assert_eq!(
+            engine
+                .call(id, "epochs_remaining", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn verb_object_immutable_post_arm() {
+        let (mut engine, id) = deploy_arm();
+        assert_eq!(
+            engine
+                .call(id, "verb_view", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Str("read".to_string())
+        );
+        assert_eq!(
+            engine
+                .call(id, "object_view", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Str("0xabcd".to_string())
+        );
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_lessee",
+                    vec![Value::Address(lessee_addr())],
+                    stranger(),
+                    0
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+}
