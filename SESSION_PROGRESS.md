@@ -6,6 +6,43 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 — T3.1 unblock (hel-2 restored) + Governance lane opened (Mortal-DAO)
+
+**Focus:** unblock T3.1 — the 5-node cluster has been operator-blocked on `hel-2` since 2026-05-18. Discovered the Hetzner Cloud project no longer contains a `hel-2` server (deleted); provisioned a fresh one, restored V5's BLS identity from saved bundle, and pre-staged everything but the Tailscale auth. Then opened a new dApp lane (Governance) by shipping the Mortal-DAO reference contract that composes ALL FOUR decay primitives from PRs #470–#473 in one runnable governance contract.
+**Commits shipped:** 4 on main (`31d39046` → `baebd70a`), branch `mortal-dao` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| hel-2 provisioned | Hetzner Cloud API: new CX23 in Helsinki (id 134231813, public IP `65.109.7.55`, image ubuntu-24.04 — clone of hel-1 spec), `~€4.79/mo`. Same project SSH keys (`claude-evaporchain` + `evaporchain-node-1`). Hostname `evaporchain-hel-2` set at create. |
+| hel-2 host prep | apt build deps (build-essential / pkg-config / libssl-dev / clang / git / jq) + 4G swap + Tailscale 1.98.4 binary + Rust 1.94.0 toolchain (matches `rust-toolchain.toml`) + full repo clone (HEAD `c7e627a` at fetch). |
+| `cargo build --release -p evaporchain-node` on hel-2 | Green in 23m 48s, 47.7 MB binary, single pre-existing warning (`auth.rs::wallet_encryption_ready` unused). Binary boots clean (prints v0.2 banner). |
+| V5 BLS bundle found + restored | The `validator-5-keys.json` lives on Mini-1 at `/Users/satyawansingh/validator-5-keys.json` (alongside `-1-` and `-4-`) — MacBook find missed it because the user's home dir is on the Mini. Pubkey verified byte-identical to genesis `validators[4].bls_public_key` (`9909c9c928309343b67a4bcb16e82436…`). Imported via the same hex-decode→`bls_key.bin` flow proved on hel-1's V4 (md5 match). Bundle backed up at hel-2:/root/validator-5-keys.json (mode 600). |
+| Tailscale reachability re-checked | All 4 existing cluster hosts (3 Minis + hel-1) green over Tailscale. |
+| **Mortal-DAO** reference contract | `contracts/evaporscript/mortal_dao.es` (~250 LOC) composes all four decay primitives in one contract: `decay-credential` (membership refresh-or-stale), `decay-rate-limit` (per-member proposal cap reset on refresh), `decay-reputation` (vote weight = `participations + 1`), `decay-quorum` (`weight_collected * 2 >= observed_peak` — running engagement floor). Single active proposal slot at a time; lifecycle hooks close any open proposal on evaporation as rejected. |
+| `mod mortal_dao_pilot` (regression barrier) | 9 tests in `crates/evaporchain-script/src/lib.rs` exercise each primitive + safety guards (`dao_is_totality_clean`, `add_member_owner_only_and_no_duplicates`, `open_proposal_blocked_by_stale_membership`, `proposal_rate_limit_caps_at_three`, `vote_weight_grows_with_participation`, `quorum_gates_against_running_peak`, `close_requires_voting_window_elapsed`, `double_vote_rejected_on_same_proposal`, `stranger_cannot_vote_or_propose`). |
+| New **Governance** lane in app-templates catalogue | `crates/evaporchain-app-templates/src/class.rs` opens `0x0001_0600..=0x0001_06FF` for governance; `MORTAL_DAO = 0x0001_0601` registered. catalogue.rs descriptor + lane-coverage tests updated (`catalogue_lists_23_templates`, `catalogue_covers_all_seven_lanes`). |
+| `dapps/mortal-dao/` TS client core | Payload builders for every method + thin fetch wrappers; `node --experimental-strip-types --test` runs 8 tests in ~100 ms (no node needed). UI deferred — same pattern as `dapps/decay-access-pass`. |
+**Empirical results:**
+- hel-2 cargo build: `Finished release` 23m 48s on CX23 (2c / 4G + 4G swap). Swap peak < 1 MB — RAM headroom was sufficient.
+- mortal_dao pilot on Mini-2: 9/9 passed, 1.36 s compile + 0.01 s test execution.
+- evaporchain-app-templates on Mini-2: 18 lib + 16 e2e tests passed; the new `catalogue_lists_23_templates` and `catalogue_covers_all_seven_lanes` are tracked in the count + lane assertions.
+- dapps/mortal-dao TS tests: 8/8 in 78–104 ms.
+**Decisions made:**
+- **Audit verdict (asked + answered):** V1 engineering is code-complete; all Tier-0 lanes ✅, AUDIT_2026_05_17 fully closed, 0 open PRs. Path to mainnet is OPS (T3.1 → soak → external audit). Built dApp-layer instead since the engineering surface is settled.
+- **Governance lane opened.** Lane 0x0001_06 is for on-chain coordination primitives that compose the decay substrate (credential / rate-limit / reputation / quorum) into runnable contracts. Mortal-DAO is the lane's first descriptor.
+- **`members[addr] = epoch + 1`** sentinel (instead of raw `epoch`) — an epoch-0 joiner must remain distinguishable from a never-registered address. Caught by the first cargo run on Mini-2; fix shipped in `baebd70a`.
+- **`freshness_window` default bumped 100 → 500** so `proposal_cap (3) × voting_window (50) = 150` epochs of cycles fit comfortably inside the freshness budget. Operators tuning higher cadences can still override at deploy.
+**What's next:**
+- **T3.1 final step:** Tailscale auth key from the operator + `tailscale up --hostname=evaporchain-hel-2 --authkey=...` on hel-2 → grab V5's new Tailscale IP → one-line `validators[4].p2p_address` update in `genesis-tailscale-5node.json` (the old `100.91.235.22` won't be reclaimable since the deleted device's tailscaled keys are gone) → `scripts/launch-tailscale-5node.sh 5` per `docs/runbooks/t3.1-cluster-bringup.md` → `/api/network/health` gate → hand to 72h soak.
+- Mortal-DAO **UI** (deferred — needs the live cluster, same as `dapps/decay-access-pass`).
+- Other Governance-lane candidates already scoped (not started): `bell_oracle.es` (drand replacement using per-block CHSH), `decay_nft.es` (NFT lane), block explorer (`dapps/explorer/`).
+**Blockers / open questions:**
+- Tailscale auth key for hel-2 is the ONLY remaining input — everything else for T3.1 is pre-staged.
+- `six_lanes_all_represented` e2e test (`tests/e2e.rs` in app-templates) still asserts the original 6 lanes; left untouched (passes today, but a future tidy could extend it to seven).
+**Cross-references:** commits `31d39046` (feat), `2686fc34` (Value::Str fix), `4c0fb784` (catalogue count), `baebd70a` (+1 / freshness fix); files `contracts/evaporscript/mortal_dao.es`, `crates/evaporchain-script/src/lib.rs` (`mod mortal_dao_pilot`), `crates/evaporchain-app-templates/src/{class,catalogue}.rs`, `dapps/mortal-dao/{src,test}`; runbook `docs/runbooks/t3.1-cluster-bringup.md`; hel-2 binary at `root@65.109.7.55:/root/EvaporChain/target/release/evaporchain-node`.
+
+---
+
 ## 2026-05-29 (evening) — V1.5 leaderless block-production components pre-staged
 
 **Focus:** build + verify every leaderless-block-production component behind a default-off flag, then deliberately PAUSE before the consensus-monolith voting surgery (V1.5 is post-mainnet / Q4 2026).
