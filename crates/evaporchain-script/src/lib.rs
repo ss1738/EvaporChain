@@ -4166,3 +4166,458 @@ mod scl_pilot {
         );
     }
 }
+
+#[cfg(test)]
+mod gallery_forgets_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/gallery_forgets.es` via `ScriptEngine`
+    //! and exercises the "first thing humans have made that is
+    //! provably going to die" doctrine — a gallery whose own
+    //! contract energy is the exhibition's lifespan.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/gallery_forgets.es");
+
+    fn curator() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn visitor() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    fn deploy_and_open() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, curator(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(
+                id,
+                "open",
+                vec![Value::Str("The Gallery That Forgets".to_string())],
+                curator(),
+                0,
+            )
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn gallery_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn open_owner_only_one_shot() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, curator(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot open.
+        assert!(engine
+            .call(
+                id,
+                "open",
+                vec![Value::Str("uninvited".to_string())],
+                stranger(),
+                0
+            )
+            .is_err());
+        engine
+            .call(
+                id,
+                "open",
+                vec![Value::Str("Opening Night".to_string())],
+                curator(),
+                0,
+            )
+            .unwrap();
+        // Second open rejected.
+        assert!(engine
+            .call(
+                id,
+                "open",
+                vec![Value::Str("Reprise".to_string())],
+                curator(),
+                0
+            )
+            .is_err());
+        // Name immutable + readable.
+        assert_eq!(
+            engine
+                .call(id, "gallery_name_view", vec![], visitor(), 0)
+                .unwrap()
+                .return_value,
+            Value::Str("Opening Night".to_string())
+        );
+    }
+
+    #[test]
+    fn add_piece_curator_only_pre_close() {
+        let (mut engine, id) = deploy_and_open();
+        // Stranger cannot add.
+        assert!(engine
+            .call(
+                id,
+                "add_piece",
+                vec![Value::Str("ipfs://piece1".to_string())],
+                stranger(),
+                5
+            )
+            .is_err());
+        // Curator adds.
+        engine
+            .call(
+                id,
+                "add_piece",
+                vec![Value::Str("ipfs://piece1".to_string())],
+                curator(),
+                5,
+            )
+            .unwrap();
+        // active_count = 1, next_id = 2.
+        assert_eq!(
+            engine
+                .call(id, "active_pieces", vec![], visitor(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        assert_eq!(
+            engine
+                .call(id, "next_id", vec![], visitor(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        // Piece 1 lookup works.
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_piece_active",
+                    vec![Value::U64(1)],
+                    visitor(),
+                    5
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "piece_hash_view",
+                    vec![Value::U64(1)],
+                    visitor(),
+                    5
+                )
+                .unwrap()
+                .return_value,
+            Value::Str("ipfs://piece1".to_string())
+        );
+    }
+
+    #[test]
+    fn piece_ids_monotonic_no_recycle() {
+        let (mut engine, id) = deploy_and_open();
+        // Add 3 pieces.
+        for n in 0..3u64 {
+            engine
+                .call(
+                    id,
+                    "add_piece",
+                    vec![Value::Str(format!("ipfs://piece{n}"))],
+                    curator(),
+                    1 + n,
+                )
+                .unwrap();
+        }
+        // next_id = 4 after 3 adds.
+        assert_eq!(
+            engine
+                .call(id, "next_id", vec![], visitor(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(4)
+        );
+        // Remove piece 2.
+        engine
+            .call(
+                id,
+                "remove_piece",
+                vec![Value::U64(2)],
+                curator(),
+                5,
+            )
+            .unwrap();
+        // active_count drops 3→2 but next_id stays 4 (no recycle).
+        assert_eq!(
+            engine
+                .call(id, "active_pieces", vec![], visitor(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        assert_eq!(
+            engine
+                .call(id, "next_id", vec![], visitor(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(4)
+        );
+        // New piece goes to slot 4 — slot 2 stays freed forever.
+        engine
+            .call(
+                id,
+                "add_piece",
+                vec![Value::Str("ipfs://piece-after-removal".to_string())],
+                curator(),
+                6,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_piece_active",
+                    vec![Value::U64(4)],
+                    visitor(),
+                    6
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Slot 2 still inactive.
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_piece_active",
+                    vec![Value::U64(2)],
+                    visitor(),
+                    6
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn remove_piece_curator_only_decrements() {
+        let (mut engine, id) = deploy_and_open();
+        engine
+            .call(
+                id,
+                "add_piece",
+                vec![Value::Str("ipfs://x".to_string())],
+                curator(),
+                1,
+            )
+            .unwrap();
+        // Stranger cannot remove.
+        assert!(engine
+            .call(
+                id,
+                "remove_piece",
+                vec![Value::U64(1)],
+                stranger(),
+                2
+            )
+            .is_err());
+        // Curator removes.
+        engine
+            .call(
+                id,
+                "remove_piece",
+                vec![Value::U64(1)],
+                curator(),
+                2,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "active_pieces", vec![], visitor(), 2)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "pieces_ever_removed", vec![], visitor(), 2)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // Removing the same slot twice rejected.
+        assert!(engine
+            .call(
+                id,
+                "remove_piece",
+                vec![Value::U64(1)],
+                curator(),
+                3
+            )
+            .is_err());
+        // piece_hash_view on inactive piece reverts.
+        assert!(engine
+            .call(id, "piece_hash_view", vec![Value::U64(1)], visitor(), 3)
+            .is_err());
+    }
+
+    #[test]
+    fn close_early_blocks_further_adds() {
+        let (mut engine, id) = deploy_and_open();
+        engine
+            .call(
+                id,
+                "add_piece",
+                vec![Value::Str("ipfs://a".to_string())],
+                curator(),
+                1,
+            )
+            .unwrap();
+        // Stranger cannot close.
+        assert!(engine
+            .call(id, "close_early", vec![], stranger(), 2)
+            .is_err());
+        engine
+            .call(id, "close_early", vec![], curator(), 2)
+            .unwrap();
+        // is_open flips false.
+        assert_eq!(
+            engine
+                .call(id, "is_open", vec![], visitor(), 2)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Adds rejected.
+        assert!(engine
+            .call(
+                id,
+                "add_piece",
+                vec![Value::Str("ipfs://b".to_string())],
+                curator(),
+                3
+            )
+            .is_err());
+        // Double close rejected.
+        assert!(engine
+            .call(id, "close_early", vec![], curator(), 3)
+            .is_err());
+        // Pre-close pieces still queryable.
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_piece_active",
+                    vec![Value::U64(1)],
+                    visitor(),
+                    3
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Removal still works post-close (curator can clean up).
+        engine
+            .call(
+                id,
+                "remove_piece",
+                vec![Value::U64(1)],
+                curator(),
+                3,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn age_since_open_counts_from_open_epoch() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, curator(), 1_000_000, 100, 0).unwrap();
+        // Pre-open: 0.
+        assert_eq!(
+            engine
+                .call(id, "age_since_open", vec![], visitor(), 50)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // Open at epoch 7.
+        engine
+            .call(
+                id,
+                "open",
+                vec![Value::Str("Late Opening".to_string())],
+                curator(),
+                7,
+            )
+            .unwrap();
+        // Same-epoch age: 0.
+        assert_eq!(
+            engine
+                .call(id, "age_since_open", vec![], visitor(), 7)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // 50 epochs later: 50.
+        assert_eq!(
+            engine
+                .call(id, "age_since_open", vec![], visitor(), 57)
+                .unwrap()
+                .return_value,
+            Value::U64(50)
+        );
+    }
+
+    #[test]
+    fn pre_open_views_safe() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, curator(), 1_000_000, 100, 0).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_open", vec![], visitor(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // gallery_name_view reverts pre-open.
+        assert!(engine
+            .call(id, "gallery_name_view", vec![], visitor(), 0)
+            .is_err());
+        // add_piece pre-open rejected.
+        assert!(engine
+            .call(
+                id,
+                "add_piece",
+                vec![Value::Str("premature".to_string())],
+                curator(),
+                0
+            )
+            .is_err());
+        // close_early pre-open rejected.
+        assert!(engine
+            .call(id, "close_early", vec![], curator(), 0)
+            .is_err());
+        // is_piece_active for any id = false (defensive).
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_piece_active",
+                    vec![Value::U64(99)],
+                    visitor(),
+                    0
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+}
+

@@ -1,0 +1,10 @@
+{
+  "name": "gallery-forgets",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Gallery-That-Forgets dApp — chain client for contracts/evaporscript/gallery_forgets.es. Thermodynamic-closing gallery; curator opens once, adds/removes content-hash pieces; closes early or evaporates naturally.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

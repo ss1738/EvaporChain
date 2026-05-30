@@ -202,7 +202,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "The Gallery That Forgets",
             "Cultural",
             json!({"opened_at_epoch": 0}),
-            "Thermodynamic-closing gallery + Mayflies + AI-decay-art seed. 'The first thing humans have made that is provably going to die.'",
+            "Thermodynamic-closing gallery + Mayflies + AI-decay-art seed. 'The first thing humans have made that is provably going to die.' Curator opens once, adds/removes content-hash pieces while alive; close_early or natural evaporation ends the exhibition (the contract's own energy is the exhibition's lifespan). Reference contract: contracts/evaporscript/gallery_forgets.es.",
             "evaporchain-gallery-forgets",
         )
         .expect("Gallery descriptor is constant"),
