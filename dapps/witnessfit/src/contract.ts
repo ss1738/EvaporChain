@@ -7,6 +7,7 @@ export const WITNESSFIT_SOURCE = `contract WitnessFit {
     state {
         streak_count: u64 = 0
         last_checkin_epoch: u64 = 0
+        has_checked_in: bool = false
         half_life: u64 = 7
         max_streak: u64 = 0
         total_checkins: u64 = 0
@@ -15,8 +16,9 @@ export const WITNESSFIT_SOURCE = `contract WitnessFit {
 
     fn check_in() {
         require(caller == owner, "only the wearer checks in")
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             self.streak_count = 1
+            self.has_checked_in = true
         } else {
             require(epoch > self.last_checkin_epoch, "already checked in this epoch")
             if epoch <= self.last_checkin_epoch + self.half_life {
@@ -40,7 +42,7 @@ export const WITNESSFIT_SOURCE = `contract WitnessFit {
     }
 
     fn current_streak() -> u64 {
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             return 0
         }
         if epoch <= self.last_checkin_epoch + self.half_life {
@@ -53,7 +55,7 @@ export const WITNESSFIT_SOURCE = `contract WitnessFit {
         if self.max_streak == 0 {
             return false
         }
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             return false
         }
         if epoch > self.last_checkin_epoch + self.half_life {
@@ -86,7 +88,7 @@ export const WITNESSFIT_SOURCE = `contract WitnessFit {
     }
 
     fn window_remaining() -> u64 {
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             return 0
         }
         if epoch > self.last_checkin_epoch + self.half_life {

@@ -23,13 +23,22 @@ contract WitnessFit {
     state {
         // ── streak state ───────────────────────────────────────────
         streak_count: u64 = 0
+        // The actual last check-in epoch. `has_checked_in` is the
+        // sentinel that distinguishes "never checked in" from
+        // "checked in at epoch 0" — using `last_checkin_epoch == 0`
+        // as the sentinel collides with check-ins at epoch 0, which
+        // breaks every gate on the first hour of a new chain (the
+        // same lesson learned for mortal_dao.es's membership map,
+        // applied here with a boolean since this contract is
+        // single-user and a sentinel bool is simpler than a +1 shift
+        // through arithmetic comparisons).
         last_checkin_epoch: u64 = 0
+        has_checked_in: bool = false
         // Decay window in epochs (≈ days). Default 7 = a week.
         half_life: u64 = 7
-        // Historical peak. Never decreases on its own; refresh_membership
-        // would conceptually be "reset peak" but we leave that as a
-        // separate `reset_peak()` op so users can intentionally
-        // start a new chapter.
+        // Historical peak. Never decreases on its own; `reset_peak()`
+        // is a separate op so users can intentionally start a new
+        // chapter.
         max_streak: u64 = 0
         total_checkins: u64 = 0
 
@@ -44,8 +53,9 @@ contract WitnessFit {
     // Two check-ins in the same epoch are rejected.
     fn check_in() {
         require(caller == owner, "only the wearer checks in")
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             self.streak_count = 1
+            self.has_checked_in = true
         } else {
             require(epoch > self.last_checkin_epoch, "already checked in this epoch")
             if epoch <= self.last_checkin_epoch + self.half_life {
@@ -76,7 +86,7 @@ contract WitnessFit {
     // has elapsed without a check-in (i.e. what `check_in()` would
     // reset to 1 right now). Returns the live counter otherwise.
     fn current_streak() -> u64 {
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             return 0
         }
         if epoch <= self.last_checkin_epoch + self.half_life {
@@ -88,12 +98,12 @@ contract WitnessFit {
     // Boost gate. True iff:
     //   (a) current streak > 0 (decay window not elapsed),
     //   (b) streak_count * 10000 ≥ boost_threshold_bp * max_streak.
-    // Returns false before any check-ins (max_streak == 0).
+    // Returns false before any check-ins (has_checked_in still false).
     fn has_boost() -> bool {
         if self.max_streak == 0 {
             return false
         }
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             return false
         }
         if epoch > self.last_checkin_epoch + self.half_life {
@@ -130,7 +140,7 @@ contract WitnessFit {
     // on the next check-in. Returns 0 if the window has already
     // elapsed, or if there has never been a check-in.
     fn window_remaining() -> u64 {
-        if self.last_checkin_epoch == 0 {
+        if self.has_checked_in == false {
             return 0
         }
         if epoch > self.last_checkin_epoch + self.half_life {

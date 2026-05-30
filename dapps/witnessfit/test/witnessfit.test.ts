@@ -23,6 +23,7 @@ import {
 const initial: StreakState = {
   streakCount: 0n,
   lastCheckinEpoch: 0n,
+  hasCheckedIn: false,
   halfLife: 7n,
   maxStreak: 0n,
   boostThresholdBp: 5000n,
@@ -56,22 +57,23 @@ test("endpoint paths match the node API", () => {
 
 test("currentStreak: pre-checkin → 0; inside window → live; past window → 0", () => {
   assert.equal(currentStreak(initial, 100n), 0n);
-  const s: StreakState = { ...initial, streakCount: 3n, lastCheckinEpoch: 10n, maxStreak: 3n };
+  const s: StreakState = { ...initial, streakCount: 3n, lastCheckinEpoch: 10n, hasCheckedIn: true, maxStreak: 3n };
   assert.equal(currentStreak(s, 10n), 3n);
   assert.equal(currentStreak(s, 17n), 3n); // 10+7 boundary inclusive
   assert.equal(currentStreak(s, 18n), 0n); // past
 });
 
 test("hasBoost: 50% threshold by default", () => {
-  // Peak 4, streak 2 → 2 >= 0.5*4 ✓
-  const s2: StreakState = { ...initial, streakCount: 2n, lastCheckinEpoch: 0n, maxStreak: 4n };
-  assert.equal(hasBoost(s2, 0n), false); // lastCheckin==0 short-circuit (uninitialised)
+  // Pre-checkin → false even if peak somehow set (defensive)
+  const preCheckin: StreakState = { ...initial, streakCount: 2n, maxStreak: 4n };
+  assert.equal(hasBoost(preCheckin, 0n), false);
 
-  const live: StreakState = { ...initial, streakCount: 2n, lastCheckinEpoch: 10n, maxStreak: 4n };
+  // Peak 4, streak 2 → 2 >= 0.5*4 ✓
+  const live: StreakState = { ...initial, streakCount: 2n, lastCheckinEpoch: 10n, hasCheckedIn: true, maxStreak: 4n };
   assert.equal(hasBoost(live, 10n), true);
 
   // Streak 1, peak 4 → 1 < 0.5*4 → no boost
-  const low: StreakState = { ...initial, streakCount: 1n, lastCheckinEpoch: 10n, maxStreak: 4n };
+  const low: StreakState = { ...initial, streakCount: 1n, lastCheckinEpoch: 10n, hasCheckedIn: true, maxStreak: 4n };
   assert.equal(hasBoost(low, 10n), false);
 
   // Past window → no boost regardless
@@ -79,7 +81,7 @@ test("hasBoost: 50% threshold by default", () => {
 });
 
 test("windowRemaining: counts down to 0 at boundary, 0 past it", () => {
-  const s: StreakState = { ...initial, streakCount: 1n, lastCheckinEpoch: 10n, maxStreak: 1n };
+  const s: StreakState = { ...initial, streakCount: 1n, lastCheckinEpoch: 10n, hasCheckedIn: true, maxStreak: 1n };
   assert.equal(windowRemaining(s, 10n), 7n);
   assert.equal(windowRemaining(s, 14n), 3n);
   assert.equal(windowRemaining(s, 17n), 0n);
@@ -88,15 +90,16 @@ test("windowRemaining: counts down to 0 at boundary, 0 past it", () => {
   assert.equal(windowRemaining(initial, 0n), 0n);
 });
 
-test("checkInPreview: first-checkin seeds streak=1 + peak=1", () => {
+test("checkInPreview: first-checkin seeds streak=1 + peak=1 + hasCheckedIn=true", () => {
   const next = checkInPreview(initial, 5n);
   assert.equal(next.streakCount, 1n);
   assert.equal(next.lastCheckinEpoch, 5n);
+  assert.equal(next.hasCheckedIn, true);
   assert.equal(next.maxStreak, 1n);
 });
 
 test("checkInPreview: inside window grows streak; outside resets to 1 + peak preserved", () => {
-  const s1: StreakState = { ...initial, streakCount: 3n, lastCheckinEpoch: 5n, maxStreak: 3n };
+  const s1: StreakState = { ...initial, streakCount: 3n, lastCheckinEpoch: 5n, hasCheckedIn: true, maxStreak: 3n };
   // Inside window (5 + 7 = 12, check-in at 10): streak → 4
   const grown = checkInPreview(s1, 10n);
   assert.equal(grown.streakCount, 4n);
@@ -108,7 +111,7 @@ test("checkInPreview: inside window grows streak; outside resets to 1 + peak pre
 });
 
 test("checkInPreview: same-or-prior-epoch check-in is a no-op", () => {
-  const s: StreakState = { ...initial, streakCount: 2n, lastCheckinEpoch: 10n, maxStreak: 2n };
+  const s: StreakState = { ...initial, streakCount: 2n, lastCheckinEpoch: 10n, hasCheckedIn: true, maxStreak: 2n };
   assert.deepEqual(checkInPreview(s, 10n), s);
   assert.deepEqual(checkInPreview(s, 5n), s);
 });
