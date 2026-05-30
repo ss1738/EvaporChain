@@ -192,7 +192,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "WitnessFit (Singh-Streak)",
             "Consumer",
             json!({"half_life": 7, "boost_bp": 5000}),
-            "Wearable streaks where the streak ITSELF decays. Graceful fade, not cliff.",
+            "Wearable streaks where the streak ITSELF decays. Graceful fade, not cliff. Reference contract: contracts/evaporscript/witnessfit.es.",
             "evaporchain-witnessfit",
         )
         .expect("WitnessFit descriptor is constant"),

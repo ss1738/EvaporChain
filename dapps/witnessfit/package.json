@@ -1,0 +1,10 @@
+{
+  "name": "witnessfit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "WitnessFit dApp — chain client for contracts/evaporscript/witnessfit.es. One-contract-per-wearer streak tracker with graceful boost fade (50% of peak by default). Includes a client-side streak/boost projection so the UI can preview state without a node round-trip.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

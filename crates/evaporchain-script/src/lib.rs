@@ -2877,3 +2877,294 @@ mod refresh_market_pilot {
         );
     }
 }
+
+#[cfg(test)]
+mod witnessfit_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/witnessfit.es` via `ScriptEngine` and
+    //! exercises the "graceful fade" streak doctrine — check-ins
+    //! inside the half-life window grow the streak; outside it the
+    //! current streak resets to 1 but max_streak is preserved; the
+    //! boost stays available while current streak ≥ threshold_bp of
+    //! max.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/witnessfit.es");
+
+    fn wearer() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    /// Deploy with energy=1_000_000, half_life=100 (the chain's
+    /// decay half-life, NOT the streak's; the contract uses its own
+    /// `state.half_life` field for the streak window).
+    fn deploy() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, wearer(), 1_000_000, 100, 0).unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn witnessfit_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn check_in_owner_only() {
+        let (mut engine, id) = deploy();
+        // Stranger cannot check in.
+        assert!(engine.call(id, "check_in", vec![], stranger(), 0).is_err());
+        // Wearer checks in.
+        engine
+            .call(id, "check_in", vec![], wearer(), 0)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "current_streak", vec![], wearer(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+    }
+
+    #[test]
+    fn double_checkin_same_epoch_rejected() {
+        let (mut engine, id) = deploy();
+        engine.call(id, "check_in", vec![], wearer(), 0).unwrap();
+        // Same epoch → rejected.
+        assert!(engine.call(id, "check_in", vec![], wearer(), 0).is_err());
+        // But epoch+1 OK.
+        engine.call(id, "check_in", vec![], wearer(), 1).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "current_streak", vec![], wearer(), 1)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+    }
+
+    #[test]
+    fn streak_grows_within_window() {
+        // half_life default = 7. Check in every 5 epochs (within window).
+        let (mut engine, id) = deploy();
+        for day in [0u64, 5, 10, 15, 20] {
+            engine.call(id, "check_in", vec![], wearer(), day).unwrap();
+        }
+        assert_eq!(
+            engine
+                .call(id, "current_streak", vec![], wearer(), 20)
+                .unwrap()
+                .return_value,
+            Value::U64(5)
+        );
+        assert_eq!(
+            engine
+                .call(id, "peak", vec![], wearer(), 20)
+                .unwrap()
+                .return_value,
+            Value::U64(5)
+        );
+    }
+
+    #[test]
+    fn streak_resets_outside_window_but_peak_preserved() {
+        // half_life = 7. Build a streak of 3, then skip past the window.
+        let (mut engine, id) = deploy();
+        engine.call(id, "check_in", vec![], wearer(), 0).unwrap();
+        engine.call(id, "check_in", vec![], wearer(), 3).unwrap();
+        engine.call(id, "check_in", vec![], wearer(), 6).unwrap();
+        // Peak = 3.
+        assert_eq!(
+            engine
+                .call(id, "peak", vec![], wearer(), 6)
+                .unwrap()
+                .return_value,
+            Value::U64(3)
+        );
+        // Skip 30 epochs → way past 6+7=13 window.
+        engine.call(id, "check_in", vec![], wearer(), 30).unwrap();
+        // Streak reset to 1.
+        assert_eq!(
+            engine
+                .call(id, "current_streak", vec![], wearer(), 30)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // But peak preserved.
+        assert_eq!(
+            engine
+                .call(id, "peak", vec![], wearer(), 30)
+                .unwrap()
+                .return_value,
+            Value::U64(3)
+        );
+    }
+
+    #[test]
+    fn current_streak_decays_to_zero_outside_window_without_checkin() {
+        // Build streak, then read the view at an epoch past the window.
+        let (mut engine, id) = deploy();
+        engine.call(id, "check_in", vec![], wearer(), 0).unwrap();
+        engine.call(id, "check_in", vec![], wearer(), 5).unwrap();
+        // At epoch 12 (inside 5+7=12 window — boundary inclusive): still 2.
+        assert_eq!(
+            engine
+                .call(id, "current_streak", vec![], wearer(), 12)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        // At epoch 13 (past window): 0.
+        assert_eq!(
+            engine
+                .call(id, "current_streak", vec![], wearer(), 13)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn has_boost_at_threshold_and_below() {
+        // boost_threshold_bp default = 5000 (50%). Build streak of 4 →
+        // peak=4; need streak ≥ 2 (50% of 4) for boost.
+        let (mut engine, id) = deploy();
+        for d in [0u64, 3, 6, 9] {
+            engine.call(id, "check_in", vec![], wearer(), d).unwrap();
+        }
+        // Streak = 4, peak = 4. 4*10000 >= 5000*4 = 40000 >= 20000 ✓ boost.
+        assert_eq!(
+            engine
+                .call(id, "has_boost", vec![], wearer(), 9)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Now skip the window: streak resets next check-in.
+        engine.call(id, "check_in", vec![], wearer(), 50).unwrap();
+        // streak=1, peak=4 → 1*10000=10000 vs 5000*4=20000 → 10000 < 20000 → NO boost.
+        assert_eq!(
+            engine
+                .call(id, "has_boost", vec![], wearer(), 50)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Build back up to streak=2: 2*10000=20000 vs 20000 → ≥ ✓ boost.
+        engine.call(id, "check_in", vec![], wearer(), 51).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "has_boost", vec![], wearer(), 51)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn window_remaining_counts_down() {
+        let (mut engine, id) = deploy();
+        engine.call(id, "check_in", vec![], wearer(), 0).unwrap();
+        // half_life = 7 → window expires at epoch 7.
+        // At epoch 0: remaining = 0 + 7 - 0 = 7.
+        assert_eq!(
+            engine
+                .call(id, "window_remaining", vec![], wearer(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(7)
+        );
+        // At epoch 5: remaining = 2.
+        assert_eq!(
+            engine
+                .call(id, "window_remaining", vec![], wearer(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        // At epoch 7 (boundary): 0.
+        assert_eq!(
+            engine
+                .call(id, "window_remaining", vec![], wearer(), 7)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // Past window: 0.
+        assert_eq!(
+            engine
+                .call(id, "window_remaining", vec![], wearer(), 8)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn reset_peak_starts_a_new_chapter() {
+        let (mut engine, id) = deploy();
+        // Build peak of 5.
+        for d in [0u64, 1, 2, 3, 4] {
+            engine.call(id, "check_in", vec![], wearer(), d).unwrap();
+        }
+        assert_eq!(
+            engine
+                .call(id, "peak", vec![], wearer(), 4)
+                .unwrap()
+                .return_value,
+            Value::U64(5)
+        );
+        // Reset peak → new peak = current streak (5).
+        engine.call(id, "reset_peak", vec![], wearer(), 4).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "peak", vec![], wearer(), 4)
+                .unwrap()
+                .return_value,
+            Value::U64(5)
+        );
+        // Stranger cannot reset.
+        assert!(engine
+            .call(id, "reset_peak", vec![], stranger(), 4)
+            .is_err());
+    }
+
+    #[test]
+    fn pre_checkin_views_return_zeros() {
+        let (mut engine, id) = deploy();
+        assert_eq!(
+            engine
+                .call(id, "current_streak", vec![], wearer(), 100)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "peak", vec![], wearer(), 100)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "has_boost", vec![], wearer(), 100)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "window_remaining", vec![], wearer(), 100)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+}
