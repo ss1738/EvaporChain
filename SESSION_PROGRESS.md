@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (dawn) — GalleryThatForgets reference contract (Cultural lane opened)
+
+**Focus:** open the Cultural lane (previously 0/1 backed) with GALLERY_FORGETS — the catalogue's sharpest doctrine framing ("the first thing humans have made that is provably going to die").
+**Commits shipped:** 1 on main (`ee7eed10`). Branch `gallery-forgets` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/gallery_forgets.es` | ~180 LOC. Curator opens once with a name; adds/removes content-hash pieces while alive; `close_early` ends the exhibition before evaporation. Piece IDs monotonic, never recycle (remove → slot permanently inactive; next add → slot N+1). Content cleartext off-chain; chain holds the hash + lifecycle attestation. |
+| `mod gallery_forgets_pilot` (8 tests) | totality-clean, open owner-only one-shot + name immutable, add_piece curator-only/pre-close, **piece_ids_monotonic_no_recycle** (3 adds → remove slot 2 → add lands at slot 4 not slot 2), remove_piece curator-only + double-remove rejected + hash_view reverts post-removal, close_early blocks further adds + double-close rejected + removal still works post-close (cleanup), age_since_open from open-epoch, pre-open views all safe. **8/8 PASS first compile.** |
+| dApp client | `dapps/gallery-forgets/` — 8 node:test, full curator workflow + every view. |
+| Catalogue pointer | GALLERY_FORGETS descriptor extended to reference the .es file + the "chain's decay IS the closing date" framing. |
+**Empirical results:** First-compile green on Mini-2 (8/8 + 18 lib + 16 e2e in app-templates).
+**Decisions made:**
+- **Monotonic, non-recycling piece IDs.** Removing slot 2 keeps slot 2 permanently inactive; the next `add_piece()` goes to slot N+1. Off-chain links / catalogues / archive snapshots that reference slot 2 stay stable forever ("piece 2 used to exist, was removed at epoch X" reads as a forensically-meaningful trail). The alternative — recycling — would silently rewrite history.
+- **Removal still works post-close-early.** Curator can de-accession even after closing the exhibition (cleanup, redaction, etc.). `add_piece` is the one method blocked post-close-early; everything else stays accessible until natural evaporation.
+- **Cleartext off-chain.** The chain holds a content_hash (IPFS CID, Arweave URI, whatever). Keeps the contract small + decouples from storage-layer politics + lets the off-chain layer be upgraded without a contract migration.
+**What's next:**
+- 3 catalogue gaps remain: sfsv (Future-Self Vault, Marketplace), sap (Attention Quantum, Marketplace), mnemochain (FSRS Card, Consumer).
+- T3.1 still gated only on Tailscale auth key.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `ee7eed10`; files `contracts/evaporscript/gallery_forgets.es`, `crates/evaporchain-script/src/lib.rs` (`mod gallery_forgets_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/gallery-forgets/{src,test}`. Pairs naturally with `mayfly.es` — a Mayfly NFT can be added as a piece via its contract address, and the gallery's lifespan bounds the longest any piece can be exhibited.
+
+---
+
 ## 2026-05-30 (after-midnight) — SCL reference contract (Marketplace, the thesis applied)
 
 **Focus:** the doctrine-strongest remaining gap. SCL_LEASE was registered at 0x0001_0104 with the description "Permission market with structural revocation — capabilities can't outlive their purpose" — the closest the catalogue gets to spelling out EvaporChain's THESIS as a single contract type. No .es backing until now.
