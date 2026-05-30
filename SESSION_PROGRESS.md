@@ -6,6 +6,34 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (evening) — Bell-Oracle reference contract (Paradigm lane #4)
+
+**Focus:** ship the doctrine-novel pick from the post-Mortal-DAO menu — an on-chain consumer of EvaporChain's per-block Bell-CHSH S-value beacon (a primitive no other chain has natively).
+**Commits shipped:** 2 on main (`8b3ad07e` → `78fb34a8`), branch `bell-oracle` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/bell_oracle.es` | Reference contract: `arm(max_age)` (owner-only, one-shot) → `submit_reading(s_milli, height)` (owner-only, structurally rejects `s_milli ≤ 2000` AND non-strictly-increasing height; rejected readings bump separate counters but don't revert) → `is_certified_now()` returns true iff at least one above-floor reading was accepted, is within `max_age_epochs`, and remains above floor. The contract's accepted state is *certifiably* quantum-derived because classical readings cannot reach storage. |
+| `mod bell_oracle_pilot` (9 tests) | totality-clean, arm owner-only + one-shot + max_age>0, submit-requires-arm, submit owner-only, at-or-below-floor rejected (gate is strict `>`, so exactly-2000 also rejected), above-floor accepted + certifies, stale-height rejected, freshness window expiry edge cases, initial-state views. |
+| `BELL_ORACLE = 0x0001_0504` in Paradigm lane | Paradigm's 4th resident (after SGB / SBAV / SSM). Catalogue + class tests bumped to 24 templates. |
+| `dapps/bell-oracle/` | TS chain-client + relayer helper. `fetchLatestBellBeacon(baseUrl)` reads `/api/bell/latest`; `isSubmissionWorthy(resp, lastPosted)` pre-filter so the relayer skips no-data / un-certified / sub-floor / stale-height readings without burning a tx. **8/8 node:test PASS** locally (~75 ms). |
+**Empirical results:**
+- `cargo test -p evaporchain-script bell_oracle_pilot` on Mini-2: **9/9 PASS** in 0.01s (compile 1.42s).
+- `cargo test -p evaporchain-app-templates` on Mini-2: 18 lib + 16 e2e PASS (new `BELL_ORACLE` membership + `catalogue_lists_24_templates` + the Paradigm-lane assertion all hold).
+- First Mini-2 run failed with `Parse { line: 91, message: "expected LBrace, got Gt" }` — EvaporScript's parser doesn't accept paren-wrapped LHS in `if` conditions (`if (epoch - X) > Y`). Rewrote to `if epoch > X + Y` (mathematically equivalent; matches mortal_dao.es's parser-friendly shape). Return-context paren forms still work (oracle_feed.es:100 precedent).
+**Decisions made:**
+- **Lane = Paradigm, not a new Oracle lane.** Bell-Oracle is a doctrine-grade primitive demo (Bell-violation gating is a new paradigm for randomness); opening a fresh lane every contract is excess proliferation. If we add more oracle-shaped primitives later, the lane case becomes stronger.
+- **Strict gate at the floor.** The threshold check is `s_milli > 2000`, NOT `≥` — exactly-2000 milli is the classical maximum (S = 2.0), which is mathematically *not* a Bell-inequality violation. Including the equality would weaken the contract's promise.
+- **Counter-bump-on-rejection, not revert.** Sub-floor and stale-height submissions don't revert the tx — they record the rejection in dedicated counters. This lets the relayer naively post every fresh `/api/bell/latest` value and use the counter as an off-chain signal (vs. having to short-circuit in dApp code).
+**What's next:**
+- Bell-Oracle **UI** + relayer service (deferred — needs the live cluster, same as decay-access-pass + mortal-dao).
+- Remaining candidates from the audit: `decay_nft.es` (NFT lane — but `mortal_nft.es` already exists, would need a clear differentiator first), block explorer (`dapps/explorer/`, bigger build, gated on cluster).
+**Blockers / open questions:**
+- Same as the morning entry: T3.1 still gated on the operator's Tailscale auth key — all engineering work is post-cluster from here.
+**Cross-references:** commits `8b3ad07e` (feat), `78fb34a8` (parser fix); files `contracts/evaporscript/bell_oracle.es`, `crates/evaporchain-script/src/lib.rs` (`mod bell_oracle_pilot`), `crates/evaporchain-app-templates/src/{class,catalogue}.rs`, `dapps/bell-oracle/{src,test}`; endpoint `/api/bell/latest` (substrate category, see `crates/evaporchain-node/src/api.rs:8055`).
+
+---
+
 ## 2026-05-30 — T3.1 unblock (hel-2 restored) + Governance lane opened (Mortal-DAO)
 
 **Focus:** unblock T3.1 — the 5-node cluster has been operator-blocked on `hel-2` since 2026-05-18. Discovered the Hetzner Cloud project no longer contains a `hel-2` server (deleted); provisioned a fresh one, restored V5's BLS identity from saved bundle, and pre-staged everything but the Tailscale auth. Then opened a new dApp lane (Governance) by shipping the Mortal-DAO reference contract that composes ALL FOUR decay primitives from PRs #470–#473 in one runnable governance contract.
