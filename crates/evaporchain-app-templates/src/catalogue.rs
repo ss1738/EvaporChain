@@ -126,8 +126,8 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             REFRESH_MARKET_NAMESPACE,
             "Refresh-Market (Namespace Rent)",
             "Marketplace",
-            json!({"id_hex": "00", "capacity": 1000, "base_rent": 100}),
-            "Per-namespace AMM rent. Quadratic in utilisation: empty pays floor; full pays ~base. The chain's primary economic activity.",
+            json!({"id_hex": "00", "capacity": 1000, "base_rent": 100, "eviction_window": 10}),
+            "Per-namespace AMM rent. Quadratic in utilisation: empty pays floor; full pays ~base. The chain's primary economic activity. Reference contract: contracts/evaporscript/refresh_market.es.",
             "evaporchain-refresh-market",
         )
         .expect("RefreshMarket descriptor is constant"),

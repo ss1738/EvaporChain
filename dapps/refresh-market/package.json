@@ -1,0 +1,10 @@
+{
+  "name": "refresh-market",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Refresh-Market dApp — chain client for contracts/evaporscript/refresh_market.es. The chain's primary economic activity: per-namespace AMM rent that is quadratic in utilisation. Includes a client-side currentRate() port so UIs can preview pricing without a node round-trip.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

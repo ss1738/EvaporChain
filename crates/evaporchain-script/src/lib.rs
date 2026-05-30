@@ -2513,3 +2513,367 @@ mod bell_oracle_pilot {
         );
     }
 }
+
+#[cfg(test)]
+mod refresh_market_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/refresh_market.es` via `ScriptEngine`
+    //! and exercises the chain's primary economic activity —
+    //! quadratic-in-utilisation rent + eviction-on-stale-refresh.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/refresh_market.es");
+
+    fn operator() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn alice() -> AccountAddress {
+        [0x21; 32]
+    }
+    fn bob() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    /// Deploy with capacity=10, base_rent=100, eviction_window=5.
+    fn deploy_and_arm() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(
+                id,
+                "arm",
+                vec![Value::U64(10), Value::U64(100), Value::U64(5)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn refresh_market_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn arm_owner_only_validates_inputs_one_shot() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot arm.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![Value::U64(10), Value::U64(100), Value::U64(5)],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Capacity 0 rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![Value::U64(0), Value::U64(100), Value::U64(5)],
+                operator(),
+                0
+            )
+            .is_err());
+        // Eviction 0 rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![Value::U64(10), Value::U64(100), Value::U64(0)],
+                operator(),
+                0
+            )
+            .is_err());
+        // OK now.
+        engine
+            .call(
+                id,
+                "arm",
+                vec![Value::U64(10), Value::U64(100), Value::U64(5)],
+                operator(),
+                0,
+            )
+            .unwrap();
+        // Second arm rejected (sealed).
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![Value::U64(20), Value::U64(50), Value::U64(3)],
+                operator(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn claim_blocked_until_armed() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        // Pre-arm claim reverts.
+        assert!(engine
+            .call(id, "claim_slot", vec![], alice(), 0)
+            .is_err());
+    }
+
+    #[test]
+    fn claim_increments_used_marks_holder_blocks_double_claim() {
+        let (mut engine, id) = deploy_and_arm();
+        engine
+            .call(id, "claim_slot", vec![], alice(), 0)
+            .unwrap();
+        // used_now bumped.
+        assert_eq!(
+            engine
+                .call(id, "used", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // is_holder reflects.
+        assert_eq!(
+            engine
+                .call(id, "is_holder", vec![Value::Address(alice())], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Bob isn't a holder yet.
+        assert_eq!(
+            engine
+                .call(id, "is_holder", vec![Value::Address(bob())], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Double claim by alice rejected.
+        assert!(engine
+            .call(id, "claim_slot", vec![], alice(), 0)
+            .is_err());
+    }
+
+    #[test]
+    fn claim_rejected_at_capacity() {
+        // capacity = 10. Fill it with 10 distinct callers, then 11th
+        // is rejected.
+        let (mut engine, id) = deploy_and_arm();
+        for i in 0..10u8 {
+            let mut addr: AccountAddress = [0u8; 32];
+            addr[0] = 0xA0 | i;
+            engine.call(id, "claim_slot", vec![], addr, 0).unwrap();
+        }
+        assert_eq!(
+            engine
+                .call(id, "used", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(10)
+        );
+        assert_eq!(
+            engine
+                .call(id, "slots_remaining", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // 11th distinct caller rejected.
+        let mut overflow: AccountAddress = [0u8; 32];
+        overflow[0] = 0xB0;
+        assert!(engine
+            .call(id, "claim_slot", vec![], overflow, 0)
+            .is_err());
+    }
+
+    #[test]
+    fn release_decrements_used_and_clears_holder() {
+        let (mut engine, id) = deploy_and_arm();
+        engine
+            .call(id, "claim_slot", vec![], alice(), 0)
+            .unwrap();
+        engine
+            .call(id, "release_slot", vec![], alice(), 0)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "used", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_holder", vec![Value::Address(alice())], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Alice can re-claim after release.
+        engine
+            .call(id, "claim_slot", vec![], alice(), 1)
+            .unwrap();
+    }
+
+    #[test]
+    fn evict_only_after_eviction_window_elapsed() {
+        // eviction_window = 5. Alice claims at epoch 0; her
+        // last_refresh = 0 + 1 = 1. Evictable iff
+        // epoch >= 1 + 5 = 6.
+        let (mut engine, id) = deploy_and_arm();
+        engine
+            .call(id, "claim_slot", vec![], alice(), 0)
+            .unwrap();
+        // Epoch 5: NOT evictable yet (5 < 6).
+        assert_eq!(
+            engine
+                .call(id, "is_evictable", vec![Value::Address(alice())], operator(), 5)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert!(engine
+            .call(id, "evict", vec![Value::Address(alice())], bob(), 5)
+            .is_err());
+        // Epoch 6: evictable (6 >= 6). Anyone can evict.
+        assert_eq!(
+            engine
+                .call(id, "is_evictable", vec![Value::Address(alice())], operator(), 6)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        engine
+            .call(id, "evict", vec![Value::Address(alice())], bob(), 6)
+            .unwrap();
+        // After eviction: slot freed, counter bumped, alice no longer holds.
+        assert_eq!(
+            engine
+                .call(id, "used", vec![], operator(), 6)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "evictions_total", vec![], operator(), 6)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_holder", vec![Value::Address(alice())], operator(), 6)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn refresh_resets_eviction_clock() {
+        let (mut engine, id) = deploy_and_arm();
+        engine
+            .call(id, "claim_slot", vec![], alice(), 0)
+            .unwrap();
+        // At epoch 4 alice refreshes. last_refresh becomes 4+1=5,
+        // so she's safe until epoch 10.
+        engine
+            .call(id, "refresh_slot", vec![], alice(), 4)
+            .unwrap();
+        // At epoch 9: still not evictable (9 < 5+5=10).
+        assert_eq!(
+            engine
+                .call(id, "is_evictable", vec![Value::Address(alice())], operator(), 9)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // At epoch 10: now evictable.
+        assert_eq!(
+            engine
+                .call(id, "is_evictable", vec![Value::Address(alice())], operator(), 10)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn current_rate_is_quadratic_in_used() {
+        // base = 100, capacity = 10. Formula:
+        //   rate = 100 * (used + 1)^2 / 100  =  (used + 1)^2
+        let (mut engine, id) = deploy_and_arm();
+        // used=0 → rate = 1
+        assert_eq!(
+            engine
+                .call(id, "current_rate", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // rate_at_used(5) = 36
+        assert_eq!(
+            engine
+                .call(id, "rate_at_used", vec![Value::U64(5)], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(36)
+        );
+        // rate_at_used(9) = 100 (cap-1, last claimable)
+        assert_eq!(
+            engine
+                .call(id, "rate_at_used", vec![Value::U64(9)], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(100)
+        );
+        // After alice claims, used=1 → rate = 4
+        engine
+            .call(id, "claim_slot", vec![], alice(), 0)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "current_rate", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(4)
+        );
+    }
+
+    #[test]
+    fn pre_arm_views_return_safe_defaults() {
+        // Without arming, current_rate should return 0 (not panic on
+        // capacity^2 = 0). slots_remaining likewise.
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, operator(), 1_000_000, 100, 0).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "current_rate", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "slots_remaining", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_armed", vec![], operator(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+}
