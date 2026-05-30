@@ -118,7 +118,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "SAP (Attention Quantum)",
             "Marketplace",
             json!({"initial_value": 1000, "half_life": 45, "max_aq_per_window": 10, "window_epochs": 60}),
-            "Attention with a half-life. 5-min-old AQ worth more than 25-min one. Anti-Sybil rate cap.",
+            "Attention with a half-life. 5-min-old AQ worth more than 25-min one. Anti-Sybil rate cap (max_aq_per_window per rolling window_epochs). Per-recipient AQ slot; redeem before re-issue. V1 reference uses linear decay (initial → 0 over 2 × half_life epochs) since EvaporScript V1 has no bit-shift; exponential decay is a V2 swap. Reference contract: contracts/evaporscript/sap.es.",
             "evaporchain-sap",
         )
         .expect("SAP descriptor is constant"),

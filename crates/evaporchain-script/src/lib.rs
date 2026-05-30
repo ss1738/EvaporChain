@@ -5005,3 +5005,460 @@ mod sfsv_pilot {
     }
 }
 
+#[cfg(test)]
+mod sap_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/sap.es` via `ScriptEngine` and
+    //! exercises the Attention Quantum doctrine — linear-decay
+    //! value + rolling-window rate cap.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/sap.es");
+
+    fn issuer() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn recipient() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    /// Deploy + arm with (initial=1000, half_life=10, max_aq=3, window=60).
+    /// Small values keep the tests fast; max_aq=3 makes the rate-cap
+    /// observable within one window.
+    fn deploy_arm() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, issuer(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::U64(1000),
+                    Value::U64(10),
+                    Value::U64(3),
+                    Value::U64(60),
+                ],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn sap_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn arm_owner_only_validates_one_shot() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, issuer(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot arm.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::U64(1000),
+                    Value::U64(10),
+                    Value::U64(3),
+                    Value::U64(60)
+                ],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Zero initial rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::U64(0),
+                    Value::U64(10),
+                    Value::U64(3),
+                    Value::U64(60)
+                ],
+                issuer(),
+                0
+            )
+            .is_err());
+        // Zero half_life rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::U64(1000),
+                    Value::U64(0),
+                    Value::U64(3),
+                    Value::U64(60)
+                ],
+                issuer(),
+                0
+            )
+            .is_err());
+        // OK.
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::U64(1000),
+                    Value::U64(10),
+                    Value::U64(3),
+                    Value::U64(60),
+                ],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        // Second arm rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::U64(500),
+                    Value::U64(20),
+                    Value::U64(5),
+                    Value::U64(120)
+                ],
+                issuer(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn issue_owner_only() {
+        let (mut engine, id) = deploy_arm();
+        // Stranger cannot issue.
+        assert!(engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Owner issues.
+        engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn rate_cap_holds_per_window_then_rolls() {
+        // max_aq=3 per 60-epoch window. After 3 issues at epoch 0,
+        // a 4th issue at epoch 30 (same window) rejects; an issue at
+        // epoch 60 (next window) succeeds.
+        let (mut engine, id) = deploy_arm();
+        for i in 0..3u8 {
+            let mut r: AccountAddress = [0u8; 32];
+            r[0] = 0xA0 | i;
+            engine
+                .call(id, "issue", vec![Value::Address(r)], issuer(), 0)
+                .unwrap();
+        }
+        assert_eq!(
+            engine
+                .call(id, "issued_in_current_window", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(3)
+        );
+        // 4th at epoch 30 — same window — rejected.
+        let mut r4: AccountAddress = [0u8; 32];
+        r4[0] = 0xA3;
+        assert!(engine
+            .call(id, "issue", vec![Value::Address(r4)], issuer(), 30)
+            .is_err());
+        // 5th at epoch 60 — rolled into next window — OK.
+        engine
+            .call(id, "issue", vec![Value::Address(r4)], issuer(), 60)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "issued_in_current_window", vec![], stranger(), 60)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+    }
+
+    #[test]
+    fn duplicate_active_aq_rejected_until_redeem() {
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        // Re-issue without redeem rejected.
+        assert!(engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                5
+            )
+            .is_err());
+        // Recipient redeems.
+        engine
+            .call(id, "redeem", vec![], recipient(), 5)
+            .unwrap();
+        // Now re-issue OK.
+        engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                6,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn redeem_only_holder_and_only_once() {
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        // Stranger cannot redeem someone else's AQ — they have no AQ
+        // themselves.
+        assert!(engine
+            .call(id, "redeem", vec![], stranger(), 1)
+            .is_err());
+        // Recipient redeems.
+        engine
+            .call(id, "redeem", vec![], recipient(), 1)
+            .unwrap();
+        // Double redeem rejected.
+        assert!(engine
+            .call(id, "redeem", vec![], recipient(), 1)
+            .is_err());
+        assert_eq!(
+            engine
+                .call(id, "aq_is_redeemed", vec![Value::Address(recipient())], stranger(), 1)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn value_decays_linearly_to_zero_at_2hl() {
+        // initial=1000, half_life=10 → expiry at 2*hl=20 epochs.
+        // Linear: value(age) = 1000 * (20 - age) / 20.
+        //   age=0 → 1000;  age=10 → 500;  age=15 → 250;  age=20 → 0.
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        // age=0 (epoch=0): value 1000.
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(1000)
+        );
+        // age=10 (epoch=10): value 500 (half-life ✓).
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 10)
+                .unwrap()
+                .return_value,
+            Value::U64(500)
+        );
+        // age=15 (epoch=15): value 250.
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 15)
+                .unwrap()
+                .return_value,
+            Value::U64(250)
+        );
+        // age=20 (epoch=20): value 0 (expiry).
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 20)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // Past expiry: still 0.
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 100)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // has_active_aq tracks the expiry too.
+        assert_eq!(
+            engine
+                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 19)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        assert_eq!(
+            engine
+                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 20)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn epochs_until_expiry_counts_down() {
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        // 2*hl = 20. At epoch=0: 20 epochs left.
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_expiry", vec![Value::Address(recipient())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(20)
+        );
+        // At epoch 15: 5 epochs left.
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_expiry", vec![Value::Address(recipient())], stranger(), 15)
+                .unwrap()
+                .return_value,
+            Value::U64(5)
+        );
+        // At epoch 20: 0.
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_expiry", vec![Value::Address(recipient())], stranger(), 20)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn redeemed_aq_has_zero_value() {
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                0,
+            )
+            .unwrap();
+        engine
+            .call(id, "redeem", vec![], recipient(), 5)
+            .unwrap();
+        // Post-redeem, value is 0 (even within the lifespan).
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 5)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn pre_arm_views_safe() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, issuer(), 1_000_000, 100, 0).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_armed", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // Pre-arm: never-issued recipient views are safe defaults.
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // issue / redeem pre-arm rejected.
+        assert!(engine
+            .call(
+                id,
+                "issue",
+                vec![Value::Address(recipient())],
+                issuer(),
+                0
+            )
+            .is_err());
+        assert!(engine
+            .call(id, "redeem", vec![], recipient(), 0)
+            .is_err());
+    }
+}
+

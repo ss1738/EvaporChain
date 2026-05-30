@@ -1,0 +1,10 @@
+{
+  "name": "sap",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SAP dApp — chain client for contracts/evaporscript/sap.es. Attention Quantum: linear-decay AQs (V1) + anti-Sybil rolling-window rate cap. Includes a BigInt port of valueAtEpoch so UIs preview current value without a round-trip.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
