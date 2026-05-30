@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-30 (mid-morning) — SAP reference contract (Marketplace lane closed 7/7)
+
+**Focus:** backfill SAP_AQ (0x0001_0105). Marketplace lane was 6/7 backed; this closes it 7/7 — the last Marketplace gap.
+**Commits shipped:** 1 on main (`2fd966a6`). Branch `sap-backfill` ff-merged + deleted (the sap-backfill name was chosen pre-emptively to avoid the same collision the SFSV branch hit).
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/sap.es` | ~220 LOC. One contract = one ISSUER. arm(initial, hl, max_aq, window) one-shot. issue(recipient) owner-only with per-recipient slot + rolling-window rate cap. redeem() recipient-only. **Linear-decay approximation** for value(age): initial * (2*hl − age) / (2*hl); at exactly half_life, value = initial/2 (matches the doctrine intent; exponential exact would need EvaporScript V2 bit-shift). |
+| `mod sap_pilot` (10 tests) | totality-clean, arm input validation + one-shot, issue owner-only, **rate_cap_holds_per_window_then_rolls** (3 issues fill cap; 4th rejected mid-window; 5th at next window-start accepted; issued_in_current_window resets to 1), duplicate-active-AQ-rejected-until-redeem, redeem caller-only, **value_decays_linearly_to_zero_at_2hl** (1000 → 500 → 250 → 0 at 0/10/15/20), epochs_until_expiry counts down 20 → 5 → 0, redeemed AQ has zero value, pre-arm-views-safe. **10/10 PASS first compile.** |
+| dApp client | `dapps/sap/` — contract + client + `value.ts` BigInt port matching on-chain integer truncation byte-for-byte. 10/10 node:test PASS. |
+| Catalogue pointer | SAP descriptor extended with the V1-linear-decay caveat + the rolling-window framing. |
+**Empirical results:** 10/10 cargo + 10/10 TS pass. First-compile clean.
+**Decisions made:**
+- **Linear decay, not exponential.** EvaporScript V1 has no `>>` or `**`, so true `initial * 2^(-age/hl)` isn't expressible without unbounded loop or a piecewise step-function. Linear `initial * (lifespan - age) / lifespan` is parser-friendly + integer-clean + happens to pass through `initial/2` at exactly `half_life` epochs, which is the doctrine touchstone. V2 swap is mechanical when bit-shift lands.
+- **One AQ per recipient slot.** Multi-AQ-per-recipient (a map<address, list<AQ>>) would require either dynamic arrays in EvaporScript (not supported V1) or a separate per-AQ contract pattern. The slot model is what the catalogue defaults imply ("max_aq_per_window" suggests per-issuer cap, not per-recipient). Redeem-before-reissue cleanly handles the lifecycle.
+- **Rolling window mutates state inside `issue()`.** When the boundary is crossed mid-issue, the window resets atomically in the same call: `if epoch >= window_start + window_epochs { window_start = epoch; issued_this_window = 0 }`. Single-call invariant: after `issue()` returns, `issued_this_window ≤ max_aq_per_window`. No race between window roll + counter update.
+**What's next:**
+- **1 catalogue gap left**: `mnemochain` (FSRS Card, Consumer). FSRS forgetting curve requires more nuanced math (stability + retrievability params). May need a "best-fit V1 approximation" approach similar to SAP's linear-decay-for-exponential.
+- T3.1 cluster still gated only on Tailscale auth key.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `2fd966a6`; files `contracts/evaporscript/sap.es`, `crates/evaporchain-script/src/lib.rs` (`mod sap_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/sap/{src,test}`.
+
+---
+
 ## 2026-05-30 (early morning) — SFSV reference contract (future-self vault)
 
 **Focus:** backfill SFSV_VAULT (0x0001_0102) — "Sell your future-self's claim — third parties bid for delayed-payout vaults via SDDC." Doctrine point spelled out in the on_evaporate hook: structural-uncertainty forfeit is exactly why the future-self claim trades at a discount, not just time-value-of-money.
