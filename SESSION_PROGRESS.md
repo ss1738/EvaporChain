@@ -6,6 +6,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (afternoon) — Four-Act Console — the chain's death ledger, live
+
+**Focus:** decay-vista shows individual contracts dying; this is the chain-wide complement — a dApp that polls a live node's `/api/four_act` + `/api/network/health` and renders **the chain's accounting of death**. No other chain has primitives like eulogy_count, refresh_pool_total, mortis, evaporation_mmr — because no other chain has structural death to count.
+**Commits shipped:** 1 on main (`751d1869`). Pushed direct.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `dapps/four-act-console/index.html` | ~310 LOC. Tailwind CDN, vanilla JS. Auto-connects on load to a configurable node URL (default `http://89.167.52.40:8099`). Polls /api/four_act + /api/network/health every 2s, renders: eulogies / tombstones / refresh-pool / evaporation-MMR counters, mortis badge + epoch + final-state-root, conservation-audit streak + last violation type, tombstone address list (top 12 + overflow count), light-cone blocks / ghost objects / dead-producer redirects, raw response inspector at the bottom. |
+| Status row | Pulse-dot live indicator + chain epoch + last-block age (s) + peer count + chain status (healthy / syncing / halted with color coding) + last-poll timestamp. |
+| CORS handling | Banner triggers when opened from `file://` (node's CORS allowlist defaults to `localhost:3000` per `api.rs:18975-18977`; wildcard `*` refused by design). `package.json` `npm run serve` binds on **port 3000** so cross-origin fetches just work; same port bump applied to decay-vista for consistency. Smoke-tested: with Origin: http://localhost:3000 the node returns ACAO matching → browser accepts the JSON. |
+**Empirical results:** live node responds with epoch ticking ~1/sec (chain is in syncing/devnet mode; eulogy_count + tombstones all zero, which is the correct "empty chain" view; Bell beacon returns no_data — same node-level state visible across both decay-vista and this dApp). Page renders without warnings on a fresh tab.
+**Decisions made:**
+- **Default to the public node, not localhost.** Anyone opening the page sees a live chain immediately. Operators can swap the URL field for a custom node. Aligned with the doctrine of "show, don't make people set up."
+- **Polled, not WebSocket.** 2-second poll is plenty for a death-ledger that updates O(seconds to minutes). WebSocket would be premature optimization + add a server-side dep the node doesn't currently expose.
+- **No client-side state aside from in-flight poll-generation counter** — disconnect cancels in-flight requests cleanly. Re-connect bumps the generation; stale responses get discarded.
+- **Raw response collapsible at the bottom.** For doctrine demonstrations, the curated view is the point. For developers debugging, the raw JSON is one click away.
+**What's next:**
+- T3.1 cluster bring-up still gated only on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+- Other dApp ideas: catalogue browser (front door to the 24 templates), wire decay-vista's live-mode to the same chain-poll path used here, block explorer over /api/blocks.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `751d1869`; files `dapps/four-act-console/{index.html,package.json}`; node CORS config at `crates/evaporchain-node/src/api.rs:18975-19006`; permanent node memory `evaporchain_public_node_endpoint.md`.
+
+---
+
 ## 2026-05-31 (later) — Decay Vista — the chain's thesis in a single browser tab
 
 **Focus:** ship something an outsider can see in 30 seconds. The thesis is "data fades unless refreshed" — and until now the demonstration required reading 12 .es contracts. This dApp shows it.
