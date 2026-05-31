@@ -6,6 +6,38 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (dawn) — Mortal Message catalogue promotion (28th template, canonical pilot)
+
+**Focus:** promote the canonical EvaporScript pilot. `mortal_message.es` is referenced in the project CLAUDE.md as the reference pilot every other .es contract is shaped from; the 24-entry registry historically excluded it because it was framed as a stdlib pilot rather than a deployable consumer primitive. This entry surfaces it as a first-class catalogue slot.
+**Commits shipped:** 1 on main (`2936bf0c`).
+**Catalogue is now 28 templates** (Consumer lane now 4 entries: ChildKey, MnemoChain, WitnessFit, MortalMessage).
+**What landed:**
+| Crate | Change |
+|---|---|
+| `evaporchain-app-templates::class` | New `pub const MORTAL_MESSAGE_PILOT: TemplateClass(0x0001_0304)` in the Consumer lane (after WITNESSFIT_STREAK at 0x0001_0303). |
+| `evaporchain-app-templates::catalogue` | New TemplateDescriptor with default `{initial_energy: 1000, half_life: 50}`. Count test bumped 27 → 28. |
+| `evaporchain-app-templates-engine::init_mortal_message` (new) | Typed init `{initial_energy: u64, half_life: u64}`. Runtime args (body, recipient) belong to set_payload() — not deploy-time, both for variable-length reasons and to keep the canonical mint-then-populate flow. |
+| `evaporchain-app-templates-engine::dispatch` | New `TypedInit::MortalMessage` variant + dispatch arm. |
+| `evaporchain-app-templates-fees::oracle` | New arm `TypedInit::MortalMessage(_) => SURCHARGE_CONSUMER` — Consumer-lane peer of ChildKey / Mnemochain / Witnessfit. |
+| `evaporchain-app-templates-bind::bind` | New invariant arm: `initial_energy > 0` + `half_life > 0`. |
+| `evaporchain-app-templates-deploy::required_keys` | New row listing the 2 required keys. |
+| `dapps/catalogue-browser/index.html` | New CATALOGUE JS entry in class-id order; "27 templates" → "28 templates", "all 27" → "all 28", "27 shown" → "28 shown". |
+| `dapps/index.html` | Landing-page catalogue-count 27 → 28. |
+**Empirical results on Mini-1 worktree (2936bf0c):** 220+ tests pass across 5 template crates, 0 failures. The `every_catalogue_default_binds` test continues green for all 28 templates. Worktree cleaned up.
+**Decisions made:**
+- **Consumer lane, not a new "Communications" lane.** Self-destructing messages sit doctrinally with the other consumer-lane primitives (correspondence, cards, streaks). Opening a new lane for a single entry would feel forced.
+- **`initial_energy + half_life` only** in the typed init. Runtime body and recipient are set via `set_payload()` after the contract exists, matching the mint-then-populate pattern the .es contract was designed for. The catalogue carries only what the deploy form needs to pre-populate.
+- **Browser sync in the same commit.** Three earlier promotions today required a follow-up browser-sync commit; this time the sync ships with the promotion to keep the surface coherent in a single atomic change.
+**Today's totals (incl. overnight roll):** 14 commits on main. Reference contracts 12 → 17, catalogue 24 → 28 (four promotions today: DeadMan Switch, Subscription, Mortal NFT, Mortal Message), landing-page lenses 4 → 6. Every surface — Rust registry, catalogue-browser, landing page — agrees at 28.
+**What's next:** Promotion cadence is sustainable. Remaining natural picks:
+- `bounty` → catalogue (Marketplace lane; distinct from existing SHLM_BOUNTY = Skill Half-Life Bounty)
+- More typed clients for the 18 remaining unclient'd .es files
+- New from-scratch contract arc
+- Wallet deploy-form integration (the catalogue now has 8 of the chain's `.es`-backed primitives reachable as typed deploys; the wallet UI could render them as deploy options)
+**Cross-references:** commit `2936bf0c`. Files: class.rs / catalogue.rs / init_mortal_message.rs (new) / dispatch.rs / oracle.rs / bind.rs / required_keys.rs / catalogue-browser.html / dapps/index.html. Source contract: contracts/evaporscript/mortal_message.es. Pre-existing cargo pilot: crates/evaporchain-script/tests/mortal_message_pilot.rs. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-01 (overnight, latest) — Catalogue-browser sync: surface 3 new promotions
 
 **Focus:** close the loop on today's 3 catalogue promotions. The dApp-side `catalogue-browser` had a hardcoded 24-entry JS array; the chain side advanced to 27 entries today but the browser couldn't render them. Sync the surface.
