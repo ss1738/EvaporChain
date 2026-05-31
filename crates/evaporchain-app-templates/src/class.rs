@@ -61,6 +61,18 @@ pub const REFRESH_MARKET_NAMESPACE: TemplateClass = TemplateClass(0x0001_0106);
 /// `contracts/evaporscript/decay_access_pass.es`; substrate lib is
 /// `evaporchain-decay-credential`.
 pub const DECAY_ACCESS_PASS: TemplateClass = TemplateClass(0x0001_0107);
+/// Dead-Man Switch — secret-release contract where the chain's own
+/// epoch advancement IS the trigger. Holder refreshes within
+/// `refresh_window` epochs; if they miss, anyone may call
+/// `release_dead` to publish the committed payload. No keeper service
+/// needed — the require() guard `epoch >= last_refresh + window`
+/// opens to the world the moment the chain catches up. Doctrinally
+/// the marketplace-lane peer of SFSV (future-self vault) +
+/// SDDC (decay-Dutch auction): commit-and-reveal escrow whose
+/// liquidation closer is the chain runtime. Reference contract:
+/// `contracts/evaporscript/deadman_switch.es`. Verified cargo pilot:
+/// `crates/evaporchain-script/tests/deadman_switch_pilot.rs` (9/9).
+pub const DEADMAN_SWITCH: TemplateClass = TemplateClass(0x0001_0108);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -122,6 +134,7 @@ mod tests {
             SAP_AQ,
             REFRESH_MARKET_NAMESPACE,
             DECAY_ACCESS_PASS,
+            DEADMAN_SWITCH,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -155,6 +168,7 @@ mod tests {
         // Marketplace lane: 0x0001_0100..0x0001_01FF
         assert!((0x0001_0100..=0x0001_01FF).contains(&SDDC_AUCTION.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&SAP_AQ.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&DEADMAN_SWITCH.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         // Consumer: 0x0001_0300..

@@ -46,6 +46,7 @@
 pub mod dispatch;
 
 pub mod init_childkey;
+pub mod init_deadman;
 pub mod init_gallery_forgets;
 pub mod init_mayfly;
 pub mod init_mnemochain;

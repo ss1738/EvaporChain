@@ -65,6 +65,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // Scl / Sap) since it's the per-namespace refresh-credit
         // market layer.
         TypedInit::RefreshMarket(_) => SURCHARGE_MARKETPLACE,
+        // Deadman Switch — marketplace-lane commit-and-reveal
+        // escrow. Same surcharge as its lane peers (Sddc / Sfsv /
+        // Shlm / Scl / Sap) — the state shape (holder + commitment
+        // + window + release-tracking) sits comfortably in the
+        // marketplace complexity tier.
+        TypedInit::Deadman(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

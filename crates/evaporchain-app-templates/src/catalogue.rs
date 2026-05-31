@@ -114,6 +114,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("SCL descriptor is constant"),
         TemplateDescriptor::new(
+            DEADMAN_SWITCH,
+            "DeadMan Switch (Chain-Keeper Secret Release)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "refresh_window": 60}),
+            "Commit-and-reveal escrow whose liquidation closer is the chain runtime. Holder refreshes within refresh_window epochs; if they miss, anyone may call release_dead to publish the committed payload. The require() guard `epoch >= last_refresh + window` opens to the world the moment the chain catches up — no Chainlink keeper, no Gelato, no off-chain pinger needed. After release, the contract's own energy continues to evaporate; the four-act lifecycle archives the released state into a tombstone. Reference contract: contracts/evaporscript/deadman_switch.es.",
+            "evaporchain-deadman-switch",
+        )
+        .expect("DeadMan Switch descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -338,19 +347,20 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_24_templates() {
+    fn catalogue_lists_25_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
         // Access Pass credential (2026-05-29); 23 added Mortal-DAO
         // and opened the Governance lane (2026-05-30); 24 added the
-        // Bell-Oracle in the Paradigm lane. (Mayfly + Singh-Posthuma
+        // Bell-Oracle in the Paradigm lane; 25 promoted DeadMan Switch
+        // into the Marketplace lane (2026-05-31). (Mayfly + Singh-Posthuma
         // were ALREADY in the catalogue under different framings;
         // the 2026-05-30 night mayfly.es backfill updated the Mayfly
         // descriptor's description to point at the .es contract
         // without changing the count.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 24);
+        assert_eq!(cat.len(), 25);
     }
 
     #[test]

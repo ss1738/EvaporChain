@@ -339,6 +339,22 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
         // surfaces config invariants that warrant pre-flight
         // rejection (e.g. zero-half-life market shouldn't deploy).
         TypedInit::RefreshMarket(_) => {}
+        // DeadMan Switch — both params must be positive. Zero
+        // initial_energy means the contract starts already-dead
+        // (release_dead callable at t=0, defeating the whole
+        // point); zero refresh_window means the holder has zero
+        // epochs to refresh before anyone can fire the switch
+        // (degenerate). The .es runtime guard also rejects
+        // window==0 at arm(), but pre-flight rejection at the
+        // deploy layer saves a tx round-trip.
+        TypedInit::Deadman(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("DeadManSwitch", "initial_energy must be > 0"));
+            }
+            if c.refresh_window == 0 {
+                return Err(invariant("DeadManSwitch", "refresh_window must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))
