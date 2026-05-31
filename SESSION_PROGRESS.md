@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (later) — Decay Vista — the chain's thesis in a single browser tab
+
+**Focus:** ship something an outsider can see in 30 seconds. The thesis is "data fades unless refreshed" — and until now the demonstration required reading 12 .es contracts. This dApp shows it.
+**Commits shipped:** 1 on main (`dac96d50`). Pushed direct (dApp-only, no cargo verification needed).
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `dapps/decay-vista/index.html` | 450 LOC single file. Tailwind via CDN. Vanilla JS with the canonical `energy_at_epoch` formula inlined. Six contract cards laid out 3×2 (Mortal Message, Decay Access Pass, Mayfly, Attention Quantum, WitnessFit Streak, MnemoChain Card). Each has its own visual decay (energy bar, badge band ACTIVE/FADING/GRACE/EXPIRED/GONE), age counter, and refresh / interact buttons. Controls: play/pause/step+1/step+10/reset + speed selector (0.1s–2s per epoch). |
+| `dapps/decay-vista/src/sim.ts` | TS port of the demo math kept separate so the formulas can be unit-tested independent of the HTML. Mirrors `evaporchain-types::energy_at_epoch` byte-for-byte. |
+| `dapps/decay-vista/test/sim.test.ts` | 13 node:test cases: monotone decay, floor crossings, mayfly death, AQ redeem, streak window logic, card review mutations (Again halves with floor, Good doubles, Easy triples, Hard unchanged), refresh actions. **13/13 PASS** locally. |
+**Empirical results:** opens cleanly from `file://`. Math byte-identical to the on-chain references. Six contracts of distinct decay shapes visible at once, dying at different rates (mayfly evaporates by ~epoch 100 with half_life=10; the pass survives ~120 epochs to floor crossing; the message holds longer; etc.).
+**Decisions made:**
+- **Single HTML file with inlined math, not a build-toolchain dApp.** The demo's job is "open it and see the thesis." A Vite or Next.js scaffold would be more idiomatic but adds a `npm install` step. The math is duplicated between `index.html` (inlined) and `src/sim.ts` (testable); the test suite + a sanity comparison keeps them in sync.
+- **No live-node dependency in this version.** Math runs in-browser; clicking refresh resets `bornEpoch` to the current sim epoch — same operation `/api/v1/contract/refresh` does on a live node. When T3.1 lands, pointing this at `/api/blocks` for the epoch ticker + per-contract energy queries is a small swap.
+- **Contract picks span the lane diversity.** One from NFT (Mayfly), one from Marketplace (Pass + AQ), one Cultural-adjacent (Mortal Message), one Consumer (Streak + Card). The catalogue's 7 lanes feel real on this page, not abstract.
+**What's next:**
+- T3.1 cluster bring-up still gated only on your Tailscale auth key. With cluster live, point decay-vista at `/api/blocks` for real-time chain-driven epoch ticking.
+- Mini-2 + Mini-3 SSH still timing out — operator check needed.
+- Other possible builds: block explorer (different "see the chain" angle — shows transactions, not decay), an EvaporScript-V2 sketch (add `*=`, `/=`, bit-shift to unlock exact-exponential SAP / MnemoChain).
+**Blockers / open questions:** none new.
+**Cross-references:** commit `dac96d50`; files `dapps/decay-vista/{index.html,src/sim.ts,test/sim.test.ts}`. Math mirror sources: `contracts/evaporscript/{decay_access_pass, mortal_message, mayfly, sap, witnessfit, mnemochain}.es`, `evaporchain-types::energy_at_epoch`.
+
+---
+
 ## 2026-05-31 — MnemoChain reference contract — CATALOGUE 100% BACKED
 
 **Focus:** ship the LAST catalogue gap (MNEMOCHAIN_CARD, 0x0001_0302, Consumer lane). Every class id declared in class.rs now has both a catalogue descriptor and a runnable .es reference contract.
