@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (overnight, later) — Mortal NFT catalogue promotion (27th template)
+
+**Focus:** promote `mortal_nft.es` to the 27th formal catalogue template — the headline "decaying NFT" doctrine claim gets a first-class slot in the NFT lane, distinct from the existing MAYFLY entry.
+**Commits shipped:** 1 on main (`504b4dcb`).
+**Catalogue is now 27 templates** (NFT lane is now 6 entries: Singh-Sabi, Singh-Migrant, Singh-Resonance, Singh-Posthuma, Mayfly, MortalNftGeneral).
+**What landed:**
+| Crate | Change |
+|---|---|
+| `evaporchain-app-templates::class` | New `pub const MORTAL_NFT_GENERAL: TemplateClass(0x0001_0006)` in the NFT lane (after MAYFLY at 0x0001_0005). |
+| `evaporchain-app-templates::catalogue` | New TemplateDescriptor with default `{initial_energy: 1000, half_life: 100}`. The catalogue count test bumped 26 → 27. |
+| `evaporchain-app-templates-engine::init_mortal_nft` (new module) | Typed init: `{ initial_energy: u64, half_life: u64 }`. Runtime args (name, collection, metadata, recipient) belong to set_metadata() — not deploy-time. |
+| `evaporchain-app-templates-engine::dispatch` | New `TypedInit::MortalNft` variant + dispatch arm. |
+| `evaporchain-app-templates-fees::oracle` | New arm `TypedInit::MortalNft(_) => SURCHARGE_NFT_BASE` — same surcharge as Mayfly / SinghSabi / SinghMigrant (single-token state weight). |
+| `evaporchain-app-templates-bind::bind` | New invariant arm: `initial_energy > 0` (zero ⇒ Ghost at mint, defeats primitive) + `half_life > 0`. |
+| `evaporchain-app-templates-deploy::required_keys` | New row listing the 2 required keys. |
+**Distinction from MAYFLY**: Mayfly is the doctrine-purest short-life mortal NFT (no terminal state, no transfer); Mortal NFT carries the full holder lifecycle (transfer count + epoch + collection identity + metadata URI) that a marketplace dApp needs. Two different points on the doctrine spectrum, both with first-class catalogue presence.
+**Empirical results on Mini-1 worktree (504b4dcb):** 220+ tests pass across 5 template crates, 0 failures. The `every_catalogue_default_binds` test continues green for all 27 templates. Worktree cleaned up.
+**Today's totals (incl. overnight roll):** 12 commits on main, ~2,500 LOC across .es / cargo / TS / HTML / catalogue-registry. Reference contracts 12 → 17, catalogue 24 → 27, landing-page lenses 4 → 6.
+**What's next:** the catalogue-promotion cadence is now sustainable (3 successful promotions today: DEADMAN_SWITCH, SUBSCRIPTION_SERVICE, MORTAL_NFT_GENERAL). Strongest remaining picks:
+- `mortal_message` → catalogue (the canonical pilot deserves a slot; would go in a new Communications lane or Consumer lane)
+- `bounty` → catalogue (note: distinct from existing SHLM_BOUNTY which is Skill Half-Life Bounty — the new entry would be OPEN_CALL_BOUNTY for the general task-bounty surface)
+- More typed clients for the 19 remaining unclient'd .es files
+**Cross-references:** commit `504b4dcb`. Files: class.rs / catalogue.rs / init_mortal_nft.rs (new) / dispatch.rs / oracle.rs / bind.rs / required_keys.rs. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-01 (overnight) — Subscription Vista — visceral simulator UI
 
 **Focus:** complete the chain-as-keeper doctrine pair at the UI layer. DeadMan Vista (shipped earlier today) covers secret-release; this ships the recurring-payment counterpart so a visitor can *see* both flavours of the doctrine in motion side-by-side from the landing page.
