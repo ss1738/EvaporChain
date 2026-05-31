@@ -1,0 +1,10 @@
+{
+  "name": "deadman-vista",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "DeadMan Vista — offline-OK in-browser simulator of contracts/evaporscript/deadman_switch.es. Shows the four-state lifecycle (alive → grace → releasable → released) and three scripted scenarios (vigilant holder, silent holder, early trigger). No chain calls.",
+  "scripts": {
+    "serve": "python3 -m http.server 8089"
+  }
+}

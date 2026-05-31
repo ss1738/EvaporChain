@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (afternoon) — DeadMan Vista — visceral simulator for the dead-man's switch doctrine
+
+**Focus:** make the dead-man's switch doctrine *visible*. The .es contract + cargo pilot prove it works; an interactive simulator lets a doctrine-curious visitor *see* the four-state lifecycle.
+**Commits shipped:** 1 on main (`<this>`).
+**Deliverables:**
+| File | Notes |
+|---|---|
+| `dapps/deadman-vista/index.html` (~440 LOC) | Single static page, Tailwind via CDN, no chain calls. State machine mirrors `deadman_switch.es` byte-for-byte. Play/pause/step/+10 time controls + speed slider. 3 scripted scenarios (vigilant / silent / early). Live timeline (alive / grace / releasable bands with current-epoch + deadline markers). Action buttons enable/disable per the .es require() guards. Event log with kind-coded coloring (chain / holder / anyone / info / danger). |
+| `dapps/deadman-vista/package.json` | Standard `npm run serve` → `python3 -m http.server 8089`. |
+| `dapps/index.html` | New "five lenses on the chain" landing-page card. Spans full width below the 2×2 of the existing four lenses. |
+**Empirical results:**
+- **HTTP probe:** served clean, 24,465 bytes, 13 grep markers present.
+- **JS syntax check:** `new vm.Script(scriptText)` parses cleanly (11,665 chars of inline JS).
+- **Cannot smoke-test in-browser from this environment** — relying on the syntax check + structural parity with `decay-vista/index.html` (same shape, same Tailwind, same time-tick pattern).
+**Decisions made:**
+- **Made deadman-vista the offline-OK doctrine demo, not a live-chain dApp.** Following decay-vista's pattern: no auth, no node URL, no faucet gate. Same in-browser simulation of the .es contract's pure state-machine behavior. Visitors can run the scenarios without any operator gates lifted.
+- **Three scripted scenarios** instead of one demo. Vigilant holder (refreshes 3× near deadline, switch survives indefinitely), silent holder (deadline lapses → observer releases), early trigger (holder fires voluntarily with plaintext). Each is one click; the simulator drives itself.
+- **Grace zone = final 6% of refresh window.** Visually distinct from "alive" but doctrinally the same state — pedagogical, not mechanical. The .es contract has no grace-zone concept (it's binary: alive or releasable); the simulator surfaces it as a UI courtesy.
+- **No back-end integration.** The on-chain `release_dead()` requires auth + a funded account; the operator-gated faucet (see dawn entry) would block any visitor. Pure-JS sim lets the demo land on the public site immediately.
+**What's next:**
+- Operator decision: same open questions as the midday entry (catalogue promotion, EVAPORCHAIN_ADMIN_KEY, T3.1, T0.12).
+- Possible follow-up: thread the simulator's state into the live chain — once write-side e2e is unblocked, the "release dead" button could optionally deploy + arm a real contract on the public devnet and let the visitor watch a chain epoch advance the deadline. Out of scope until the faucet gate is lifted.
+**Cross-references:** files `dapps/deadman-vista/{index.html, package.json}`, `dapps/index.html`. Doctrine claim source: `contracts/evaporscript/deadman_switch.es`. Verification base: `crates/evaporchain-script/tests/deadman_switch_pilot.rs` (9/9 cargo green on Mini-1 per midday entry).
+
+---
+
 ## 2026-05-31 (midday) — DeadMan Switch — doctrine-native dead-man's secret-release
 
 **Focus:** ship a new EvaporScript reference contract that demonstrates a pattern genuinely *requiring* EvaporChain primitives: a dead-man's switch where the chain's own epoch advancement IS the trigger. No keeper service needed, no expensive ongoing storage burn.

@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EvaporChain — DeadMan Vista</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    /* State pill highlight pulse */
+    .state-active { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.25); }
+    .state-danger { box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.30); animation: alarm 1.6s infinite; }
+    .state-released { box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.30); }
+    @keyframes alarm {
+      0%,100% { box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.30); }
+      50%     { box-shadow: 0 0 0 8px rgba(244, 63, 94, 0.55); }
+    }
+    /* Timeline bar */
+    .tl-bar { background: linear-gradient(to right,
+                rgb(16 185 129) 0%, rgb(16 185 129) var(--alive-pct),
+                rgb(252 211 77) var(--alive-pct), rgb(252 211 77) calc(var(--alive-pct) + 6%),
+                rgb(244 63 94) calc(var(--alive-pct) + 6%), rgb(244 63 94) 100%); }
+    .tl-marker { transition: left 0.18s ease-out; }
+    /* Log entry slide-in */
+    .log-row { animation: slidein 0.25s ease-out; }
+    @keyframes slidein {
+      from { opacity: 0; transform: translateX(-6px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <header class="border-b border-slate-200 bg-white">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-start gap-4">
+      <div class="flex-1">
+        <h1 class="text-xl font-semibold tracking-tight">DeadMan Vista</h1>
+        <p class="text-xs text-slate-500 mt-0.5 max-w-2xl leading-relaxed">
+          The chain's own epoch advancement IS the trigger. No keeper service.
+          No external pinger. The holder must refresh before the deadline; if they
+          don't, anyone can release the committed secret. Mirrors
+          <code class="bg-slate-100 px-1 rounded text-[11px]">contracts/evaporscript/deadman_switch.es</code> byte-for-byte.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">epoch</span>
+        <span id="epoch" class="mono text-2xl tabular-nums text-slate-900">0</span>
+      </div>
+    </div>
+    <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-sm">
+      <button id="play"  class="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700">▶ play</button>
+      <button id="pause" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏸ pause</button>
+      <button id="step"  class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏭ +1</button>
+      <button id="step10" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏭⏭ +10</button>
+      <button id="reset" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">↺ reset</button>
+      <span class="text-slate-400 mx-2">|</span>
+      <label class="text-xs text-slate-600">speed</label>
+      <select id="speed" class="text-xs border rounded px-2 py-1 bg-white">
+        <option value="2000">slow (2s / epoch)</option>
+        <option value="800" selected>medium (0.8s / epoch)</option>
+        <option value="300">fast (0.3s / epoch)</option>
+        <option value="80">very fast (0.08s / epoch)</option>
+      </select>
+      <span class="text-slate-400 mx-2">|</span>
+      <button id="scenario-vigilant" class="px-2 py-1 rounded text-xs bg-emerald-50 border border-emerald-200 hover:bg-emerald-100">demo: vigilant holder</button>
+      <button id="scenario-silent" class="px-2 py-1 rounded text-xs bg-rose-50 border border-rose-200 hover:bg-rose-100">demo: silent holder</button>
+      <button id="scenario-early" class="px-2 py-1 rounded text-xs bg-sky-50 border border-sky-200 hover:bg-sky-100">demo: early trigger</button>
+      <span id="status" class="ml-auto text-xs text-slate-400">paused</span>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+    <!-- Left column: configuration + state -->
+    <section class="lg:col-span-1 space-y-4">
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-3">configuration</div>
+        <div class="space-y-3 text-sm">
+          <div>
+            <label class="text-xs text-slate-500">holder address (display)</label>
+            <div class="mono text-xs text-slate-700 break-all">0x3838…3838</div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500" for="window">refresh window (epochs)</label>
+            <input id="window" type="range" min="10" max="200" value="60" class="w-full accent-emerald-600" />
+            <div class="flex items-center justify-between text-xs text-slate-600 mt-1">
+              <span>10</span>
+              <span class="mono"><span id="window-val">60</span> epochs</span>
+              <span>200</span>
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">committed secret hash</label>
+            <div class="mono text-xs text-slate-700 break-all bg-slate-50 rounded px-2 py-1.5 border border-slate-200">
+              0xb1ad5e…c0ffee
+            </div>
+          </div>
+          <div class="text-xs text-slate-500 pt-2 border-t border-slate-200">
+            Changes to the window apply on <em>reset</em>. The committed hash is fixed at deploy time —
+            it's a public commitment, not a secret.
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-3">switch state</div>
+        <div id="state-pill" class="rounded-lg border-2 p-3 transition-all">
+          <div class="text-[11px] uppercase tracking-widest" id="state-label">armed</div>
+          <div class="text-lg font-semibold" id="state-headline">awaiting first epoch</div>
+          <div class="text-xs text-slate-500 mt-1" id="state-desc"></div>
+        </div>
+        <dl class="text-xs grid grid-cols-2 gap-x-3 gap-y-2 mt-4">
+          <dt class="text-slate-500">epochs until deadline</dt><dd class="mono text-right" id="ttl">—</dd>
+          <dt class="text-slate-500">last refresh epoch</dt><dd class="mono text-right" id="last-refresh">0</dd>
+          <dt class="text-slate-500">refresh count</dt><dd class="mono text-right" id="refresh-count">1</dd>
+          <dt class="text-slate-500">released at</dt><dd class="mono text-right" id="released-at">—</dd>
+          <dt class="text-slate-500">released by</dt><dd class="mono text-right" id="released-by">—</dd>
+        </dl>
+      </div>
+    </section>
+
+    <!-- Right column: timeline + actions + log -->
+    <section class="lg:col-span-2 space-y-4">
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-3">lifecycle timeline</div>
+        <div class="relative h-8 rounded-lg overflow-hidden border border-slate-200" id="tl-track">
+          <div class="absolute inset-0 tl-bar" id="tl-bar" style="--alive-pct: 60%"></div>
+          <div class="absolute top-0 bottom-0 w-1 bg-slate-900 tl-marker" id="tl-now" style="left: 0%"></div>
+          <div class="absolute top-0 bottom-0 w-px bg-slate-700/70" id="tl-deadline" style="left: 60%"></div>
+        </div>
+        <div class="flex justify-between text-[11px] text-slate-500 mt-2 mono">
+          <span>arm epoch <span id="arm-epoch" class="text-slate-700">0</span></span>
+          <span>deadline <span id="deadline-epoch" class="text-slate-700">60</span></span>
+          <span>+50% past deadline</span>
+        </div>
+        <div class="grid grid-cols-3 gap-3 mt-4 text-xs">
+          <div class="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2">
+            <div class="text-emerald-700 uppercase tracking-widest text-[10px]">alive</div>
+            <div class="text-emerald-900">holder still in the refresh window. Switch passively armed.</div>
+          </div>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2">
+            <div class="text-amber-700 uppercase tracking-widest text-[10px]">grace</div>
+            <div class="text-amber-900">final 6% of window. Last chance for the holder to refresh.</div>
+          </div>
+          <div class="rounded-md bg-rose-50 border border-rose-200 px-3 py-2">
+            <div class="text-rose-700 uppercase tracking-widest text-[10px]">releasable</div>
+            <div class="text-rose-900">deadline lapsed. <em>Anyone</em> can fire <code class="bg-white px-1 rounded">release_dead</code>.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-3">actions</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <button id="act-refresh" class="rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 px-3 py-3 text-left disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <div class="text-xs text-emerald-700 uppercase tracking-widest">holder action</div>
+            <div class="font-semibold text-emerald-900">refresh()</div>
+            <div class="text-[11px] text-emerald-900/80 mt-1">push deadline forward by `window` epochs</div>
+          </button>
+          <button id="act-trigger" class="rounded-lg border border-sky-200 bg-sky-50 hover:bg-sky-100 px-3 py-3 text-left disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <div class="text-xs text-sky-700 uppercase tracking-widest">holder action</div>
+            <div class="font-semibold text-sky-900">trigger_early()</div>
+            <div class="text-[11px] text-sky-900/80 mt-1">release voluntarily, now, with the plaintext</div>
+          </button>
+          <button id="act-release" class="rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 px-3 py-3 text-left disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <div class="text-xs text-rose-700 uppercase tracking-widest">anyone action</div>
+            <div class="font-semibold text-rose-900">release_dead()</div>
+            <div class="text-[11px] text-rose-900/80 mt-1">fire the switch (only after deadline lapses)</div>
+          </button>
+        </div>
+        <div class="text-[11px] text-slate-500 mt-3 leading-relaxed">
+          The chain's <code class="bg-slate-100 px-1 rounded">require(epoch &gt;= self.last_refresh_epoch + self.refresh_window)</code> guard
+          on <code class="bg-slate-100 px-1 rounded">release_dead</code> is what makes the chain epoch the trigger — no keeper service
+          is checking anything. Anyone watching the chain can simply call the method.
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">event log</div>
+        <ol id="log" class="text-xs space-y-1 max-h-56 overflow-y-auto"></ol>
+      </div>
+    </section>
+  </main>
+
+  <footer class="max-w-6xl mx-auto px-6 pb-12 text-xs text-slate-500">
+    <p class="mb-1"><strong class="text-slate-700">No chain calls.</strong> This is a deterministic in-browser simulation of <code class="bg-slate-100 px-1 rounded">deadman_switch.es</code>. The same parse → compile → VM pipeline backs it on a live node — see <code class="bg-slate-100 px-1 rounded">crates/evaporchain-script/tests/deadman_switch_pilot.rs</code> for the 9 cargo-test invariants.</p>
+    <p>Doctrine: <em>data fades unless refreshed</em> applies to the dead-man's switch too. Even after release, the contract's own energy continues to evaporate — the four-act lifecycle archives the released state into a tombstone, so the on-chain payload doesn't sit forever in active storage.</p>
+  </footer>
+
+  <script type="module">
+    /* eslint-disable no-undef */
+
+    // ── Mirror of deadman_switch.es state machine ──────────────────
+    const HOLDER = "0x3838383838383838383838383838383838383838383838383838383838383838";
+    const STRANGER = "0x9999999999999999999999999999999999999999999999999999999999999999";
+    const PAYLOAD_HASH = "0xb1ad5ef00dba1d1ec0deba5edca5cab1ad5ef00dba1d1ec0deba5edcc0ffee00";
+    const PLAINTEXT = "the launch codes are in the marble bust on the third shelf";
+
+    const state = {
+      sealed: true,
+      holder: HOLDER,
+      secret_hash: PAYLOAD_HASH,
+      refresh_window: 60,
+      last_refresh_epoch: 0,
+      has_refreshed: true,
+      refresh_count: 1,
+      released: false,
+      released_at_epoch: 0,
+      released_by: null,
+      revealed_secret: "",
+    };
+
+    let epoch = 0;
+    let playing = false;
+    let timer = null;
+    let speed = 800;
+
+    // ── Pure helpers (no DOM) ──────────────────────────────────────
+    function isAlive(s, e) {
+      if (s.released) return false;
+      return e < s.last_refresh_epoch + s.refresh_window;
+    }
+    function isReleasable(s, e) {
+      if (s.released) return false;
+      return e >= s.last_refresh_epoch + s.refresh_window;
+    }
+    function epochsUntilDeadline(s, e) {
+      const dl = s.last_refresh_epoch + s.refresh_window;
+      return e >= dl ? 0 : dl - e;
+    }
+    function inGraceZone(s, e) {
+      const dl = s.last_refresh_epoch + s.refresh_window;
+      const ttl = dl - e;
+      return ttl > 0 && ttl <= Math.max(1, Math.floor(s.refresh_window * 0.06));
+    }
+
+    // ── DOM ────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const log = [];
+    function pushLog(kind, text) {
+      log.unshift({ kind, text, epoch });
+      if (log.length > 200) log.pop();
+      const colour = {
+        chain: "text-slate-700",
+        holder: "text-emerald-700",
+        anyone: "text-rose-700",
+        info: "text-slate-500",
+        danger: "text-amber-700 font-medium",
+      }[kind] || "text-slate-700";
+      $("log").innerHTML = log
+        .map(
+          (e) =>
+            `<li class="log-row ${colour}"><span class="mono text-slate-400">[e=${e.epoch}]</span> ${e.text}</li>`,
+        )
+        .join("");
+    }
+
+    function setStatePill() {
+      const pill = $("state-pill");
+      pill.classList.remove("state-active", "state-danger", "state-released", "border-emerald-300", "border-rose-300", "border-slate-300", "bg-emerald-50", "bg-rose-50", "bg-slate-100");
+      if (state.released) {
+        pill.classList.add("state-released", "border-slate-300", "bg-slate-100");
+        $("state-label").textContent = "released";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-slate-600";
+        $("state-headline").textContent = state.released_by === HOLDER
+          ? "released early by holder"
+          : "deadline lapsed → released by observer";
+        $("state-desc").textContent =
+          `revealed: ${state.revealed_secret ? '"' + state.revealed_secret + '"' : "(commitment only, no plaintext)"}`;
+      } else if (isReleasable(state, epoch)) {
+        pill.classList.add("state-danger", "border-rose-300", "bg-rose-50");
+        $("state-label").textContent = "releasable";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-rose-700";
+        $("state-headline").textContent = "deadline lapsed — anyone can fire";
+        $("state-desc").textContent = "release_dead() is open to the world";
+      } else if (inGraceZone(state, epoch)) {
+        pill.classList.add("state-danger", "border-amber-300", "bg-amber-50");
+        $("state-label").textContent = "alive · grace zone";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-amber-700";
+        $("state-headline").textContent = "last chance to refresh";
+        $("state-desc").textContent = `${epochsUntilDeadline(state, epoch)} epochs left`;
+      } else {
+        pill.classList.add("state-active", "border-emerald-300", "bg-emerald-50");
+        $("state-label").textContent = "alive";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-emerald-700";
+        $("state-headline").textContent = "switch armed, holder vigilant";
+        $("state-desc").textContent = `${epochsUntilDeadline(state, epoch)} epochs until releasable`;
+      }
+    }
+
+    function render() {
+      $("epoch").textContent = epoch.toLocaleString();
+      $("window-val").textContent = state.refresh_window;
+      $("arm-epoch").textContent = "0";
+      $("deadline-epoch").textContent = state.last_refresh_epoch + state.refresh_window;
+      $("last-refresh").textContent = state.last_refresh_epoch;
+      $("refresh-count").textContent = state.refresh_count;
+      $("ttl").textContent = isReleasable(state, epoch) || state.released
+        ? "—"
+        : epochsUntilDeadline(state, epoch);
+      $("released-at").textContent = state.released ? state.released_at_epoch : "—";
+      $("released-by").textContent = state.released
+        ? (state.released_by === HOLDER ? "holder (early)" : "anyone (post-deadline)")
+        : "—";
+
+      // Timeline marker — anchor at last_refresh_epoch, mark deadline,
+      // show current epoch position. Width spans 1.5× the refresh
+      // window so the "past deadline" zone is visible.
+      const span = state.refresh_window * 1.5;
+      const origin = state.last_refresh_epoch;
+      const relNow = Math.max(0, Math.min(span, epoch - origin));
+      const nowPct = (relNow / span) * 100;
+      const dlPct = (state.refresh_window / span) * 100;
+      $("tl-now").style.left = nowPct + "%";
+      $("tl-deadline").style.left = dlPct + "%";
+      $("tl-bar").style.setProperty("--alive-pct", dlPct + "%");
+
+      setStatePill();
+
+      // Action availability
+      $("act-refresh").disabled = state.released || isReleasable(state, epoch);
+      $("act-trigger").disabled = state.released;
+      $("act-release").disabled = state.released || !isReleasable(state, epoch);
+    }
+
+    // ── Actions (mirror the .es require()s) ────────────────────────
+    function actRefresh() {
+      if (state.released) return;
+      if (isReleasable(state, epoch)) {
+        pushLog("danger", "refresh rejected — deadline already lapsed (would revert in chain too)");
+        return;
+      }
+      state.last_refresh_epoch = epoch;
+      state.refresh_count += 1;
+      pushLog("holder", `refresh() — deadline pushed to epoch ${epoch + state.refresh_window}`);
+      render();
+    }
+    function actTrigger() {
+      if (state.released) return;
+      state.released = true;
+      state.released_at_epoch = epoch;
+      state.released_by = HOLDER;
+      state.revealed_secret = PLAINTEXT;
+      pushLog("holder", `trigger_early() — released voluntarily with plaintext`);
+      render();
+    }
+    function actRelease() {
+      if (state.released) return;
+      if (!isReleasable(state, epoch)) {
+        pushLog("danger", "release_dead rejected — deadline has not yet lapsed");
+        return;
+      }
+      state.released = true;
+      state.released_at_epoch = epoch;
+      state.released_by = STRANGER;
+      state.revealed_secret = "";
+      pushLog(
+        "anyone",
+        `release_dead() — fired by ${STRANGER.slice(0, 10)}… (commitment-only, plaintext unknown)`,
+      );
+      render();
+    }
+
+    // ── Time control ───────────────────────────────────────────────
+    function tick() {
+      epoch += 1;
+      // Auto-narrate state transitions.
+      if (!state.released) {
+        if (epoch === state.last_refresh_epoch + state.refresh_window) {
+          pushLog("chain", `deadline reached — release_dead() now permitted`);
+        }
+      }
+      render();
+    }
+    function play() {
+      if (playing) return;
+      playing = true;
+      $("status").textContent = "running…";
+      $("status").className = "ml-auto text-xs text-emerald-600";
+      timer = setInterval(tick, speed);
+    }
+    function pause() {
+      playing = false;
+      if (timer) clearInterval(timer);
+      timer = null;
+      $("status").textContent = "paused";
+      $("status").className = "ml-auto text-xs text-slate-400";
+    }
+    function reset() {
+      pause();
+      epoch = 0;
+      state.refresh_window = parseInt($("window").value, 10);
+      state.last_refresh_epoch = 0;
+      state.has_refreshed = true;
+      state.refresh_count = 1;
+      state.released = false;
+      state.released_at_epoch = 0;
+      state.released_by = null;
+      state.revealed_secret = "";
+      log.length = 0;
+      pushLog("info", `armed — holder must refresh within ${state.refresh_window} epochs`);
+      render();
+    }
+
+    // ── Scenario walks ─────────────────────────────────────────────
+    // These are scripted demos that drive the simulator through
+    // characteristic lifecycle paths so a visitor can see the doctrine
+    // in motion without having to know which button to click.
+    let scenarioCancel = null;
+    function cancelScenario() { if (scenarioCancel) { scenarioCancel = null; } }
+
+    async function scenarioVigilant() {
+      cancelScenario();
+      const id = {}; scenarioCancel = id;
+      reset();
+      play();
+      // Holder refreshes near the deadline 3 times in a row.
+      for (let i = 0; i < 3; i++) {
+        await waitUntilEpoch(state.last_refresh_epoch + state.refresh_window - 4, id);
+        if (scenarioCancel !== id) return;
+        actRefresh();
+      }
+      pushLog("info", "scenario ended — vigilant holder kept the switch alive indefinitely");
+      pause();
+    }
+    async function scenarioSilent() {
+      cancelScenario();
+      const id = {}; scenarioCancel = id;
+      reset();
+      play();
+      // Holder just goes silent.
+      await waitUntilEpoch(state.refresh_window + 5, id);
+      if (scenarioCancel !== id) return;
+      // Stranger picks up the release.
+      actRelease();
+      pushLog("info", "scenario ended — silent holder, observer claimed the release");
+      pause();
+    }
+    async function scenarioEarly() {
+      cancelScenario();
+      const id = {}; scenarioCancel = id;
+      reset();
+      play();
+      await waitUntilEpoch(Math.floor(state.refresh_window / 3), id);
+      if (scenarioCancel !== id) return;
+      actTrigger();
+      pushLog("info", "scenario ended — holder fired early with plaintext");
+      pause();
+    }
+    function waitUntilEpoch(target, id) {
+      return new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (scenarioCancel !== id) { clearInterval(check); resolve(); return; }
+          if (epoch >= target || state.released) { clearInterval(check); resolve(); }
+        }, 40);
+      });
+    }
+
+    // ── Wire-up ────────────────────────────────────────────────────
+    $("play").addEventListener("click", play);
+    $("pause").addEventListener("click", pause);
+    $("step").addEventListener("click", tick);
+    $("step10").addEventListener("click", () => { for (let i = 0; i < 10; i++) tick(); });
+    $("reset").addEventListener("click", reset);
+    $("speed").addEventListener("change", (e) => {
+      speed = parseInt(e.target.value, 10);
+      if (playing) { pause(); play(); }
+    });
+    $("window").addEventListener("input", (e) => {
+      $("window-val").textContent = e.target.value;
+    });
+    $("act-refresh").addEventListener("click", actRefresh);
+    $("act-trigger").addEventListener("click", actTrigger);
+    $("act-release").addEventListener("click", actRelease);
+    $("scenario-vigilant").addEventListener("click", scenarioVigilant);
+    $("scenario-silent").addEventListener("click", scenarioSilent);
+    $("scenario-early").addEventListener("click", scenarioEarly);
+
+    reset();
+  </script>
+</body>
+</html>

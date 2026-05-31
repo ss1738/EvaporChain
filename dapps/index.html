@@ -14,6 +14,7 @@
     .accent-death   { background-image: linear-gradient(135deg, rgb(229 231 235) 0%, rgb(148 163 184) 100%); }
     .accent-catalog { background-image: linear-gradient(135deg, rgb(220 252 231) 0%, rgb(167 243 208) 100%); }
     .accent-blocks  { background-image: linear-gradient(135deg, rgb(219 234 254) 0%, rgb(147 197 253) 100%); }
+    .accent-switch  { background-image: linear-gradient(135deg, rgb(253 232 232) 0%, rgb(254 205 211) 100%); }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
@@ -46,7 +47,7 @@
   </header>
 
   <main class="max-w-5xl mx-auto px-6 pb-12">
-    <h2 class="text-xs uppercase tracking-widest text-slate-500 mb-4">four lenses on the chain</h2>
+    <h2 class="text-xs uppercase tracking-widest text-slate-500 mb-4">five lenses on the chain</h2>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
 
       <a href="wallet/index.html" class="group block md:col-span-2 rounded-2xl border border-emerald-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition">
@@ -153,6 +154,29 @@
           <div class="mt-4 text-xs text-sky-700 group-hover:underline">open explorer →</div>
         </div>
       </a>
+
+      <a href="deadman-vista/index.html" class="group block md:col-span-2 rounded-2xl border border-rose-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition">
+        <div class="accent-switch h-2"></div>
+        <div class="p-5">
+          <div class="flex items-start gap-3">
+            <span class="text-3xl">🕯</span>
+            <div class="flex-1">
+              <div class="text-sm uppercase tracking-wide text-rose-700">simulator</div>
+              <div class="text-lg font-semibold text-slate-800">DeadMan Vista</div>
+            </div>
+            <span class="text-xs text-slate-400 mono">offline OK</span>
+          </div>
+          <p class="text-sm text-slate-600 mt-3 leading-relaxed">
+            The dead-man's switch where the chain's own epoch IS the trigger. Walk through the
+            four-state lifecycle (alive → grace → releasable → released) at your own pace, or run
+            the three scripted scenarios — vigilant holder, silent holder, early voluntary release.
+            Same parse → compile → VM pipeline as the cargo pilot
+            (<code class="bg-slate-100 px-1 rounded text-xs">crates/evaporchain-script/tests/deadman_switch_pilot.rs</code>);
+            9 invariants verified, in-browser.
+          </p>
+          <div class="mt-4 text-xs text-sky-700 group-hover:underline">open vista →</div>
+        </div>
+      </a>
     </div>
 
     <section class="mt-12 grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -191,7 +215,8 @@
 cd dapps/decay-vista        &amp;&amp; npm run serve   # offline-OK simulator
 cd dapps/catalogue-browser  &amp;&amp; npm run serve   # port 8088 (serves repo root for .es previews)
 cd dapps/four-act-console   &amp;&amp; npm run serve   # port 3000 (matches chain CORS allowlist)
-cd dapps/block-explorer     &amp;&amp; npm run serve   # port 3000 (same as above)</pre>
+cd dapps/block-explorer     &amp;&amp; npm run serve   # port 3000 (same as above)
+cd dapps/deadman-vista      &amp;&amp; npm run serve   # port 8089 (offline-OK simulator)</pre>
       <p class="text-xs text-slate-500 mt-2">
         The two live-data dApps need port 3000 to satisfy the node's CORS allowlist. If another
         dev server already owns that port (e.g., a Next.js project), either stop the other one
