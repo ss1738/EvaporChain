@@ -6,6 +6,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (overnight) — Subscription Vista — visceral simulator UI
+
+**Focus:** complete the chain-as-keeper doctrine pair at the UI layer. DeadMan Vista (shipped earlier today) covers secret-release; this ships the recurring-payment counterpart so a visitor can *see* both flavours of the doctrine in motion side-by-side from the landing page.
+**Commits shipped:** 1 on main (`<this>`).
+**Deliverables:**
+| File | Notes |
+|---|---|
+| `dapps/subscription-vista/index.html` (~430 LOC) | Single static page, Tailwind via CDN, no chain calls. State machine mirrors `subscription.es` (pay / cancel / on_evaporate). Energy bar visualizes the decay; pay() boosts +200 with a 1000 ceiling; grace zone at <30% triggers an amber pulse. Four scripted scenarios (regular payer / late payer / missed → lapses / cancelled mid-cycle). Kind-coded event log with chain / subscriber / provider / terminal entries. |
+| `dapps/subscription-vista/package.json` | `npm run serve` → `python3 -m http.server 8090` (no port collision with deadman-vista on 8089). |
+| `dapps/index.html` | New "six lenses on the chain" card. Landing page now shows decay-vista, four-act-console, catalogue-browser, block-explorer, deadman-vista, subscription-vista in the 2×3 grid below the wallet card. |
+**Empirical results:**
+- HTTP probe: 26,192 bytes, 20 grep markers present.
+- Inline JS syntax-checked via `node:vm.Script` (12,892 chars parsed clean).
+- Cannot smoke-test in-browser from this environment; relying on syntax check + structural parity with deadman-vista (same shape, same Tailwind, same time-tick pattern).
+**Decisions made:**
+- **Cancelled vs lapsed visually distinct.** Both end in the "terminal" colour family (slate), but `state-pill` shows different headlines ("subscription terminated cleanly" vs "contract evaporated without cancel") + different sub-text. The doctrinal split is the whole point of the on_evaporate guard in the .es contract; the UI honours it.
+- **Energy hook visible.** Each pay() ticks the energy bar up by +200; the user can see the keep-alive mechanism, not just take it on faith. Models the runtime hook's behaviour (real chain) within an integer-truncated halving envelope.
+- **Four scenarios** rather than three. Subscription has one more meaningful failure mode than dead-man's switch (cancelled vs lapsed), so the demo carries an extra scenario to surface it.
+- **The chain-as-keeper pair is now visible end-to-end:** both DEADMAN_SWITCH and SUBSCRIPTION_SERVICE have .es contract + cargo pilot + typed dApp client + formal catalogue promotion + visceral simulator UI. Every layer.
+**Today's totals (incl. overnight roll into 2026-06-01):** 11 commits on main, ~2,400 LOC across .es / cargo / TS / HTML / catalogue-registry. Reference contracts 12 → 17, catalogue 24 → 26, landing-page lenses 4 → 6.
+**What's next:** 19 .es files still lack typed clients; multiple still lack formal catalogue promotion. Strongest next candidates by user-facing value:
+- `mortal_message` typed client → formal catalogue (the canonical pilot deserves it)
+- `mortal_nft` → formal catalogue (headline doctrine claim)
+- `bounty` → distinct from existing SHLM_BOUNTY in Marketplace lane
+- Or another from-scratch arc (contract + pilot + client + UI) on a new doctrine pattern.
+**Cross-references:** files `dapps/subscription-vista/{index.html, package.json}`, `dapps/index.html`. Doctrine claim source: `contracts/evaporscript/subscription.es`. Verification base: `crates/evaporchain-script/tests/subscription_pilot.rs`. Sibling demo: `dapps/deadman-vista/`.
+
+---
+
 ## 2026-05-31 (after midnight) — Subscription catalogue promotion (26th template)
 
 **Focus:** promote `subscription.es` to the 26th formal catalogue template — the chain-as-keeper sibling of DEADMAN_SWITCH, on the recurring-payment surface. Same multi-crate scope as the deadman_switch promotion earlier this session; the pattern is now sustainable.

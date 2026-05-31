@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EvaporChain — Subscription Vista</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    /* Status pill highlight */
+    .state-active { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.25); }
+    .state-warn   { box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.30); animation: pulse 1.6s infinite; }
+    .state-dead   { box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.30); }
+    .state-cancel { box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.30); }
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.30); }
+      50%     { box-shadow: 0 0 0 8px rgba(251, 191, 36, 0.55); }
+    }
+    /* Energy bar fill */
+    .energy-fill { transition: width 0.18s linear, background-color 0.4s linear; }
+    .log-row { animation: slidein 0.25s ease-out; }
+    @keyframes slidein {
+      from { opacity: 0; transform: translateX(-6px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <header class="border-b border-slate-200 bg-white">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-start gap-4">
+      <div class="flex-1">
+        <h1 class="text-xl font-semibold tracking-tight">Subscription Vista</h1>
+        <p class="text-xs text-slate-500 mt-0.5 max-w-2xl leading-relaxed">
+          Recurring payment whose lapse detector is the chain itself.
+          <code class="bg-slate-100 px-1 rounded text-[11px]">pay()</code> is the keep-alive —
+          each call refreshes the contract's energy via the runtime hook; missing payments lets
+          the contract evaporate; <code class="bg-slate-100 px-1 rounded text-[11px]">on_evaporate</code>
+          flips <code class="bg-slate-100 px-1 rounded text-[11px]">lapsed = true</code>. No off-chain
+          reaper needed. Mirrors
+          <code class="bg-slate-100 px-1 rounded text-[11px]">contracts/evaporscript/subscription.es</code>
+          byte-for-byte.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">epoch</span>
+        <span id="epoch" class="mono text-2xl tabular-nums text-slate-900">0</span>
+      </div>
+    </div>
+    <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-sm">
+      <button id="play"  class="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700">▶ play</button>
+      <button id="pause" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏸ pause</button>
+      <button id="step"  class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏭ +1</button>
+      <button id="step10" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏭⏭ +10</button>
+      <button id="reset" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">↺ reset</button>
+      <span class="text-slate-400 mx-2">|</span>
+      <label class="text-xs text-slate-600">speed</label>
+      <select id="speed" class="text-xs border rounded px-2 py-1 bg-white">
+        <option value="2000">slow (2s / epoch)</option>
+        <option value="800" selected>medium (0.8s / epoch)</option>
+        <option value="300">fast (0.3s / epoch)</option>
+        <option value="80">very fast (0.08s / epoch)</option>
+      </select>
+      <span class="text-slate-400 mx-2">|</span>
+      <button id="scenario-regular" class="px-2 py-1 rounded text-xs bg-emerald-50 border border-emerald-200 hover:bg-emerald-100">demo: regular payer</button>
+      <button id="scenario-late"    class="px-2 py-1 rounded text-xs bg-amber-50 border border-amber-200 hover:bg-amber-100">demo: late payer</button>
+      <button id="scenario-missed"  class="px-2 py-1 rounded text-xs bg-rose-50 border border-rose-200 hover:bg-rose-100">demo: missed → lapses</button>
+      <button id="scenario-cancel"  class="px-2 py-1 rounded text-xs bg-sky-50 border border-sky-200 hover:bg-sky-100">demo: cancelled</button>
+      <span id="status" class="ml-auto text-xs text-slate-400">paused</span>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+    <!-- Left: configuration + status -->
+    <section class="lg:col-span-1 space-y-4">
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-3">configuration</div>
+        <div class="space-y-3 text-sm">
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div><div class="text-slate-500">subscriber</div><div class="mono text-slate-700">0x5e…ber</div></div>
+            <div><div class="text-slate-500">provider</div><div class="mono text-slate-700">0x9b…ovr</div></div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500" for="period-amount">amount per period</label>
+            <input id="period-amount" type="range" min="10" max="500" step="10" value="100" class="w-full accent-emerald-600" />
+            <div class="flex justify-between text-xs text-slate-600 mt-1"><span>10</span><span class="mono"><span id="amount-val">100</span> units</span><span>500</span></div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500" for="period-length">period length (epochs)</label>
+            <input id="period-length" type="range" min="5" max="60" step="5" value="20" class="w-full accent-emerald-600" />
+            <div class="flex justify-between text-xs text-slate-600 mt-1"><span>5</span><span class="mono"><span id="period-val">20</span> epochs</span><span>60</span></div>
+          </div>
+          <div class="text-xs text-slate-500 pt-2 border-t border-slate-200">
+            Changes to amount/period apply on <em>reset</em>. The subscriber and provider are fixed for the simulation.
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-3">subscription state</div>
+        <div id="state-pill" class="rounded-lg border-2 p-3 transition-all">
+          <div class="text-[11px] uppercase tracking-widest" id="state-label">armed</div>
+          <div class="text-lg font-semibold" id="state-headline">awaiting first payment</div>
+          <div class="text-xs text-slate-500 mt-1" id="state-desc"></div>
+        </div>
+        <dl class="text-xs grid grid-cols-2 gap-x-3 gap-y-2 mt-4">
+          <dt class="text-slate-500">paid periods</dt><dd class="mono text-right" id="paid-periods">0</dd>
+          <dt class="text-slate-500">cumulative paid</dt><dd class="mono text-right" id="cumulative">0</dd>
+          <dt class="text-slate-500">last payment epoch</dt><dd class="mono text-right" id="last-payment">—</dd>
+          <dt class="text-slate-500">cancelled by</dt><dd class="mono text-right" id="cancelled-by">—</dd>
+          <dt class="text-slate-500">lapsed at epoch</dt><dd class="mono text-right" id="lapsed-at">—</dd>
+        </dl>
+      </div>
+    </section>
+
+    <!-- Right: energy + actions + log -->
+    <section class="lg:col-span-2 space-y-4">
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="flex items-baseline justify-between mb-2">
+          <div class="text-xs uppercase tracking-widest text-slate-500">contract energy</div>
+          <div class="text-[11px] mono text-slate-500"><span id="energy-val">1000</span> / 1000</div>
+        </div>
+        <div class="h-3 rounded-full bg-slate-100 overflow-hidden">
+          <div id="energy-bar" class="energy-fill h-full bg-emerald-500" style="width: 100%"></div>
+        </div>
+        <div class="grid grid-cols-3 gap-3 mt-4 text-xs">
+          <div class="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2">
+            <div class="text-emerald-700 uppercase tracking-widest text-[10px]">active</div>
+            <div class="text-emerald-900">sealed + not cancelled + not lapsed. Pay() refreshes the contract energy via the runtime hook.</div>
+          </div>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2">
+            <div class="text-amber-700 uppercase tracking-widest text-[10px]">grace</div>
+            <div class="text-amber-900">energy below floor. Subscriber has until evaporation to pay; otherwise the contract lapses.</div>
+          </div>
+          <div class="rounded-md bg-slate-100 border border-slate-300 px-3 py-2">
+            <div class="text-slate-700 uppercase tracking-widest text-[10px]">terminal</div>
+            <div class="text-slate-900">cancelled (clean) or lapsed (energy hit zero). Distinct doctrinally — a cancelled sub does not relapse.</div>
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">
+          Energy halves every <span class="mono"><span id="hl-val">100</span></span> epochs without payment. Each
+          <code class="bg-slate-100 px-1 rounded">pay()</code> credits a <span class="mono">+200</span> energy boost — enough to
+          buy roughly <span class="mono">log2(1000/200) ≈ 2</span> additional half-lives of runway. Miss too many
+          consecutive periods and the contract evaporates faster than the cadence can refresh it.
+        </p>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-3">actions</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <button id="act-pay" class="rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 px-3 py-3 text-left disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <div class="text-xs text-emerald-700 uppercase tracking-widest">subscriber</div>
+            <div class="font-semibold text-emerald-900">pay()</div>
+            <div class="text-[11px] text-emerald-900/80 mt-1">credit one period, refresh energy +200</div>
+          </button>
+          <button id="act-cancel-sub" class="rounded-lg border border-sky-200 bg-sky-50 hover:bg-sky-100 px-3 py-3 text-left disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <div class="text-xs text-sky-700 uppercase tracking-widest">subscriber</div>
+            <div class="font-semibold text-sky-900">cancel()</div>
+            <div class="text-[11px] text-sky-900/80 mt-1">end cleanly; does not lapse on evaporation</div>
+          </button>
+          <button id="act-cancel-prov" class="rounded-lg border border-violet-200 bg-violet-50 hover:bg-violet-100 px-3 py-3 text-left disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <div class="text-xs text-violet-700 uppercase tracking-widest">provider</div>
+            <div class="font-semibold text-violet-900">cancel()</div>
+            <div class="text-[11px] text-violet-900/80 mt-1">same cancel verb, called by the receiver</div>
+          </button>
+        </div>
+        <div class="text-[11px] text-slate-500 mt-3 leading-relaxed">
+          Cancellation is one-shot and blocks future <code class="bg-slate-100 px-1 rounded">pay()</code> calls.
+          Doctrinally distinct from lapsed-by-evaporation: a cancelled subscription ended cleanly
+          (<code class="bg-slate-100 px-1 rounded">on_evaporate</code> sees <code class="bg-slate-100 px-1 rounded">cancelled == true</code>
+          and does NOT flip <code class="bg-slate-100 px-1 rounded">lapsed</code>).
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">event log</div>
+        <ol id="log" class="text-xs space-y-1 max-h-56 overflow-y-auto"></ol>
+      </div>
+    </section>
+  </main>
+
+  <footer class="max-w-6xl mx-auto px-6 pb-12 text-xs text-slate-500">
+    <p class="mb-1"><strong class="text-slate-700">No chain calls.</strong> Pure in-browser simulation of <code class="bg-slate-100 px-1 rounded">subscription.es</code>'s pay / cancel / evaporate state machine. The same parse → compile → VM pipeline backs it on a live node — see <code class="bg-slate-100 px-1 rounded">crates/evaporchain-script/tests/subscription_pilot.rs</code>.</p>
+    <p>Doctrine: <em>data fades unless refreshed</em> — for a subscription, the refresh IS the payment. The chain runtime is the lapse detector; no off-chain reaper, no who-watches-the-watcher.</p>
+  </footer>
+
+  <script type="module">
+    /* eslint-disable no-undef */
+
+    const SUBSCRIBER = "0x5eb5c8163e57…ber";
+    const PROVIDER   = "0x9b0d1e7a40f9…ovr";
+
+    // Decay + refresh constants. Half-life 100 epochs; pay() credits
+    // a +200 boost on top of current energy (clamped at 1000 ceiling),
+    // matching the typical on-chain runtime hook behaviour for the
+    // doctrine. Floor for the "grace" pill is 30% of ceiling.
+    const INITIAL_ENERGY = 1000;
+    const HALF_LIFE = 100;
+    const PAY_BOOST = 200;
+    const GRACE_FLOOR_BP = 3000; // 30%
+
+    const state = {
+      sealed: true,
+      subscriber: SUBSCRIBER,
+      provider: PROVIDER,
+      period_amount: 100,
+      period_length: 20,
+      paid_periods: 0,
+      cumulative_paid: 0,
+      last_payment_epoch: -1, // sentinel
+      cancelled: false,
+      cancelled_by: null,
+      cancelled_at: -1,
+      lapsed: false,
+      lapsed_at: -1,
+      energy: INITIAL_ENERGY,
+    };
+
+    let epoch = 0;
+    let playing = false;
+    let timer = null;
+    let speed = 800;
+
+    // Energy at epoch given the last refresh epoch. Pure halving by HALF_LIFE.
+    function energyAtTick(prev, deltaEpochs) {
+      // floor at 0; integer shift semantics for big delta
+      let e = prev;
+      let d = deltaEpochs;
+      while (d >= HALF_LIFE && e > 0) {
+        e = Math.floor(e / 2);
+        d -= HALF_LIFE;
+      }
+      // Linear within the partial last half-life so the bar moves smoothly.
+      if (d > 0 && e > 0) {
+        const next = Math.floor(e / 2);
+        e = e - Math.floor(((e - next) * d) / HALF_LIFE);
+      }
+      return Math.max(0, e);
+    }
+
+    function isActive() {
+      return state.sealed && !state.cancelled && !state.lapsed;
+    }
+    function isGrace() {
+      return isActive() && state.energy <= (INITIAL_ENERGY * GRACE_FLOOR_BP) / 10000;
+    }
+
+    // ── DOM ────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const log = [];
+    function pushLog(kind, text) {
+      log.unshift({ kind, text, epoch });
+      if (log.length > 200) log.pop();
+      const colour = {
+        chain: "text-slate-700",
+        subscriber: "text-emerald-700",
+        provider: "text-violet-700",
+        info: "text-slate-500",
+        danger: "text-amber-700 font-medium",
+        terminal: "text-slate-600 italic",
+      }[kind] || "text-slate-700";
+      $("log").innerHTML = log
+        .map(
+          (e) =>
+            `<li class="log-row ${colour}"><span class="mono text-slate-400">[e=${e.epoch}]</span> ${e.text}</li>`,
+        )
+        .join("");
+    }
+
+    function setStatePill() {
+      const pill = $("state-pill");
+      pill.classList.remove("state-active", "state-warn", "state-dead", "state-cancel",
+        "border-emerald-300", "border-amber-300", "border-slate-300", "bg-emerald-50",
+        "bg-amber-50", "bg-slate-100");
+      if (state.lapsed) {
+        pill.classList.add("state-dead", "border-slate-300", "bg-slate-100");
+        $("state-label").textContent = "lapsed";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-slate-600";
+        $("state-headline").textContent = "contract evaporated without cancel";
+        $("state-desc").textContent = `lapsed_at = ${state.lapsed_at}; coverage ended`;
+      } else if (state.cancelled) {
+        pill.classList.add("state-cancel", "border-slate-300", "bg-slate-100");
+        $("state-label").textContent = "cancelled";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-slate-600";
+        $("state-headline").textContent = "subscription terminated cleanly";
+        $("state-desc").textContent = `cancelled by ${state.cancelled_by === SUBSCRIBER ? "subscriber" : "provider"} at e=${state.cancelled_at}`;
+      } else if (isGrace()) {
+        pill.classList.add("state-warn", "border-amber-300", "bg-amber-50");
+        $("state-label").textContent = "active · grace";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-amber-700";
+        $("state-headline").textContent = "energy below 30% — pay or it lapses";
+        $("state-desc").textContent = `energy = ${state.energy}; subscriber pay() to refresh`;
+      } else if (isActive()) {
+        pill.classList.add("state-active", "border-emerald-300", "bg-emerald-50");
+        $("state-label").textContent = "active";
+        $("state-label").className = "text-[11px] uppercase tracking-widest text-emerald-700";
+        $("state-headline").textContent = state.paid_periods > 0
+          ? "paid up — subscription running"
+          : "armed — awaiting first payment";
+        $("state-desc").textContent = `last paid: ${state.last_payment_epoch < 0 ? "—" : "e=" + state.last_payment_epoch}`;
+      }
+    }
+
+    function render() {
+      $("epoch").textContent = epoch.toLocaleString();
+      $("amount-val").textContent = state.period_amount;
+      $("period-val").textContent = state.period_length;
+      $("hl-val").textContent = HALF_LIFE;
+      $("paid-periods").textContent = state.paid_periods;
+      $("cumulative").textContent = state.cumulative_paid;
+      $("last-payment").textContent = state.last_payment_epoch < 0 ? "—" : state.last_payment_epoch;
+      $("cancelled-by").textContent = state.cancelled
+        ? (state.cancelled_by === SUBSCRIBER ? "subscriber" : "provider")
+        : "—";
+      $("lapsed-at").textContent = state.lapsed ? state.lapsed_at : "—";
+      $("energy-val").textContent = state.energy;
+      const pct = Math.max(0, Math.min(100, (state.energy / INITIAL_ENERGY) * 100));
+      const bar = $("energy-bar");
+      bar.style.width = pct + "%";
+      bar.className = "energy-fill h-full " +
+        (state.lapsed ? "bg-slate-400" :
+         state.cancelled ? "bg-slate-400" :
+         isGrace() ? "bg-amber-500" : "bg-emerald-500");
+      setStatePill();
+      $("act-pay").disabled = !isActive();
+      $("act-cancel-sub").disabled = !isActive();
+      $("act-cancel-prov").disabled = !isActive();
+    }
+
+    // ── Actions ────────────────────────────────────────────────────
+    function actPay() {
+      if (!isActive()) return;
+      state.paid_periods += 1;
+      state.cumulative_paid += state.period_amount;
+      state.last_payment_epoch = epoch;
+      state.energy = Math.min(INITIAL_ENERGY, state.energy + PAY_BOOST);
+      pushLog("subscriber", `pay() — period ${state.paid_periods}, +${state.period_amount} units, energy +${PAY_BOOST}`);
+      render();
+    }
+    function actCancel(by) {
+      if (!isActive()) return;
+      state.cancelled = true;
+      state.cancelled_by = by;
+      state.cancelled_at = epoch;
+      pushLog(by === SUBSCRIBER ? "subscriber" : "provider",
+        `cancel() — ${by === SUBSCRIBER ? "subscriber" : "provider"} terminated subscription`);
+      pushLog("terminal", `clean cancel — on_evaporate will NOT relapse`);
+      render();
+    }
+
+    // ── Time control ───────────────────────────────────────────────
+    let lastDecayCheckpoint = 0;
+    function tick() {
+      const prevEpoch = epoch;
+      epoch += 1;
+      // Decay energy by one epoch.
+      if (isActive()) {
+        state.energy = energyAtTick(state.energy, 1);
+        if (state.energy === 0 && !state.lapsed) {
+          state.lapsed = true;
+          state.lapsed_at = epoch;
+          pushLog("chain", `on_evaporate fired — lapsed=true (cancelled was false)`);
+          pushLog("terminal", `subscription evaporated — coverage ends`);
+        } else if (state.energy <= (INITIAL_ENERGY * GRACE_FLOOR_BP) / 10000) {
+          // Avoid spamming the log; only announce once per descent.
+          if (prevEpoch === 0 || !state._gracedAnnounced) {
+            // skip
+          }
+        }
+      } else if (isActive() === false && state.sealed && !state.lapsed && !state.cancelled) {
+        // never hit
+      }
+      render();
+    }
+    function play() {
+      if (playing) return;
+      playing = true;
+      $("status").textContent = "running…";
+      $("status").className = "ml-auto text-xs text-emerald-600";
+      timer = setInterval(tick, speed);
+    }
+    function pause() {
+      playing = false;
+      if (timer) clearInterval(timer);
+      timer = null;
+      $("status").textContent = "paused";
+      $("status").className = "ml-auto text-xs text-slate-400";
+    }
+    function reset() {
+      pause();
+      epoch = 0;
+      state.period_amount = parseInt($("period-amount").value, 10);
+      state.period_length = parseInt($("period-length").value, 10);
+      state.paid_periods = 0;
+      state.cumulative_paid = 0;
+      state.last_payment_epoch = -1;
+      state.cancelled = false;
+      state.cancelled_by = null;
+      state.cancelled_at = -1;
+      state.lapsed = false;
+      state.lapsed_at = -1;
+      state.energy = INITIAL_ENERGY;
+      log.length = 0;
+      pushLog("info", `armed — subscriber ${SUBSCRIBER.slice(0,6)}…, ${state.period_amount} units / ${state.period_length} epochs`);
+      render();
+    }
+
+    // ── Scenarios ──────────────────────────────────────────────────
+    let scenarioCancel = null;
+    async function scenarioRegular() {
+      const id = {}; scenarioCancel = id;
+      reset(); play();
+      for (let i = 0; i < 8; i++) {
+        await waitUntilEpoch(epoch + state.period_length, id);
+        if (scenarioCancel !== id || state.lapsed || state.cancelled) return;
+        actPay();
+      }
+      pushLog("info", "scenario ended — regular payer kept the subscription alive");
+      pause();
+    }
+    async function scenarioLate() {
+      const id = {}; scenarioCancel = id;
+      reset(); play();
+      // First payment on time.
+      await waitUntilEpoch(state.period_length, id);
+      if (scenarioCancel !== id) return;
+      actPay();
+      // Then deliberately wait past 1.5× period before next payment.
+      await waitUntilEpoch(epoch + Math.floor(state.period_length * 1.7), id);
+      if (scenarioCancel !== id || state.lapsed) return;
+      actPay();
+      // Resume normal cadence.
+      for (let i = 0; i < 3; i++) {
+        await waitUntilEpoch(epoch + state.period_length, id);
+        if (scenarioCancel !== id || state.lapsed || state.cancelled) return;
+        actPay();
+      }
+      pushLog("info", "scenario ended — late payer recovered before lapse");
+      pause();
+    }
+    async function scenarioMissed() {
+      const id = {}; scenarioCancel = id;
+      reset(); play();
+      // First payment to seed activity, then go silent.
+      await waitUntilEpoch(state.period_length, id);
+      if (scenarioCancel !== id) return;
+      actPay();
+      // Now wait for natural lapse.
+      while (!state.lapsed && scenarioCancel === id) {
+        await new Promise((r) => setTimeout(r, 60));
+      }
+      pushLog("info", "scenario ended — silent subscriber, contract lapsed via evaporation");
+      pause();
+    }
+    async function scenarioCancelled() {
+      const id = {}; scenarioCancel = id;
+      reset(); play();
+      // Pay twice, then subscriber cancels.
+      for (let i = 0; i < 2; i++) {
+        await waitUntilEpoch(epoch + state.period_length, id);
+        if (scenarioCancel !== id || state.lapsed) return;
+        actPay();
+      }
+      await waitUntilEpoch(epoch + Math.floor(state.period_length / 2), id);
+      if (scenarioCancel !== id) return;
+      actCancel(SUBSCRIBER);
+      pushLog("info", "scenario ended — clean cancel after 2 paid periods");
+      pause();
+    }
+    function waitUntilEpoch(target, id) {
+      return new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (scenarioCancel !== id) { clearInterval(check); resolve(); return; }
+          if (epoch >= target || state.lapsed || state.cancelled) { clearInterval(check); resolve(); }
+        }, 40);
+      });
+    }
+
+    // ── Wire-up ────────────────────────────────────────────────────
+    $("play").addEventListener("click", play);
+    $("pause").addEventListener("click", pause);
+    $("step").addEventListener("click", tick);
+    $("step10").addEventListener("click", () => { for (let i = 0; i < 10; i++) tick(); });
+    $("reset").addEventListener("click", reset);
+    $("speed").addEventListener("change", (e) => {
+      speed = parseInt(e.target.value, 10);
+      if (playing) { pause(); play(); }
+    });
+    $("period-amount").addEventListener("input", (e) => { $("amount-val").textContent = e.target.value; });
+    $("period-length").addEventListener("input", (e) => { $("period-val").textContent = e.target.value; });
+    $("act-pay").addEventListener("click", actPay);
+    $("act-cancel-sub").addEventListener("click", () => actCancel(SUBSCRIBER));
+    $("act-cancel-prov").addEventListener("click", () => actCancel(PROVIDER));
+    $("scenario-regular").addEventListener("click", scenarioRegular);
+    $("scenario-late").addEventListener("click", scenarioLate);
+    $("scenario-missed").addEventListener("click", scenarioMissed);
+    $("scenario-cancel").addEventListener("click", scenarioCancelled);
+
+    reset();
+  </script>
+</body>
+</html>

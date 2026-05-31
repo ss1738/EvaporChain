@@ -1,0 +1,10 @@
+{
+  "name": "subscription-vista",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Subscription Vista — offline-OK in-browser simulator of contracts/evaporscript/subscription.es. Shows the chain-as-keeper recurring-payment doctrine — pay() refreshes contract energy, missing payments evaporate it, cancellation is clean and distinct from lapse. Four scripted scenarios (regular payer, late payer, missed → lapses, cancelled).",
+  "scripts": {
+    "serve": "python3 -m http.server 8090"
+  }
+}
