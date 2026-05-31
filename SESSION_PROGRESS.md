@@ -6,6 +6,41 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (late night) — SAP V2 — first contract using ES V2.0 operators
+
+**Focus:** the natural follow-through to today's language extension. SAP gets rewritten to use the new `>>` operator for exact-exponential decay, replacing the V1 linear-decay approximation.
+**Commits shipped:** 2 on main (`9ae49052` + `8ff84cb9`). Branch `sap-v2-exponential` ff-merged + deleted.
+**Math change:**
+| age | V1 linear | V2 exponential |
+|---|---|---|
+| 0   | 1000 | 1000 |
+| 10  | 500 (half-life — matches) | 500 |
+| 20  | **0** (V1 "expired") | **250** (V2 says: another half-life) |
+| 30  | 0 | 125 |
+| 99  | 0 | 1 |
+| 100 | 0 | 0 (integer-truncated: 1000 >> 10 = 0) |
+**Deliverables:**
+| File | Change |
+|---|---|
+| `contracts/evaporscript/sap.es` | `current_value` / `has_active_aq` / `epochs_until_expiry` rewritten with `initial_value >> ((epoch+1 - aq_born) / half_life)`. Shift count clamped to `< 64` (the VM rejects ≥ 64); `epochs_until_expiry` returns the over-approximate `64 × half_life − age` upper bound since exact `log2(initial) × half_life` is awkward in EvaporScript. |
+| `dapps/sap/src/contract.ts` | Byte-stable inline copy synced to the .es. |
+| `dapps/sap/src/value.ts` | `valueAtEpoch` / `hasActiveAq` / `epochsUntilExpiry` BigInt port matches on-chain integer-truncated `>>` byte-for-byte. |
+| `crates/evaporchain-script/src/lib.rs` | `sap_pilot::value_decays_linearly_to_zero_at_2hl` renamed to `value_decays_exponentially_via_shift`. New assertions cover age 0 / 9 / 10 / 20 / 30 / 99 / 100 / 200. `epochs_until_expiry_counts_down` updated for the V2 bound (640 instead of 20). |
+| `dapps/sap/test/sap.test.ts` | TS test expectations updated to V2 math. |
+**Empirical results:** **10/10 sap_pilot pass on hel-2** + **10/10 dApp TS tests pass locally.** Initial run failed one assertion (epoch=10_000 was past the CHAIN contract's own lifespan with chain energy=1_000_000 + half_life=100 → contract evaporates around epoch ~2000). Fix: lowered to epoch=200, still "way past AQ expiry" (AQ dies at age=100) but safely within chain contract lifespan.
+**Decisions made:**
+- **`has_active_aq` collapses to `current_value > 0`.** V1 had a separate gate at `age >= 2*half_life`; V2 just reads the value (the doctrine claim is "alive while value > 0", which integer-truncation under `>>` makes a natural floor).
+- **`epochs_until_expiry` becomes over-approximate.** Reports `64 × half_life − age` as the upper bound. The exact floor-to-zero point depends on `log2(initial_value)` which EvaporScript V1+V2 can't compute cleanly. dApps that need the truth poll `current_value` directly.
+- **First end-to-end consumer of the V2 operators.** Validates that the language change works for real contracts, not just unit tests. Mnemochain V2 rewrite is the obvious follow-up — same shape, same operators, same TS-port cascade.
+**What's next:**
+- **Mnemochain V2** — rewrite the linear retrievability for exponential via `>>`. Same scope (~5 files), same shape as SAP.
+- The 12 reference-contract dApp clients still need the auth-injection fix.
+- T3.1 cluster bring-up still gated on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Cross-references:** commits `9ae49052` (V2 rewrite) + `8ff84cb9` (epoch fix); files listed above; language ext at `crates/evaporchain-script/src/{parser,compiler,vm}.rs` from `cac72707`.
+
+---
+
 ## 2026-05-31 (night) — EvaporScript V2.0 — *= /= << >> + paren-LHS in if
 
 **Focus:** the heavy follow-up to today's contract arc. Every parser-limit lesson learned writing the 12 reference contracts gets fixed at the language layer, not papered over with workarounds. ~450 LOC added across parser + compiler + VM + tests.
