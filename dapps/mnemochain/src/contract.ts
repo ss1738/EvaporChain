@@ -58,20 +58,20 @@ export const MNEMOCHAIN_SOURCE = `contract MnemoChain {
         if self.has_reviewed == false {
             return 10000
         }
-        if epoch >= self.last_review_epoch + self.stability {
+        if epoch < self.last_review_epoch {
+            return 10000
+        }
+        if 2 * (epoch - self.last_review_epoch) / self.stability >= 64 {
             return 0
         }
-        return 10000 * (self.last_review_epoch + self.stability - epoch) / self.stability
+        return 10000 >> (2 * (epoch - self.last_review_epoch) / self.stability)
     }
 
     fn is_due() -> bool {
         if self.has_reviewed == false {
             return false
         }
-        if epoch >= self.last_review_epoch + self.stability {
-            return true
-        }
-        if 10 * epoch >= 10 * self.last_review_epoch + self.stability {
+        if 2 * (epoch - self.last_review_epoch) >= self.stability {
             return true
         }
         return false
@@ -132,10 +132,10 @@ export const MNEMOCHAIN_SOURCE = `contract MnemoChain {
         if self.has_reviewed == false {
             return 0
         }
-        if 10 * epoch >= 10 * self.last_review_epoch + self.stability {
+        if 2 * (epoch - self.last_review_epoch) >= self.stability {
             return 0
         }
-        return self.last_review_epoch + self.stability / 10 - epoch
+        return self.last_review_epoch + self.stability / 2 - epoch
     }
 
     on_grace() {

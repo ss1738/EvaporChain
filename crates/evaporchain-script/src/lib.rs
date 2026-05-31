@@ -5764,12 +5764,21 @@ mod mnemochain_pilot {
     }
 
     #[test]
-    fn retrievability_decays_linearly_within_stability_window() {
-        // stability=10, reviewed at epoch=0 → retrievability:
-        //   age=0 → 10000 (full)
-        //   age=5 → 5000 (half-life equivalent)
-        //   age=10 → 0 (window edge)
-        //   age=20 → 0 (past)
+    fn retrievability_decays_exponentially_via_shift() {
+        // V2 math (ES V2.0 operators, commit cac72707, 2026-05-31):
+        // retrievability halves every `stability / 2` epochs.
+        //   shift = (age × 2) / stability
+        //   r_bp  = 10000 >> shift
+        //
+        // stability=10, reviewed at epoch=0:
+        //   age=0  → shift 0  → 10000
+        //   age=4  → shift 0  → 10000 (still inside first half-life)
+        //   age=5  → shift 1  → 5000  (first halving)
+        //   age=10 → shift 2  → 2500  (V1 said 0; V2 says exponential)
+        //   age=15 → shift 3  → 1250
+        //   age=65 → shift 13 → 1 (10000 / 8192 ≈ 1)
+        //   age=70 → shift 14 → 0 (10000 / 16384 < 1 by integer trunc)
+        //   age=100 → shift 20 → 0 (cap)
         let (mut engine, id) = deploy_arm();
         engine
             .call(id, "review", vec![Value::U64(2)], holder(), 0)
@@ -5783,18 +5792,52 @@ mod mnemochain_pilot {
         );
         assert_eq!(
             engine
+                .call(id, "retrievability_bp", vec![], stranger(), 4)
+                .unwrap()
+                .return_value,
+            Value::U64(10000)
+        );
+        // age=5 (first half-life): 5000 — matches V1 at this point.
+        assert_eq!(
+            engine
                 .call(id, "retrievability_bp", vec![], stranger(), 5)
                 .unwrap()
                 .return_value,
             Value::U64(5000)
         );
+        // age=10 (V1 cliff): V2 says 2500 (second halving).
         assert_eq!(
             engine
                 .call(id, "retrievability_bp", vec![], stranger(), 10)
                 .unwrap()
                 .return_value,
+            Value::U64(2500)
+        );
+        // age=15: 1250 (third halving).
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 15)
+                .unwrap()
+                .return_value,
+            Value::U64(1250)
+        );
+        // age=65: 10000 >> 13 = 1.
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 65)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // age=70: 10000 >> 14 = 0 (integer-truncated to zero).
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 70)
+                .unwrap()
+                .return_value,
             Value::U64(0)
         );
+        // Way past: still 0.
         assert_eq!(
             engine
                 .call(id, "retrievability_bp", vec![], stranger(), 100)
@@ -5805,10 +5848,14 @@ mod mnemochain_pilot {
     }
 
     #[test]
-    fn is_due_fires_at_90_percent_retrievability() {
-        // stability=10 (Hard keeps it), reviewed at epoch=0.
-        // 90% threshold at age=1: 10*1 >= 10*0 + 10 → 10 >= 10 → due.
-        // age=0 → 10000bp → not due.
+    fn is_due_fires_at_first_halving() {
+        // V2: due when retrievability halves (shift ≥ 1), which is
+        // when age ≥ stability / 2. V1 used a 10% threshold (90%
+        // retrievability) at age = stability / 10; with `>>`-based
+        // decay the smallest shift step is 1, so the natural
+        // doctrine becomes "due at half-faded" (5000bp).
+        //
+        // stability=10, reviewed at epoch=0 → due at age ≥ 5.
         let (mut engine, id) = deploy_arm();
         engine
             .call(id, "review", vec![Value::U64(2)], holder(), 0)
@@ -5820,14 +5867,23 @@ mod mnemochain_pilot {
                 .return_value,
             Value::Bool(false)
         );
+        // age=4: not yet half-faded.
         assert_eq!(
             engine
-                .call(id, "is_due", vec![], stranger(), 1)
+                .call(id, "is_due", vec![], stranger(), 4)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // age=5 (= stability/2): due.
+        assert_eq!(
+            engine
+                .call(id, "is_due", vec![], stranger(), 5)
                 .unwrap()
                 .return_value,
             Value::Bool(true)
         );
-        // Past the stability window: still due.
+        // Way past: still due.
         assert_eq!(
             engine
                 .call(id, "is_due", vec![], stranger(), 50)

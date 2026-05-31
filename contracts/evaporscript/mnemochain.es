@@ -102,37 +102,43 @@ contract MnemoChain {
     }
 
     // Current retrievability in basis points (0-10000).
+    // V2 EXACT-EXPONENTIAL via `>>` (ES V2.0 operators, commit
+    // cac72707, 2026-05-31). The V1 contract used linear
+    // retrievability `10000 * (stability - age) / stability` as an
+    // approximation because EvaporScript V1 had no `>>`. V2 halves
+    // retrievability every `stability / 2` epochs:
+    //   shift = (age × 2) / stability
+    //   r_bp  = 10000 >> shift   (clamped to 0 at shift >= 64)
+    // This is the FSRS-canonical exponential forgetting curve in
+    // integer-truncated form. The (age × 2) / stability shape is
+    // safer than `age / (stability / 2)` because it avoids the
+    // divide-by-zero edge when stability=1 (the Again-halving floor).
     // Pre-first-review: 10000 (full strength, just learned).
-    // Post-review: linear from 10000 at review_epoch to 0 over
-    // `stability` epochs. Returns 0 past the stability window.
     fn retrievability_bp() -> u64 {
         if self.has_reviewed == false {
             return 10000
         }
-        if epoch >= self.last_review_epoch + self.stability {
+        if epoch < self.last_review_epoch {
+            return 10000
+        }
+        if 2 * (epoch - self.last_review_epoch) / self.stability >= 64 {
             return 0
         }
-        return 10000 * (self.last_review_epoch + self.stability - epoch) / self.stability
+        return 10000 >> (2 * (epoch - self.last_review_epoch) / self.stability)
     }
 
-    // Anki's "due for review" gate. Convention: due when
-    // retrievability drops below 90% (= 9000 basis points). Pre-
-    // first-review counts as NOT due (the card has just been
-    // armed; first review can wait until decay catches up).
-    //
-    // Threshold-math note: retrievability < 9000 means
-    // age/stability > 1/10, equivalently 10*age > stability,
-    // equivalently 10*epoch > 10*last_review + stability. Using
-    // addition form so the parser doesn't trip on subtraction in
-    // an if condition.
+    // V2 due-for-review gate. With exponential decay there's no
+    // clean 90% threshold (10000 >> shift never hits 9000 — the
+    // first step below 10000 is 5000 at shift=1). So V2 fires due
+    // when retrievability has at least halved (shift ≥ 1), which
+    // corresponds to age ≥ stability / 2 — the memory's half-life.
+    // The doctrine claim "due when the memory has half-faded" matches
+    // FSRS's review-on-target-retrievability principle.
     fn is_due() -> bool {
         if self.has_reviewed == false {
             return false
         }
-        if epoch >= self.last_review_epoch + self.stability {
-            return true
-        }
-        if 10 * epoch >= 10 * self.last_review_epoch + self.stability {
+        if 2 * (epoch - self.last_review_epoch) >= self.stability {
             return true
         }
         return false
@@ -192,19 +198,16 @@ contract MnemoChain {
         return self.sealed
     }
 
-    // Epochs until the card is due (drops below 90% retrievability).
+    // V2: due-threshold age = stability / 2 (when retrievability
+    // first halves to 5000bp). Already due? Return 0.
     fn epochs_until_due() -> u64 {
         if self.has_reviewed == false {
             return 0
         }
-        // due-threshold is at age = stability / 10
-        // (when 10*age == stability, retrievability = 9000bp).
-        // Already due? Return 0.
-        if 10 * epoch >= 10 * self.last_review_epoch + self.stability {
+        if 2 * (epoch - self.last_review_epoch) >= self.stability {
             return 0
         }
-        // age_at_due = stability / 10  →  due_epoch = last_review + stability/10
-        return self.last_review_epoch + self.stability / 10 - epoch
+        return self.last_review_epoch + self.stability / 2 - epoch
     }
 
     on_grace() {
