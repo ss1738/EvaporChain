@@ -1,0 +1,10 @@
+{
+  "name": "mortal-message",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MortalMessage typed client — chain client for contracts/evaporscript/mortal_message.es, the canonical EvaporScript pilot contract. The contract's own energy IS the message lifespan. Distinct from dapps/mortal-messages (legacy Vite UI dApp); this is the byte-stable typed client for the reference-contract grid.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

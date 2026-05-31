@@ -6,6 +6,34 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (evening) — MortalMessage typed client — the canonical pilot, finally with a client
+
+**Focus:** ship the typed client for the chain's canonical pilot contract. `contracts/evaporscript/mortal_message.es` is referenced in the project CLAUDE.md as the "Reference pilot" for EvaporScript (`§Two unifying invariants` #2), but no `dapps/mortal-message/` typed client existed — only the legacy Vite UI `dapps/mortal-messages/`. Close the gap.
+**Commits shipped:** 1 on main (`<this>`).
+**Deliverables:**
+| File | Notes |
+|---|---|
+| `dapps/mortal-message/{package.json, src/contract.ts, src/client.ts, test/mortal-message.test.ts}` | Byte-stable inline copy of `mortal_message.es` + payload builders (3 mutators: `set_payload`, `read`, `record_boost`; 1 view: `inspect`) + auth-injected Tx wrappers. **9/9 TS tests pass** via `npm test`. |
+| `dapps/index.html` | Reference-contract count bumped 14 → 15. |
+**Doctrine claim it activates:**
+- The contract's *own* energy IS the message lifespan. No application code drives decay — the chain runtime walks the contract through active → grace → ghost → tomb. `on_refresh` bumps `boost_count`; `on_evaporate` emits the terminal event. The lifecycle IS the entity.
+- `read()` gates on `caller ∈ {sender, recipient}` via an `||` clause — pinning test catches any accidental `&&` (which would lock everyone out).
+**Empirical results:** 9/9 TS tests green. Cargo pilot was already green pre-session (`crates/evaporchain-script/tests/mortal_message_pilot.rs`, pre-existing — this contract is the FIRST pilot in the stdlib).
+**Decisions made:**
+- **Named `mortal-message` (singular) to distinguish from `mortal-messages` (plural, legacy Vite UI).** Two dApps with one-letter-different names is a recipe for confusion, but the plural UI ships actual end-user mailing flows while the singular dir is the canonical typed-client peer of `sap/`, `subscription/`, `deadman-switch/`, etc. The naming is intentional, not a typo.
+- **Pinned the `||` vs `&&` invariant** in a dedicated test. The read-gate is doctrinally load-bearing (privacy surface for sender + intended recipient); an accidental `&&` would brick every message. Cheap test, large blast-radius savings.
+- **Pinned the `on_refresh` runtime-hook body** in a dedicated test. `boost_count` + `last_boost_epoch` are the only public telemetry of refresh activity, so clients depending on them must trip the test if the hook body is ever silently dropped.
+**Today's arc** (4 ships, all on the dApp-surface lane):
+1. (morning) Legacy dApps inventory → landing-page integration (10 legacy apps documented, 0 archived)
+2. (midday) DeadMan Switch contract + cargo pilot (9/9 on Mini-1) + typed client
+3. (afternoon) DeadMan Vista — visceral simulator UI (5th lens on the chain)
+4. (late afternoon) Subscription typed client (chain-as-keeper for recurring payments)
+5. (evening) MortalMessage typed client (the canonical pilot's missing client)
+**What's next:** 21 more .es files still lack typed clients. The cadence is ~30-45 min per contract following the established template. Candidates by user-facing value: `bounty.es`, `multisig.es`, `payment_split.es`, `time_lock.es`, `vesting_schedule.es`, `lottery.es`, `sealed_bid_auction.es`, `oracle_feed.es`, `mortal_nft.es`.
+**Cross-references:** files `dapps/mortal-message/*`, `dapps/index.html`. Pilot source: `contracts/evaporscript/mortal_message.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/mortal_message_pilot.rs`.
+
+---
+
 ## 2026-05-31 (late afternoon) — Subscription typed client — close a dApp-coverage gap
 
 **Focus:** ship the dApp client for `contracts/evaporscript/subscription.es`. The .es file + cargo pilot have been in tree for weeks; the typed client was the missing piece preventing browser-side deploys.
