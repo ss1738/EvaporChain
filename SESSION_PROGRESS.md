@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (pre-dawn) — shared/auth.ts + 12 client integration — real unblock
+
+**Focus:** the audit-flagged auth-injection gap. The 12 reference-contract dApp clients called /api/tx/* without an Authorization header → they 401 against any auth-mounted node (incl. the public devnet). Wallet shipped the token; this commit makes the rest of the dApps read it.
+**Commits shipped:** 1 on main (`d261f190`).
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `dapps/shared/auth.ts` (~165 LOC) | New shared module. `LS_KEYS` pins the wallet's localStorage contract (single source of truth, mirrors `dapps/wallet/index.html`). `DEFAULT_NODE = http://89.167.52.40:8099`. Pure reads: `getToken`, `getNode`, `isAuthed`, `getProfile`. Writes (for wallet adoption): `setSession`, `clearSession`. Network: **`authedPost`** + `authedGet` — inject `Authorization: Bearer ${token}` when a token is in storage, degrade gracefully when not. Centralized `TxResponse` interface. localStorage polyfill for node:test runs. |
+| `dapps/shared/test/auth.test.ts` (8 tests) | Coverage of getToken / getNode (default fallback + trailing-slash strip) / isAuthed / getProfile / clearSession (node URL preserved) / LS_KEYS literal-string pinning (catches drift between this and the wallet) / DEFAULT_NODE pinning / setSession idempotency. **8/8 pass.** |
+| 12 reference-contract `client.ts` files refactored | One pass via a Python helper. Each file's local `TxResponse` interface + local `async function post(...)` block replaced with:<br>`import { authedPost, type TxResponse } from "../../shared/auth.ts";`<br>`export type { TxResponse };`<br>`const post = authedPost;`<br>The existing `*Tx` exports keep working unchanged; payload builders + their tests untouched (they're pure functions of the payload schema). |
+**Empirical results:** **103/103 tests green** — every existing dApp test suite still passes (decay-access-pass 6/6, mortal-dao 8/8, bell-oracle 8/8, refresh-market 10/10, witnessfit 10/10, mayfly 6/6, childkey 7/7, scl 6/6, gallery-forgets 8/8, sfsv 7/7, sap 10/10, mnemochain 9/9 — 95 total) plus shared 8/8. The auth integration doesn't break anything; it just adds the Authorization header on writes.
+**Decisions made:**
+- **localStorage as the shared-state mechanism**, not a shared in-memory module. Each dApp page is a separate JS module graph; localStorage is the natural cross-page state store within the same origin. When the wallet logs out, every other dApp tab sees the cleared token on its next read — no propagation protocol needed.
+- **Pin the LS_KEYS contract in a test.** A literal-string assertion in `auth.test.ts` catches any rename on either side (the wallet's inline JS or `auth.ts`). Cheap insurance against contract drift.
+- **Bash-driven refactor of 12 files in one pass.** A Python helper walked each `client.ts`, located the `export interface TxResponse {...}` start + the close of `async function post(...)`, and replaced with the import block. Idempotent — re-running skips files already integrated. Cleaner than 12 manual edits, less brittle than a regex (line-by-line walk handles the inner `{...}` of the fetch options).
+- **The wallet keeps inline JS, doesn't import the TS module.** Wallet is plain HTML+JS; importing a `.ts` from a static page would need a build step. The keys are the contract; both sides use them; LS_KEYS test catches drift. If the wallet migrates to a TS build later, it picks up `setSession`/`clearSession` from the shared module without touching the contract.
+**What's next:**
+- **End-to-end deploy test against the public node** — wallet register → verify → login → switch to (say) decay-access-pass dApp → call `deployTx` → watch the chain accept it. Validates the whole stack end-to-end. Should mostly Just Work given the auth is now wired.
+- T3.1 cluster bring-up still gated on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Cross-references:** commit `d261f190`; files `dapps/shared/{auth.ts,test/auth.test.ts,package.json}` + 12 modified `dapps/*/src/client.ts`. Wallet shape source: `dapps/wallet/index.html` (`LS` object) + `crates/evaporchain-node/src/auth.rs` (SESSION_TTL_SECS, request/response types).
+
+---
+
 ## 2026-05-31 (overnight) — MnemoChain V2 — second contract using ES V2.0 operators
 
 **Focus:** mirror the SAP V2 rewrite. MnemoChain swaps linear retrievability for the FSRS-canonical exponential via `>>`.
