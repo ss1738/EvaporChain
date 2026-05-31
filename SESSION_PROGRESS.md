@@ -6,6 +6,37 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (late evening) — MortalNft typed client — the headline doctrine claim
+
+**Focus:** ship the typed client for `contracts/evaporscript/mortal_nft.es`. Decaying NFTs are EvaporChain's headline catalogue claim ("mint, trade, refresh — hoarded NFTs evaporate, owned-and-loved ones persist"). The .es file + cargo pilot have been in tree; the typed client was the missing piece.
+**Commits shipped:** 1 on main (`<this>`).
+**Deliverables:**
+| File | Notes |
+|---|---|
+| `dapps/mortal-nft/{package.json, src/contract.ts, src/client.ts, test/mortal-nft.test.ts}` | Byte-stable inline copy of mortal_nft.es + payload builders (2 mutators: `set_metadata`, `transfer`; 3 views: `current_owner`, `metadata_uri`, `transfers`) + auth-injected Tx wrappers. **10/10 TS tests pass** via `npm test`. |
+| `dapps/index.html` | Reference-contract count bumped 15 → 16. |
+**Doctrine claim it activates:**
+- Each NFT is its own contract instance; the contract's *own* energy IS the NFT's lifespan. Hoarded NFTs evaporate; refreshed ones persist. The chain itself maintains the "owned-and-loved vs forgotten" sort.
+- The auth model surfaces a subtle but doctrinally critical distinction: `set_metadata` gates on the EvaporScript builtin `owner` (the minter, immutable); `transfer` gates on `self.holder` (the current holder, mutable). Two address concepts, two different require()s.
+**Empirical results:** 10/10 TS tests green. Cargo pilot was already green pre-session (`crates/evaporchain-script/tests/mortal_nft_pilot.rs`).
+**Decisions made:**
+- **Named `mortal-nft` (singular) to distinguish from `nft-marketplace` (legacy plural Vite UI).** Same disambiguation pattern as mortal-message vs mortal-messages.
+- **Two pinned-invariant tests beyond payload shape:**
+  1. **NFT-1 (state field is `holder` not `owner`)** — the audit-2026-05-17 rename from `owner` to `holder` removed a builtin-shadowing bug. The compiler now rejects builtin-reserved names, but the test pins the literal so a future refactor can't silently reintroduce it.
+  2. **transfer() gates on `self.holder` not `owner`** — using the wrong field would give the minter perpetual claw-back ability, a critical departure from NFT norms. Pin the literal guard.
+**Today's arc** (6 ships, all on the dApp-surface lane, all on main):
+1. (morning) Legacy dApps inventory → landing-page integration
+2. (midday) DeadMan Switch — contract + cargo pilot (9/9 on Mini-1) + typed client
+3. (afternoon) DeadMan Vista — visceral simulator UI (5th lens)
+4. (late afternoon) Subscription typed client
+5. (evening) MortalMessage typed client (canonical pilot)
+6. (late evening) MortalNft typed client (headline doctrine claim)
+**Today's count totals:** 6 commits on main, 1,500+ LOC across .es / cargo / TS / HTML, 48 TS tests (15+8+9+10 sum-of-today + 6 baseline) and 9 cargo tests added.
+**What's next:** 20 more .es files lack typed clients. Cadence ~30-45 min each. Strongest candidates: `bounty.es`, `multisig.es`, `payment_split.es`, `time_lock.es`, `vesting_schedule.es`, `lottery.es`, `sealed_bid_auction.es`, `oracle_feed.es`.
+**Cross-references:** files `dapps/mortal-nft/*`, `dapps/index.html`. Pilot source: `contracts/evaporscript/mortal_nft.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/mortal_nft_pilot.rs`.
+
+---
+
 ## 2026-05-31 (evening) — MortalMessage typed client — the canonical pilot, finally with a client
 
 **Focus:** ship the typed client for the chain's canonical pilot contract. `contracts/evaporscript/mortal_message.es` is referenced in the project CLAUDE.md as the "Reference pilot" for EvaporScript (`§Two unifying invariants` #2), but no `dapps/mortal-message/` typed client existed — only the legacy Vite UI `dapps/mortal-messages/`. Close the gap.

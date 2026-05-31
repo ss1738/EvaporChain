@@ -1,0 +1,10 @@
+{
+  "name": "mortal-nft",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MortalNft typed client — chain client for contracts/evaporscript/mortal_nft.es. Each NFT is its own contract instance; the contract's own energy IS the NFT's lifespan. Distinct from dapps/nft-marketplace (legacy Vite UI); this is the byte-stable typed client.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
