@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EvaporChain — Decay Vista</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Soft fade effect for evaporated cards. */
+    .ghost { filter: grayscale(0.8) opacity(0.55); transition: filter 0.4s; }
+    .gone  { filter: grayscale(1) opacity(0.25); transition: filter 0.4s; }
+    .bar   { transition: width 0.15s linear, background-color 0.4s linear; }
+    .grace-flash { animation: pulse 1.2s infinite; }
+    @keyframes pulse {
+      0%, 100% { background-color: rgb(254 215 170); }   /* amber-200 */
+      50%      { background-color: rgb(252 165 165); }   /* red-300  */
+    }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <header class="border-b border-slate-200 bg-white">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center gap-4">
+      <div class="flex-1">
+        <h1 class="text-xl font-semibold tracking-tight">Decay Vista</h1>
+        <p class="text-xs text-slate-500">Every contract fades unless refreshed — EvaporChain doctrine, in motion.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">epoch</span>
+        <span id="epoch" class="font-mono text-lg tabular-nums">0</span>
+      </div>
+    </div>
+    <div class="max-w-6xl mx-auto px-6 pb-4 flex items-center gap-3 text-sm">
+      <button id="play"  class="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700">▶ play</button>
+      <button id="pause" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏸ pause</button>
+      <button id="step"  class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏭ step +1</button>
+      <button id="step5" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">⏭⏭ step +10</button>
+      <button id="reset" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">↺ reset</button>
+      <span class="text-slate-400 mx-2">|</span>
+      <label class="text-xs text-slate-600">speed</label>
+      <select id="speed" class="text-xs border rounded px-2 py-1 bg-white">
+        <option value="2000">slow (1 epoch / 2s)</option>
+        <option value="1000" selected>medium (1 epoch / 1s)</option>
+        <option value="400">fast (1 epoch / 0.4s)</option>
+        <option value="100">very fast (1 epoch / 0.1s)</option>
+      </select>
+      <span id="status" class="ml-auto text-xs text-slate-400">paused</span>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" id="cards">
+    <!-- Cards rendered by JS -->
+  </main>
+
+  <footer class="max-w-6xl mx-auto px-6 pb-12 text-xs text-slate-500">
+    <p class="mb-1">Doctrine: every contract holds a finite energy. Decay is automatic; refresh is opt-in. Below the floor, the contract STILL EXISTS but its <em>view</em> reads "expired" — until the energy hits zero, when the contract evaporates and no method can be called.</p>
+    <p>This demo runs the canonical <code class="bg-slate-100 px-1 rounded">energy_at_epoch</code> formula in your browser. Refresh a card to reset its <code class="bg-slate-100 px-1 rounded">born_epoch</code> back to <em>now</em> — the same op `<code class="bg-slate-100 px-1 rounded">/api/v1/contract/refresh</code> would perform on a live node.</p>
+    <p class="mt-2 text-slate-400">Math mirrors <code class="bg-slate-100 px-1 rounded">contracts/evaporscript/{decay_access_pass,mortal_message,mayfly,sap,witnessfit,mnemochain}.es</code> byte-for-byte.</p>
+  </footer>
+
+  <script type="module">
+    // ── Canonical EvaporChain decay math (mirrors src/sim.ts) ─────
+    function energyAtEpoch(initial, halfLife, epochs) {
+      if (halfLife <= 0n) return 0n;
+      if (epochs < 0n) return initial;
+      const fullHalvings = epochs / halfLife;
+      if (fullHalvings >= 64n) return 0n;
+      const afterHalvings = initial >> fullHalvings;
+      const remainder = epochs % halfLife;
+      const fractionalDecay = (afterHalvings * remainder) / (2n * halfLife);
+      const r = afterHalvings - fractionalDecay;
+      return r < 0n ? 0n : r;
+    }
+
+    // ── Demo state — six contracts of distinct decay shapes ───────
+    function initial() {
+      return {
+        epoch: 0n,
+        message: {
+          kind: 'mortal-message',
+          icon: '💌',
+          title: 'Mortal Message',
+          body: 'happy birthday — read me before I burn',
+          initialEnergy: 1000n,
+          halfLife: 50n,
+          bornEpoch: 0n,
+          refreshes: 0,
+        },
+        pass: {
+          kind: 'access-pass',
+          icon: '🎫',
+          title: 'Decay Access Pass',
+          holder: '0x22a8…f01',
+          initialEnergy: 1000n,
+          halfLife: 60n,
+          floor: 250n,
+          bornEpoch: 0n,
+          revoked: false,
+          refreshes: 0,
+        },
+        mayfly: {
+          kind: 'mayfly',
+          icon: '🦟',
+          title: 'Mayfly (NFT)',
+          metadata: 'one day, one wing',
+          initialEnergy: 1000n,
+          halfLife: 10n,
+          bornEpoch: 0n,
+          refreshes: 0,
+        },
+        aq: {
+          kind: 'attention-quantum',
+          icon: '⚛',
+          title: 'Attention Quantum',
+          initialValue: 1000n,
+          halfLife: 45n,
+          bornEpoch: 0n,
+          redeemed: false,
+        },
+        streak: {
+          kind: 'streak',
+          icon: '🏃',
+          title: 'WitnessFit Streak',
+          streakCount: 0n,
+          peak: 0n,
+          lastCheckin: 0n,
+          hasCheckedIn: false,
+          halfLife: 7n,
+          boostThresholdBp: 5000n,
+        },
+        card: {
+          kind: 'mnemo-card',
+          icon: '📚',
+          title: 'MnemoChain (FSRS)',
+          question: 'capital of Mongolia?',
+          stability: 10n,
+          lastReview: 0n,
+          hasReviewed: false,
+        },
+      };
+    }
+
+    let v = initial();
+    let timer = null;
+
+    // ── Render helpers ────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const setStatus = (s) => $('status').textContent = s;
+
+    function pctOf(value, max) {
+      // Both BigInt — return number 0-100.
+      if (max === 0n) return 0;
+      const x = (value * 1000n) / max;
+      return Math.max(0, Math.min(100, Number(x) / 10));
+    }
+
+    function band(pct, withFloor = null) {
+      // amber/grace under 30% of max; red below floor (if given).
+      if (pct === 0) return { color: 'bg-slate-400', label: 'GONE' };
+      if (withFloor !== null && pct < withFloor) return { color: 'bg-red-400 grace-flash', label: 'EXPIRED' };
+      if (pct < 30) return { color: 'bg-amber-400 grace-flash', label: 'GRACE' };
+      if (pct < 60) return { color: 'bg-amber-500', label: 'FADING' };
+      return { color: 'bg-emerald-500', label: 'ACTIVE' };
+    }
+
+    function cardShell(stateClass) {
+      return `<div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 ${stateClass}">`;
+    }
+
+    function bar(pctNum, barClass) {
+      return `<div class="w-full h-2 bg-slate-100 rounded overflow-hidden">
+                <div class="bar h-2 ${barClass}" style="width:${pctNum}%"></div>
+              </div>`;
+    }
+
+    function fmtBig(n) { return n.toString(); }
+
+    // ── Per-card renderers ────────────────────────────────────────
+    function renderMortalMessage(m, epoch) {
+      const e = energyAtEpoch(m.initialEnergy, m.halfLife, epoch - m.bornEpoch);
+      const pct = pctOf(e, m.initialEnergy);
+      const b = band(pct);
+      const age = epoch - m.bornEpoch;
+      const shellClass = e === 0n ? 'gone' : (pct < 30 ? 'ghost' : '');
+      return cardShell(shellClass) +
+        `<div class="flex items-start gap-3">
+          <span class="text-2xl">${m.icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800">${m.title}</div>
+            <div class="text-xs text-slate-500 truncate">"${m.body}"</div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded ${b.color} text-white">${b.label}</span>
+        </div>
+        <div class="mt-3">${bar(pct, b.color)}</div>
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 font-mono">
+          <span>strength ${fmtBig(e)} / ${fmtBig(m.initialEnergy)}</span>
+          <span>age ${age}</span>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs">
+          <span class="text-slate-400">refreshes: ${m.refreshes}</span>
+          <button data-action="refresh-message" class="px-2 py-1 rounded bg-sky-100 hover:bg-sky-200 text-sky-800 text-xs">↻ refresh</button>
+        </div>
+      </div>`;
+    }
+
+    function renderAccessPass(p, epoch) {
+      const e = energyAtEpoch(p.initialEnergy, p.halfLife, epoch - p.bornEpoch);
+      const pct = pctOf(e, p.initialEnergy);
+      const floorPct = pctOf(p.floor, p.initialEnergy);
+      const valid = !p.revoked && e >= p.floor;
+      const b = p.revoked ? { color: 'bg-slate-500', label: 'REVOKED' }
+              : !valid && e > 0n ? { color: 'bg-red-400 grace-flash', label: 'EXPIRED' }
+              : e === 0n ? { color: 'bg-slate-400', label: 'GONE' }
+              : band(pct, floorPct);
+      const shellClass = p.revoked || e === 0n ? 'gone' : (!valid ? 'ghost' : '');
+      return cardShell(shellClass) +
+        `<div class="flex items-start gap-3">
+          <span class="text-2xl">${p.icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800">${p.title}</div>
+            <div class="text-xs text-slate-500 truncate">holder ${p.holder}</div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded ${b.color} text-white">${b.label}</span>
+        </div>
+        <div class="mt-3 relative">
+          ${bar(pct, b.color)}
+          <div class="absolute top-0 h-2 border-l-2 border-slate-700" style="left:${floorPct}%" title="floor"></div>
+        </div>
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 font-mono">
+          <span>energy ${fmtBig(e)} (floor ${fmtBig(p.floor)})</span>
+          <span>age ${epoch - p.bornEpoch}</span>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs gap-2">
+          <span class="text-slate-400">refreshes: ${p.refreshes}</span>
+          <div class="flex gap-1">
+            <button data-action="revoke-pass" class="px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-xs" ${p.revoked?'disabled':''}>${p.revoked?'revoked':'revoke'}</button>
+            <button data-action="refresh-pass" class="px-2 py-1 rounded bg-sky-100 hover:bg-sky-200 text-sky-800 text-xs">↻ refresh</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function renderMayfly(m, epoch) {
+      const e = energyAtEpoch(m.initialEnergy, m.halfLife, epoch - m.bornEpoch);
+      const pct = pctOf(e, m.initialEnergy);
+      const b = e === 0n ? { color: 'bg-slate-400', label: 'GONE' } : band(pct);
+      const shellClass = e === 0n ? 'gone' : (pct < 25 ? 'ghost' : '');
+      return cardShell(shellClass) +
+        `<div class="flex items-start gap-3">
+          <span class="text-2xl">${m.icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800">${m.title}</div>
+            <div class="text-xs text-slate-500 italic">"${m.metadata}"</div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded ${b.color} text-white">${b.label}</span>
+        </div>
+        <div class="mt-3">${bar(pct, b.color)}</div>
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 font-mono">
+          <span>energy ${fmtBig(e)} / ${fmtBig(m.initialEnergy)}</span>
+          <span>age ${epoch - m.bornEpoch}</span>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs">
+          <span class="text-slate-400">refreshes: ${m.refreshes} (defying nature)</span>
+          <button data-action="refresh-mayfly" class="px-2 py-1 rounded bg-sky-100 hover:bg-sky-200 text-sky-800 text-xs">↻ refresh</button>
+        </div>
+      </div>`;
+    }
+
+    function attentionValue(a, epoch) {
+      if (a.redeemed) return 0n;
+      const lifespan = 2n * a.halfLife;
+      const age = epoch - a.bornEpoch;
+      if (age < 0n) return a.initialValue;
+      if (age >= lifespan) return 0n;
+      return (a.initialValue * (lifespan - age)) / lifespan;
+    }
+    function renderAttentionQuantum(a, epoch) {
+      const val = attentionValue(a, epoch);
+      const pct = pctOf(val, a.initialValue);
+      const b = a.redeemed ? { color: 'bg-indigo-500', label: 'REDEEMED' }
+              : val === 0n ? { color: 'bg-slate-400', label: 'GONE' }
+              : band(pct);
+      const shellClass = val === 0n || a.redeemed ? 'gone' : (pct < 30 ? 'ghost' : '');
+      return cardShell(shellClass) +
+        `<div class="flex items-start gap-3">
+          <span class="text-2xl">${a.icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800">${a.title}</div>
+            <div class="text-xs text-slate-500">linear-decay AQ (V1 approx of exponential)</div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded ${b.color} text-white">${b.label}</span>
+        </div>
+        <div class="mt-3">${bar(pct, b.color)}</div>
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 font-mono">
+          <span>value ${fmtBig(val)} / ${fmtBig(a.initialValue)}</span>
+          <span>age ${epoch - a.bornEpoch}</span>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs">
+          <span class="text-slate-400">${a.redeemed?'redeemed (terminal)':'live'}</span>
+          <button data-action="redeem-aq" class="px-2 py-1 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs" ${a.redeemed?'disabled':''}>${a.redeemed?'done':'redeem'}</button>
+        </div>
+      </div>`;
+    }
+
+    function renderStreak(s, epoch) {
+      let streak = 0n;
+      let live = false;
+      let remaining = 0n;
+      if (s.hasCheckedIn) {
+        if (epoch <= s.lastCheckin + s.halfLife) {
+          streak = s.streakCount;
+          live = true;
+          remaining = s.lastCheckin + s.halfLife - epoch;
+        }
+      }
+      const pct = s.halfLife > 0n ? pctOf(remaining, s.halfLife) : 0;
+      const hasBoost = live && s.peak > 0n && s.streakCount * 10000n >= s.boostThresholdBp * s.peak;
+      const b = !s.hasCheckedIn ? { color: 'bg-slate-300', label: 'NEW' }
+              : !live ? { color: 'bg-slate-400', label: 'LOST' }
+              : pct < 30 ? { color: 'bg-amber-500 grace-flash', label: 'CHECK-IN SOON' }
+              : { color: 'bg-emerald-500', label: 'ACTIVE' };
+      const shellClass = !s.hasCheckedIn ? '' : (!live ? 'ghost' : '');
+      return cardShell(shellClass) +
+        `<div class="flex items-start gap-3">
+          <span class="text-2xl">${s.icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800">${s.title}</div>
+            <div class="text-xs text-slate-500">streak resets if window passes — peak preserved</div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded ${b.color} text-white">${b.label}</span>
+        </div>
+        <div class="mt-3">${bar(pct, b.color)}</div>
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 font-mono">
+          <span>streak ${fmtBig(streak)}  peak ${fmtBig(s.peak)}</span>
+          <span>window ${fmtBig(remaining)}/${fmtBig(s.halfLife)}  ${hasBoost?'★ boost':''}</span>
+        </div>
+        <div class="mt-3 flex items-center justify-end text-xs">
+          <button data-action="checkin" class="px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs">✓ check-in</button>
+        </div>
+      </div>`;
+    }
+
+    function renderCard(c, epoch) {
+      let r = 10000n;
+      if (c.hasReviewed) {
+        if (epoch >= c.lastReview + c.stability) r = 0n;
+        else r = (10000n * (c.lastReview + c.stability - epoch)) / c.stability;
+      }
+      const pct = Number(r) / 100;
+      const due = c.hasReviewed && (epoch >= c.lastReview + c.stability || 10n * epoch >= 10n * c.lastReview + c.stability);
+      const b = !c.hasReviewed ? { color: 'bg-slate-300', label: 'NEW' }
+              : r === 0n ? { color: 'bg-red-400', label: 'FORGOTTEN' }
+              : due ? { color: 'bg-amber-500 grace-flash', label: 'DUE' }
+              : { color: 'bg-emerald-500', label: 'FRESH' };
+      const shellClass = r === 0n ? 'ghost' : '';
+      return cardShell(shellClass) +
+        `<div class="flex items-start gap-3">
+          <span class="text-2xl">${c.icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800">${c.title}</div>
+            <div class="text-xs text-slate-500 italic">"${c.question}"</div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded ${b.color} text-white">${b.label}</span>
+        </div>
+        <div class="mt-3">${bar(pct, b.color)}</div>
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 font-mono">
+          <span>retrievability ${pct.toFixed(1)}%</span>
+          <span>stability ${fmtBig(c.stability)}</span>
+        </div>
+        <div class="mt-3 flex items-center justify-end gap-1 text-xs">
+          <button data-action="review-1" class="px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800">Again</button>
+          <button data-action="review-2" class="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-800">Hard</button>
+          <button data-action="review-3" class="px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800">Good</button>
+          <button data-action="review-4" class="px-2 py-1 rounded bg-sky-100 hover:bg-sky-200 text-sky-800">Easy</button>
+        </div>
+      </div>`;
+    }
+
+    // ── Render orchestration ──────────────────────────────────────
+    function render() {
+      $('epoch').textContent = v.epoch.toString();
+      $('cards').innerHTML =
+        renderMortalMessage(v.message, v.epoch) +
+        renderAccessPass(v.pass, v.epoch) +
+        renderMayfly(v.mayfly, v.epoch) +
+        renderAttentionQuantum(v.aq, v.epoch) +
+        renderStreak(v.streak, v.epoch) +
+        renderCard(v.card, v.epoch);
+    }
+
+    // ── Tick + controls ───────────────────────────────────────────
+    function tick(by = 1n) {
+      v.epoch += by;
+      render();
+    }
+
+    function startTimer() {
+      stopTimer();
+      const speed = parseInt($('speed').value, 10);
+      timer = setInterval(() => tick(1n), speed);
+      setStatus(`playing (1 epoch / ${speed}ms)`);
+    }
+
+    function stopTimer() {
+      if (timer !== null) { clearInterval(timer); timer = null; }
+      setStatus('paused');
+    }
+
+    $('play').onclick  = startTimer;
+    $('pause').onclick = stopTimer;
+    $('step').onclick  = () => tick(1n);
+    $('step5').onclick = () => tick(10n);
+    $('reset').onclick = () => { stopTimer(); v = initial(); render(); };
+    $('speed').onchange = () => { if (timer !== null) startTimer(); };
+
+    // Card-level refresh buttons (delegated).
+    $('cards').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-action]');
+      if (!btn) return;
+      const a = btn.getAttribute('data-action');
+      if (a === 'refresh-message') { v.message = { ...v.message, bornEpoch: v.epoch, refreshes: v.message.refreshes + 1 }; }
+      else if (a === 'refresh-pass') { v.pass = { ...v.pass, bornEpoch: v.epoch, refreshes: v.pass.refreshes + 1, revoked: false }; }
+      else if (a === 'revoke-pass') { v.pass = { ...v.pass, revoked: true }; }
+      else if (a === 'refresh-mayfly') { v.mayfly = { ...v.mayfly, bornEpoch: v.epoch, refreshes: v.mayfly.refreshes + 1 }; }
+      else if (a === 'redeem-aq') { v.aq = { ...v.aq, redeemed: true }; }
+      else if (a === 'checkin') {
+        const s = v.streak;
+        if (!s.hasCheckedIn) {
+          v.streak = { ...s, streakCount: 1n, lastCheckin: v.epoch, hasCheckedIn: true, peak: s.peak > 1n ? s.peak : 1n };
+        } else if (v.epoch > s.lastCheckin) {
+          const next = v.epoch <= s.lastCheckin + s.halfLife ? s.streakCount + 1n : 1n;
+          v.streak = { ...s, streakCount: next, lastCheckin: v.epoch, peak: next > s.peak ? next : s.peak };
+        }
+      } else if (a.startsWith('review-')) {
+        const rating = parseInt(a.split('-')[1], 10);
+        const c = v.card;
+        let nextStability = c.stability;
+        if (rating === 1) { nextStability = c.stability / 2n; if (nextStability < 1n) nextStability = 1n; }
+        else if (rating === 3) { nextStability = c.stability * 2n; }
+        else if (rating === 4) { nextStability = c.stability * 3n; }
+        v.card = { ...c, stability: nextStability, lastReview: v.epoch, hasReviewed: true };
+      }
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

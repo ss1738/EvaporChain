@@ -1,0 +1,11 @@
+{
+  "name": "decay-vista",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Decay Vista — a single-page browser demo showing EvaporChain contracts decaying in real-time. The doctrine made visible: every contract fades unless refreshed. Open dapps/decay-vista/index.html in a browser; no install needed.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "serve": "python3 -m http.server 8000 --directory ."
+  }
+}
