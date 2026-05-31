@@ -1,0 +1,10 @@
+{
+  "name": "mnemochain",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MnemoChain dApp — chain client for contracts/evaporscript/mnemochain.es. FSRS-lite spaced-repetition card. Portable cognitive credentials with on-chain review history.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

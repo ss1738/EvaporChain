@@ -1,0 +1,220 @@
+// MnemoChain — Anki on-chain. Reference contract behind
+// MNEMOCHAIN_CARD (0x0001_0302, Consumer lane), closing the LAST
+// catalogue gap.
+//
+// Doctrine claim (from the catalogue): "Anki on-chain with FSRS
+// forgetting curves. Portable cognitive credentials."
+//
+// One contract = one CARD. The deployer (owner) arm()s with a
+// holder address, a content hash (off-chain payload — the
+// question/answer side), and an initial stability. The holder
+// review()s the card on each recall attempt, rating 1=Again /
+// 2=Hard / 3=Good / 4=Easy; the contract updates stability +
+// counters accordingly.
+//
+// FSRS is approximated, not implemented exactly. V1 EvaporScript
+// has no `**` operator or bit-shift, so the proper exponential
+// retrievability curve `R(t) = (1 + 19*t/(81*S))^(-0.5)` (FSRS-4.5
+// shape) isn't expressible. We use a LINEAR retrievability:
+// strength goes from 10000 basis points (=1.0) at review_epoch to
+// 0 over `stability` epochs. The doctrine — "intervals double on
+// Good, halve on Again" — holds exactly; only the within-window
+// shape differs. V2 EvaporScript with `**` can swap the
+// retrievability_bp() body without touching the rest.
+//
+// Stability progression (FSRS-inspired):
+//   Again (1): stability /= 2, clamped to 1 minimum
+//   Hard  (2): stability unchanged
+//   Good  (3): stability *= 2
+//   Easy  (4): stability *= 3
+//
+// Cards are TRANSFERABLE — the holder may transfer() to a new
+// holder, who inherits the full review history (the portable
+// cognitive credential pattern: prove you've memorised something
+// without trusting the platform that taught it to you).
+
+contract MnemoChain {
+    state {
+        holder: address
+        card_content_hash: string = ""
+
+        // ── FSRS-lite state ────────────────────────────────────────
+        stability: u64 = 10
+        last_review_epoch: u64 = 0
+        // sentinel for last_review_epoch — epoch=0 vs never-reviewed
+        // is the standard hazard from this session's other contracts.
+        has_reviewed: bool = false
+
+        // ── counters ───────────────────────────────────────────────
+        review_count: u64 = 0
+        total_again_count: u64 = 0
+        total_good_count: u64 = 0
+        // Hard reviews are tracked separately so analytics can
+        // distinguish "barely remembered" from "remembered well."
+        total_hard_count: u64 = 0
+
+        sealed: bool = false
+    }
+
+    // Owner-only, one-shot: arm with (holder, content_hash, initial_stability).
+    fn arm(card_holder: address, content: string, initial_stability: u64) {
+        require(caller == owner, "only deployer arms")
+        require(self.sealed == false, "already armed")
+        require(initial_stability > 0, "initial_stability must be positive")
+        self.holder = card_holder
+        self.card_content_hash = content
+        self.stability = initial_stability
+        self.sealed = true
+        emit("card armed")
+    }
+
+    // Holder reviews the card with a rating (1=Again, 2=Hard,
+    // 3=Good, 4=Easy). Stability mutates per the FSRS-lite table.
+    fn review(rating: u64) {
+        require(self.sealed == true, "not armed")
+        require(caller == self.holder, "only holder reviews")
+        require(rating >= 1, "rating must be 1-4")
+        require(rating <= 4, "rating must be 1-4")
+        if rating == 1 {
+            // Again — memory broke; halve stability with min-1 floor.
+            self.stability = self.stability / 2
+            if self.stability < 1 {
+                self.stability = 1
+            }
+            self.total_again_count += 1
+        } else if rating == 2 {
+            // Hard — remembered with effort; stability unchanged.
+            self.total_hard_count += 1
+        } else if rating == 3 {
+            // Good — interval doubles (FSRS canonical).
+            self.stability *= 2
+            self.total_good_count += 1
+        } else {
+            // Easy (rating == 4) — interval triples.
+            self.stability *= 3
+            self.total_good_count += 1
+        }
+        self.last_review_epoch = epoch
+        self.has_reviewed = true
+        self.review_count += 1
+        emit("card reviewed")
+    }
+
+    // Current retrievability in basis points (0-10000).
+    // Pre-first-review: 10000 (full strength, just learned).
+    // Post-review: linear from 10000 at review_epoch to 0 over
+    // `stability` epochs. Returns 0 past the stability window.
+    fn retrievability_bp() -> u64 {
+        if self.has_reviewed == false {
+            return 10000
+        }
+        if epoch >= self.last_review_epoch + self.stability {
+            return 0
+        }
+        return 10000 * (self.last_review_epoch + self.stability - epoch) / self.stability
+    }
+
+    // Anki's "due for review" gate. Convention: due when
+    // retrievability drops below 90% (= 9000 basis points). Pre-
+    // first-review counts as NOT due (the card has just been
+    // armed; first review can wait until decay catches up).
+    //
+    // Threshold-math note: retrievability < 9000 means
+    // age/stability > 1/10, equivalently 10*age > stability,
+    // equivalently 10*epoch > 10*last_review + stability. Using
+    // addition form so the parser doesn't trip on subtraction in
+    // an if condition.
+    fn is_due() -> bool {
+        if self.has_reviewed == false {
+            return false
+        }
+        if epoch >= self.last_review_epoch + self.stability {
+            return true
+        }
+        if 10 * epoch >= 10 * self.last_review_epoch + self.stability {
+            return true
+        }
+        return false
+    }
+
+    // Holder transfers the card. The full review history carries
+    // over — the new holder gets to continue the streak.
+    fn transfer(to: address) {
+        require(self.sealed == true, "not armed")
+        require(caller == self.holder, "only current holder transfers")
+        self.holder = to
+        emit("card transferred")
+    }
+
+    // ── Views ──────────────────────────────────────────────────────
+    fn is_holder(who: address) -> bool {
+        if self.sealed == false {
+            return false
+        }
+        return who == self.holder
+    }
+
+    fn card_content_view() -> string {
+        require(self.sealed == true, "not armed")
+        return self.card_content_hash
+    }
+
+    fn stability_view() -> u64 {
+        return self.stability
+    }
+
+    fn last_review_view() -> u64 {
+        return self.last_review_epoch
+    }
+
+    fn has_been_reviewed() -> bool {
+        return self.has_reviewed
+    }
+
+    fn review_count_view() -> u64 {
+        return self.review_count
+    }
+
+    fn again_count() -> u64 {
+        return self.total_again_count
+    }
+
+    fn good_count() -> u64 {
+        return self.total_good_count
+    }
+
+    fn hard_count() -> u64 {
+        return self.total_hard_count
+    }
+
+    fn is_armed() -> bool {
+        return self.sealed
+    }
+
+    // Epochs until the card is due (drops below 90% retrievability).
+    fn epochs_until_due() -> u64 {
+        if self.has_reviewed == false {
+            return 0
+        }
+        // due-threshold is at age = stability / 10
+        // (when 10*age == stability, retrievability = 9000bp).
+        // Already due? Return 0.
+        if 10 * epoch >= 10 * self.last_review_epoch + self.stability {
+            return 0
+        }
+        // age_at_due = stability / 10  →  due_epoch = last_review + stability/10
+        return self.last_review_epoch + self.stability / 10 - epoch
+    }
+
+    on_grace() {
+        emit("card energy low — refresh to keep practising")
+    }
+
+    on_refresh() {
+        emit("card refreshed")
+    }
+
+    on_evaporate() {
+        emit("card evaporated — memory archived")
+    }
+}

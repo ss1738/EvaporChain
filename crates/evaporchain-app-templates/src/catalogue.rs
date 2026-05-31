@@ -183,7 +183,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "MnemoChain (FSRS Card)",
             "Consumer",
             json!({"initial_energy": 1000, "initial_stability": 10}),
-            "Anki on-chain with FSRS forgetting curves. Portable cognitive credentials.",
+            "Anki on-chain with FSRS forgetting curves. Portable cognitive credentials — the card travels with its review history, so 'I've remembered this for two years' is a chain-verifiable claim. V1 reference uses linear retrievability + Again/Hard/Good/Easy stability mutations (canonical FSRS interval doubling on Good); V2 swaps in exact exponential when EvaporScript gets bit-shift. Reference contract: contracts/evaporscript/mnemochain.es.",
             "evaporchain-mnemochain",
         )
         .expect("MnemoChain descriptor is constant"),

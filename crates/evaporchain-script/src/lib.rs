@@ -5462,3 +5462,454 @@ mod sap_pilot {
     }
 }
 
+#[cfg(test)]
+mod mnemochain_pilot {
+    //! Reference-contract pilot: deploys
+    //! `contracts/evaporscript/mnemochain.es` via `ScriptEngine`
+    //! and exercises the FSRS-lite doctrine — stability mutates
+    //! on Again/Hard/Good/Easy, retrievability decays linearly
+    //! within the stability window, is_due fires at the 90%
+    //! threshold.
+    use super::*;
+
+    const SRC: &str = include_str!("../../../contracts/evaporscript/mnemochain.es");
+
+    fn deployer() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn holder() -> AccountAddress {
+        [0x22; 32]
+    }
+    fn new_holder() -> AccountAddress {
+        [0x23; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    /// Deploy + arm with holder + initial_stability=10.
+    fn deploy_arm() -> (ScriptEngine, u64) {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, deployer(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(holder()),
+                    Value::Str("ipfs://card-front-back".to_string()),
+                    Value::U64(10),
+                ],
+                deployer(),
+                0,
+            )
+            .unwrap();
+        (engine, id)
+    }
+
+    #[test]
+    fn mnemochain_is_totality_clean() {
+        let ast = parser::parse(SRC).expect("parses");
+        totality::check_total_contract(&ast).expect("totality-clean");
+    }
+
+    #[test]
+    fn arm_owner_only_validates_one_shot() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, deployer(), 1_000_000, 100, 0).unwrap();
+        // Stranger cannot arm.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(holder()),
+                    Value::Str("c".to_string()),
+                    Value::U64(10)
+                ],
+                stranger(),
+                0
+            )
+            .is_err());
+        // Zero stability rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(holder()),
+                    Value::Str("c".to_string()),
+                    Value::U64(0)
+                ],
+                deployer(),
+                0
+            )
+            .is_err());
+        // OK.
+        engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(holder()),
+                    Value::Str("c".to_string()),
+                    Value::U64(10),
+                ],
+                deployer(),
+                0,
+            )
+            .unwrap();
+        // Second arm rejected.
+        assert!(engine
+            .call(
+                id,
+                "arm",
+                vec![
+                    Value::Address(holder()),
+                    Value::Str("c".to_string()),
+                    Value::U64(20)
+                ],
+                deployer(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn review_holder_only_with_valid_rating() {
+        let (mut engine, id) = deploy_arm();
+        // Stranger cannot review.
+        assert!(engine
+            .call(id, "review", vec![Value::U64(3)], stranger(), 1)
+            .is_err());
+        // Rating outside [1,4] rejected.
+        assert!(engine
+            .call(id, "review", vec![Value::U64(0)], holder(), 1)
+            .is_err());
+        assert!(engine
+            .call(id, "review", vec![Value::U64(5)], holder(), 1)
+            .is_err());
+        // Good rating OK.
+        engine
+            .call(id, "review", vec![Value::U64(3)], holder(), 1)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "review_count_view", vec![], stranger(), 1)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+    }
+
+    #[test]
+    fn rating_again_halves_stability_with_floor() {
+        // stability=10 → after Again: 5; after another Again: 2;
+        // again: 1; again: 1 (floor — never drops below 1).
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(id, "review", vec![Value::U64(1)], holder(), 1)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "stability_view", vec![], stranger(), 1)
+                .unwrap()
+                .return_value,
+            Value::U64(5)
+        );
+        engine
+            .call(id, "review", vec![Value::U64(1)], holder(), 2)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "stability_view", vec![], stranger(), 2)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        engine
+            .call(id, "review", vec![Value::U64(1)], holder(), 3)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "stability_view", vec![], stranger(), 3)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        engine
+            .call(id, "review", vec![Value::U64(1)], holder(), 4)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "stability_view", vec![], stranger(), 4)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // 4 againsa accumulated.
+        assert_eq!(
+            engine
+                .call(id, "again_count", vec![], stranger(), 4)
+                .unwrap()
+                .return_value,
+            Value::U64(4)
+        );
+    }
+
+    #[test]
+    fn rating_good_doubles_easy_triples_hard_unchanged() {
+        let (mut engine, id) = deploy_arm();
+        // Good — 10 → 20
+        engine
+            .call(id, "review", vec![Value::U64(3)], holder(), 1)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "stability_view", vec![], stranger(), 1)
+                .unwrap()
+                .return_value,
+            Value::U64(20)
+        );
+        // Easy — 20 → 60
+        engine
+            .call(id, "review", vec![Value::U64(4)], holder(), 2)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "stability_view", vec![], stranger(), 2)
+                .unwrap()
+                .return_value,
+            Value::U64(60)
+        );
+        // Hard — 60 → 60 (unchanged)
+        engine
+            .call(id, "review", vec![Value::U64(2)], holder(), 3)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "stability_view", vec![], stranger(), 3)
+                .unwrap()
+                .return_value,
+            Value::U64(60)
+        );
+        // Counters: good=1, hard=1, easy is bucketed into good_count.
+        assert_eq!(
+            engine
+                .call(id, "good_count", vec![], stranger(), 3)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        assert_eq!(
+            engine
+                .call(id, "hard_count", vec![], stranger(), 3)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+    }
+
+    #[test]
+    fn retrievability_decays_linearly_within_stability_window() {
+        // stability=10, reviewed at epoch=0 → retrievability:
+        //   age=0 → 10000 (full)
+        //   age=5 → 5000 (half-life equivalent)
+        //   age=10 → 0 (window edge)
+        //   age=20 → 0 (past)
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(id, "review", vec![Value::U64(2)], holder(), 0)
+            .unwrap(); // Hard keeps stability at 10
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(10000)
+        );
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 5)
+                .unwrap()
+                .return_value,
+            Value::U64(5000)
+        );
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 10)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 100)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+    }
+
+    #[test]
+    fn is_due_fires_at_90_percent_retrievability() {
+        // stability=10 (Hard keeps it), reviewed at epoch=0.
+        // 90% threshold at age=1: 10*1 >= 10*0 + 10 → 10 >= 10 → due.
+        // age=0 → 10000bp → not due.
+        let (mut engine, id) = deploy_arm();
+        engine
+            .call(id, "review", vec![Value::U64(2)], holder(), 0)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_due", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "is_due", vec![], stranger(), 1)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+        // Past the stability window: still due.
+        assert_eq!(
+            engine
+                .call(id, "is_due", vec![], stranger(), 50)
+                .unwrap()
+                .return_value,
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn transfer_only_by_holder_carries_history() {
+        let (mut engine, id) = deploy_arm();
+        // Build some history.
+        engine
+            .call(id, "review", vec![Value::U64(3)], holder(), 1)
+            .unwrap();
+        engine
+            .call(id, "review", vec![Value::U64(3)], holder(), 2)
+            .unwrap();
+        // Stranger cannot transfer.
+        assert!(engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(new_holder())],
+                stranger(),
+                3
+            )
+            .is_err());
+        // Holder transfers.
+        engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(new_holder())],
+                holder(),
+                3,
+            )
+            .unwrap();
+        // New holder inherits the review history.
+        assert_eq!(
+            engine
+                .call(id, "review_count_view", vec![], stranger(), 3)
+                .unwrap()
+                .return_value,
+            Value::U64(2)
+        );
+        // Old holder can no longer review.
+        assert!(engine
+            .call(id, "review", vec![Value::U64(3)], holder(), 4)
+            .is_err());
+        // New holder can.
+        engine
+            .call(id, "review", vec![Value::U64(3)], new_holder(), 4)
+            .unwrap();
+        assert_eq!(
+            engine
+                .call(id, "review_count_view", vec![], stranger(), 4)
+                .unwrap()
+                .return_value,
+            Value::U64(3)
+        );
+    }
+
+    #[test]
+    fn pre_arm_views_safe() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, deployer(), 1_000_000, 100, 0).unwrap();
+        assert_eq!(
+            engine
+                .call(id, "is_armed", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine
+                .call(id, "has_been_reviewed", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // is_holder false pre-arm.
+        assert_eq!(
+            engine
+                .call(
+                    id,
+                    "is_holder",
+                    vec![Value::Address(holder())],
+                    stranger(),
+                    0
+                )
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+        // card_content_view reverts pre-arm.
+        assert!(engine
+            .call(id, "card_content_view", vec![], stranger(), 0)
+            .is_err());
+        // review/transfer pre-arm rejected.
+        assert!(engine
+            .call(id, "review", vec![Value::U64(3)], holder(), 0)
+            .is_err());
+        assert!(engine
+            .call(
+                id,
+                "transfer",
+                vec![Value::Address(new_holder())],
+                holder(),
+                0
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn pre_first_review_retrievability_full() {
+        // Pre-first-review: retrievability is 10000 (just learned).
+        let (mut engine, id) = deploy_arm();
+        assert_eq!(
+            engine
+                .call(id, "retrievability_bp", vec![], stranger(), 0)
+                .unwrap()
+                .return_value,
+            Value::U64(10000)
+        );
+        // is_due is false pre-first-review (the card just got
+        // attached; first review wait until the user wants to).
+        assert_eq!(
+            engine
+                .call(id, "is_due", vec![], stranger(), 100)
+                .unwrap()
+                .return_value,
+            Value::Bool(false)
+        );
+    }
+}
+
