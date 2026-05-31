@@ -6,6 +6,41 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (overnight) — MnemoChain V2 — second contract using ES V2.0 operators
+
+**Focus:** mirror the SAP V2 rewrite. MnemoChain swaps linear retrievability for the FSRS-canonical exponential via `>>`.
+**Commits shipped:** 1 on main (`b99c15e1`). Branch `mnemochain-v2-exponential` ff-merged + deleted.
+**Math change:**
+| age | V1 linear (stability=10) | V2 exponential |
+|---|---|---|
+| 0 | 10000 | 10000 |
+| 4 | 6000 | 10000 (still in first half-life window) |
+| 5 | 5000 (matches V1) | 5000 |
+| 10 | **0** (V1 cliff) | **2500** (V2 second halving) |
+| 15 | 0 | 1250 |
+| 65 | 0 | 1 |
+| 70 | 0 | 0 (integer-truncated by `10000 >> 14`) |
+**Deliverables:**
+| File | Change |
+|---|---|
+| `contracts/evaporscript/mnemochain.es` | `retrievability_bp` body rewritten to `10000 >> ((age × 2) / stability)` with shift-clamp at < 64. `is_due` semantics shift from V1's 90% threshold (age ≥ stability/10) to V2's "due-at-first-halving" (age ≥ stability/2 → r ≤ 5000bp). `epochs_until_due` reports distance to first halving. |
+| `dapps/mnemochain/src/contract.ts` | Byte-stable inline copy synced. |
+| `crates/evaporchain-script/src/lib.rs` | `retrievability_decays_linearly_within_stability_window` renamed → `retrievability_decays_exponentially_via_shift` with V2 boundary asserts (age 0/4/5/10/15/65/70/100). `is_due_fires_at_90_percent_retrievability` renamed → `is_due_fires_at_first_halving` (age 0/4/5/50 asserts). |
+**Empirical results:** **10/10 mnemochain_pilot pass on hel-2** first compile.
+**Decisions made:**
+- **`(age × 2) / stability` shape**, not `age / (stability / 2)` — avoids the divide-by-zero when stability=1 (the Again-halving floor).
+- **is_due semantics shift from "90% threshold" to "50% threshold."** With `>>`-based decay the smallest shift step is 1 (10000 → 5000), so there's no integer-clean 90% point. The natural doctrine becomes "due at half-faded" which matches FSRS's review-on-target-retrievability principle. Better than fudging the threshold to a non-canonical bucket.
+- **Same pattern as SAP V2** — once the operators ship, every contract that wants exponential decay gets the same 5-file cascade (.es body, lib.rs pilot tests, dApp inline, optional BigInt port, dApp tests). The repeatable shape proves the language layer was the right place to fix this.
+**What's next:**
+- All ES V2.0 follow-through done — both contracts that used linear approximations now use exact exponential.
+- Other dApp tests + decay-vista's simulator could optionally be updated to mirror V2 math, but they're independent simulators not contract bytecode — no on-chain dependency.
+- The 12 reference-contract dApp clients still need the auth-injection fix.
+- T3.1 cluster bring-up still gated on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Cross-references:** commit `b99c15e1`; files listed above; ES V2.0 ops at commit `cac72707`; SAP V2 sibling at `8ff84cb9`.
+
+---
+
 ## 2026-05-31 (late night) — SAP V2 — first contract using ES V2.0 operators
 
 **Focus:** the natural follow-through to today's language extension. SAP gets rewritten to use the new `>>` operator for exact-exponential decay, replacing the V1 linear-decay approximation.
