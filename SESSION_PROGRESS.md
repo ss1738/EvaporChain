@@ -6,6 +6,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (late evening) — wallet dApp — auth-flow front door
+
+**Focus:** address the real gap surfaced this afternoon. The 12 reference-contract dApp clients call `/api/tx/*` without an Authorization header — against any node with auth middleware mounted (which the public devnet is) they 401. A wallet handling register/verify/login + storing the token in localStorage is the missing piece that lets the other dApps actually write to a live chain.
+**Commits shipped:** 2 on main (`1bcd4c01` + `87223e62`).
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `dapps/wallet/index.html` | ~390 LOC single file. Three-step stepper (register / verify / login) with per-step panel + visible HTTP response for every action. Logged-in view shows email + display name + user id + truncated token + copy button + a `GET /api/auth/me` probe button. Logout calls `/api/auth/logout` best-effort + clears localStorage. Devnet helpers: the register response includes `verification_code` directly (no SMTP wired); verify form is auto-prefilled with email + code; explicit "skip to verify" / "skip to login" links for when you already have credentials. |
+| localStorage contract | Established for the entire dApps directory: `evaporchain_wallet_node` / `..._token` / `..._email` / `..._user_id` / `..._display_name`. Other dApps in this directory will read these on load to build authenticated requests. |
+| Landing page update | `dapps/index.html` gets a top "start here · auth front door" card linking to the wallet (full-width row above the four-lens grid). Local-dev cheatsheet extended to include the wallet serve command. |
+**Empirical results:** wallet UI renders cleanly, all four panels (register / verify / login / logged-in) state-machine correctly. CORS path works from port 3000 (same allowlist as four-act-console + block-explorer). Status badge polls /api/network/health every 5s and falls back to "unreachable" when CORS blocks (file://) or network fails. Schema verified against `crates/evaporchain-node/src/auth.rs`: RegisterReq line 46, VerifyEmailReq line 87, LoginReq line 63, SESSION_TTL_SECS 86400 (line 21).
+**Decisions made:**
+- **Shared-localStorage contract, not a shared TS module.** A `dapps/shared/auth.ts` would be cleaner, but each existing dApp client.ts is independent + already shipped. Establishing the localStorage keys as the contract keeps the wallet a drop-in front door — the existing dApps can adopt it incrementally without coordinated edits. Next-session work: write `dapps/shared/auth.ts` that the 12 clients import + call `authedPost()` through.
+- **Devnet-aware verification flow.** Register response surfaces `verification_code` directly (auth.rs returns it in devnet mode); wallet pre-fills the verify form. Production setups with SMTP would deliver via email; the wallet still works there because the user pastes the code manually. No code-path change needed.
+- **24-hour session TTL is exposed in the UI** so users know the token will need refreshing. /api/auth/me as the "is the token alive?" probe — visible in the logged-in panel with a one-click test.
+- **The "next step" gap is explicit.** Wallet ships. `dapps/shared/auth.ts` + integration into the 12 client.ts files is the follow-up. Wallet's logged-in panel includes a paragraph linking back to that work so future-me sees it.
+**What's next:**
+- **`dapps/shared/auth.ts` + integrate token-injection into the 12 reference-contract clients.** That's the real unblock — once they include the Authorization header, the dApps actually work end-to-end against the live node.
+- T3.1 cluster bring-up still gated on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Blockers / open questions:** none new.
+**Cross-references:** commits `1bcd4c01` (wallet) + `87223e62` (landing-page link); files `dapps/wallet/{index.html,package.json}`, `dapps/index.html`. Auth schema source: `crates/evaporchain-node/src/auth.rs:21-90,282-499`.
+
+---
+
 ## 2026-05-31 (evening) — dapps/index.html — doctrine landing page
 
 **Focus:** wrap the four-dApp arc with a front door anyone can land on. Hero + four lens-cards + live chain status + local-dev cheatsheet, single file.
