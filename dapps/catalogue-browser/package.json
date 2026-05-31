@@ -1,0 +1,10 @@
+{
+  "name": "catalogue-browser",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Catalogue Browser — single-page dApp listing all 24 registered EvaporChain templates. Filter by lane, search by name, click-through to .es source on GitHub + the sibling dApp client. The front door for the chain's dApp ecosystem.",
+  "scripts": {
+    "serve": "python3 -m http.server 8088 --directory ../.."
+  }
+}

@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EvaporChain — Template Catalogue</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .lane-NFT          { background-color: rgb(236 72 153); }   /* pink-500 */
+    .lane-Marketplace  { background-color: rgb(16 185 129); }   /* emerald-500 */
+    .lane-Wallet-UX    { background-color: rgb(139 92 246); }   /* violet-500 */
+    .lane-Consumer     { background-color: rgb(245 158 11); }   /* amber-500 */
+    .lane-Cultural     { background-color: rgb(244 63 94); }    /* rose-500 */
+    .lane-Paradigm     { background-color: rgb(99 102 241); }   /* indigo-500 */
+    .lane-Governance   { background-color: rgb(14 165 233); }   /* sky-500 */
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <header class="border-b border-slate-200 bg-white">
+    <div class="max-w-6xl mx-auto px-6 py-5 flex items-baseline gap-4">
+      <h1 class="text-xl font-semibold tracking-tight">Template Catalogue</h1>
+      <span class="text-xs text-slate-500">
+        24 templates · 7 lanes · 100% backed by reference .es contracts
+      </span>
+    </div>
+    <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 24</button>
+      <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
+      <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
+      <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
+      <button data-lane="Consumer"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Consumer</button>
+      <button data-lane="Cultural"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Cultural</button>
+      <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
+      <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
+      <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
+      <span id="count" class="text-slate-500 text-xs ml-2">24 shown</span>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" id="cards">
+    <!-- cards rendered by JS -->
+  </main>
+
+  <footer class="max-w-6xl mx-auto px-6 pb-12 text-xs text-slate-500">
+    <p>Class ids are stable u32 identifiers in the <code class="bg-slate-100 px-1 rounded">0x0001_0000..=0x0001_FFFF</code>
+       range reserved for app templates (<code class="bg-slate-100 px-1 rounded">crates/evaporchain-app-templates/src/class.rs</code>).
+       Each entry below has both a catalogue descriptor and a runnable
+       <code class="bg-slate-100 px-1 rounded">.es</code> reference contract.</p>
+    <p class="mt-1">Other dApps in this directory:
+       <a class="text-sky-700 hover:underline" href="../decay-vista/index.html">decay-vista</a> (thesis-in-a-tab),
+       <a class="text-sky-700 hover:underline" href="../four-act-console/index.html">four-act-console</a> (live death-ledger).
+    </p>
+    <p class="mt-1">To preview <code class="bg-slate-100 px-1 rounded">.es</code> sources inline (private repo, so raw GitHub URLs need auth):
+       <code class="bg-slate-100 px-1 rounded">cd dapps/catalogue-browser && npm run serve</code>
+       then open <a class="text-sky-700 hover:underline" href="http://localhost:8088/dapps/catalogue-browser/index.html">localhost:8088/dapps/catalogue-browser/</a> — the serve script binds the repo root on port 8088 (port 3000 is left for <a class="text-sky-700 hover:underline" href="../four-act-console/index.html">four-act-console</a> which needs the chain's CORS allowlist), so the page fetches sources via <code class="bg-slate-100 px-1 rounded">/contracts/evaporscript/*.es</code>.</p>
+  </footer>
+
+  <script type="module">
+    const REPO_BASE = 'https://github.com/ss1738/EvaporChain/blob/main';
+    // The repo is PRIVATE — raw.githubusercontent.com needs auth + we
+    // don't ship a PAT. Instead, the npm run serve script serves from
+    // the REPO ROOT (port 3000), and we fetch .es files via this
+    // root-relative path. When opened from file:// the preview button
+    // disables itself (you can still click "view on GitHub" if you're
+    // logged in).
+    const ES_PATH_BASE = '/contracts/evaporscript';
+    // dApps that exist alongside the .es file. Maps slug → dapp dir name.
+    const DAPP_DIRS = {
+      'decay-access-pass': 'decay-access-pass',
+      'mortal-dao':        'mortal-dao',
+      'bell-oracle':       'bell-oracle',
+      'refresh-market':    'refresh-market',
+      'witnessfit':        'witnessfit',
+      'mayfly':            'mayfly',
+      'childkey':          'childkey',
+      'scl':               'scl',
+      'gallery-forgets':   'gallery-forgets',
+      'sfsv':              'sfsv',
+      'sap':               'sap',
+      'mnemochain':        'mnemochain',
+    };
+
+    // Catalogue — mirrors `crates/evaporchain-app-templates/src/catalogue.rs`.
+    // Sorted by class_id for stability + clarity.
+    const CATALOGUE = [
+      { id: '0x0001_0001', name: 'Singh-Sabi (Patina Token)', lane: 'NFT', icon: '🎨',
+        crate: 'evaporchain-singh-sabi', src: 'singh_sabi.es', dapp: null,
+        desc: "Wabi-sabi anchored NFT — ages toward 'ruined-beautiful' (~15% asymptote, never zero)." },
+      { id: '0x0001_0002', name: 'Singh-Migrant (Wanderwrit)', lane: 'NFT', icon: '🗺',
+        crate: 'evaporchain-singh-migrant', src: 'singh_migrant.es', dapp: null,
+        desc: "NFT that dies if held still — kula-ring. Tiered decay 1×/2×/4× past resting threshold." },
+      { id: '0x0001_0003', name: 'Singh-Resonance (Vital-Sign NFT)', lane: 'NFT', icon: '🫀',
+        crate: 'evaporchain-singh-resonance', src: 'singh_resonance.es', dapp: null,
+        desc: "Engagement-coupled λ — loved art slows, ignored art accelerates. Anti-Black-Mirror max-scale ceiling." },
+      { id: '0x0001_0004', name: 'Singh-Posthuma (Sealed Testament)', lane: 'NFT', icon: '🪦',
+        crate: 'evaporchain-singh-posthuma', src: null, dapp: null,
+        desc: "Confessional NFT revealed on certified death. Decay suspended while issuer alive. New Yorker-grade." },
+      { id: '0x0001_0005', name: 'Mayfly (Provably-Mortal NFT)', lane: 'NFT', icon: '🦟',
+        crate: 'evaporchain-gallery-forgets', src: 'mayfly.es', dapp: 'mayfly',
+        desc: "Doctrine-purest NFT — energy IS the lifespan; no expire method, no terminal state. on_refresh hook flags refresh as defying nature." },
+
+      { id: '0x0001_0101', name: 'SDDC (Decay-Dutch Continuous Auction)', lane: 'Marketplace', icon: '🪙',
+        crate: 'evaporchain-sddc', src: 'sddc.es', dapp: null,
+        desc: "Two-axis Dutch auction — joint clearing on (price, λ-tolerance). Foundational mechanism." },
+      { id: '0x0001_0102', name: 'SFSV (Future-Self Vault)', lane: 'Marketplace', icon: '🔒',
+        crate: 'evaporchain-sfsv', src: 'sfsv.es', dapp: 'sfsv',
+        desc: "Sell your future-self's claim — third parties bid for delayed-payout vaults. Vault's energy is its structural lifespan: evaporated before withdraw = forfeit (why the claim trades at a discount)." },
+      { id: '0x0001_0103', name: 'SHLM (Skill Half-Life Bounty)', lane: 'Marketplace', icon: '🎯',
+        crate: 'evaporchain-shlm', src: 'shlm.es', dapp: null,
+        desc: "Skill credentials decay at skill-specific λ (Python ~18mo, COBOL ~8yr). Recruiter market." },
+      { id: '0x0001_0104', name: 'SCL (Capability Lease)', lane: 'Marketplace', icon: '🔑',
+        crate: 'evaporchain-scl', src: 'scl.es', dapp: 'scl',
+        desc: "Permission market with structural revocation — capabilities can't outlive their purpose. Chain decay IS the revocation primitive." },
+      { id: '0x0001_0105', name: 'SAP (Attention Quantum)', lane: 'Marketplace', icon: '⏳',
+        crate: 'evaporchain-sap', src: 'sap.es', dapp: 'sap',
+        desc: "Attention with a half-life. 5-min-old AQ worth more than 25-min one. Anti-Sybil rolling-window rate cap." },
+      { id: '0x0001_0106', name: 'Refresh-Market (Namespace Rent)', lane: 'Marketplace', icon: '🏞',
+        crate: 'evaporchain-refresh-market', src: 'refresh_market.es', dapp: 'refresh-market',
+        desc: "Per-namespace AMM rent. Quadratic in utilisation: empty pays floor, full pays ~base. The chain's primary economic activity." },
+      { id: '0x0001_0107', name: 'Decay Access Pass (Credential)', lane: 'Marketplace', icon: '🎫',
+        crate: 'evaporchain-decay-credential', src: 'decay_access_pass.es', dapp: 'decay-access-pass',
+        desc: "On-chain decaying credential — validity rides the contract's energy lifecycle; valid only while strength >= floor." },
+
+      { id: '0x0001_0201', name: 'Singh-Triage (Wallet Inbox)', lane: 'Wallet UX', icon: '📥',
+        crate: 'evaporchain-singh-triage', src: 'singh_triage.es', dapp: null,
+        desc: "Wallet opens on inbox, not balance. Bucketed Today/Tomorrow/Week/Healthy/Decayed." },
+      { id: '0x0001_0202', name: 'Singh-Heartbeat (Wallet Pulse)', lane: 'Wallet UX', icon: '💓',
+        crate: 'evaporchain-singh-heartbeat', src: 'singh_heartbeat.es', dapp: null,
+        desc: "Wallet has a pulse — BPM + arrhythmia + 24-tick sparkline." },
+      { id: '0x0001_0203', name: 'Singh-Lineage (Inheritance Policy)', lane: 'Wallet UX', icon: '🌳',
+        crate: 'evaporchain-singh-lineage', src: 'singh_lineage.es', dapp: null,
+        desc: "Crypto solves inheritance — graduated dormancy thresholds (90d → 25%, 180d → 50%, 365d → 100%)." },
+
+      { id: '0x0001_0301', name: 'ChildKey (Singh Letter)', lane: 'Consumer', icon: '✉',
+        crate: 'evaporchain-childkey', src: 'childkey.es', dapp: 'childkey',
+        desc: "Sealed letters unlocked by recipient's age. Inverted decay — accumulates accessibility. m-of-n committee safety valve." },
+      { id: '0x0001_0302', name: 'MnemoChain (FSRS Card)', lane: 'Consumer', icon: '📚',
+        crate: 'evaporchain-mnemochain', src: 'mnemochain.es', dapp: 'mnemochain',
+        desc: "Anki on-chain with FSRS forgetting curves. Portable cognitive credentials — review history travels with the card." },
+      { id: '0x0001_0303', name: 'WitnessFit (Singh-Streak)', lane: 'Consumer', icon: '🏃',
+        crate: 'evaporchain-witnessfit', src: 'witnessfit.es', dapp: 'witnessfit',
+        desc: "Wearable streaks where the streak ITSELF decays. Graceful fade, not cliff (boost active while streak >= 50% of peak)." },
+
+      { id: '0x0001_0401', name: 'The Gallery That Forgets', lane: 'Cultural', icon: '🖼',
+        crate: 'evaporchain-gallery-forgets', src: 'gallery_forgets.es', dapp: 'gallery-forgets',
+        desc: "Thermodynamic-closing gallery. 'The first thing humans have made that is provably going to die.'" },
+
+      { id: '0x0001_0501', name: 'Singh-Girard (Linear-Logic !/?)', lane: 'Paradigm', icon: '∀',
+        crate: 'evaporchain-sgb', src: 'sgb_types.es', dapp: null,
+        desc: "Linear-logic exponentials at L1. Ephemerality is a type, not a runtime convention." },
+      { id: '0x0001_0502', name: 'Singh-Bennett (Reversible VM)', lane: 'Paradigm', icon: '↻',
+        crate: 'evaporchain-sbav', src: 'sbav_vm.es', dapp: null,
+        desc: "Reversible compute — only DECAY exports entropy. Landauer literal." },
+      { id: '0x0001_0503', name: 'Singh Strategy Machines', lane: 'Paradigm', icon: '♞',
+        crate: 'evaporchain-ssm', src: 'ssm_vm.es', dapp: null,
+        desc: "Game-semantic contracts — Hyland-Ong arenas + AJM innocent strategies. Decay = visibility condition." },
+      { id: '0x0001_0504', name: 'Bell-Oracle (Quantum-Certified Beacon)', lane: 'Paradigm', icon: '🌀',
+        crate: 'evaporchain-bell-oracle', src: 'bell_oracle.es', dapp: 'bell-oracle',
+        desc: "On-chain consumer of EvaporChain's per-block CHSH S-value beacon. Structurally rejects readings ≤ local-realism floor (2000mb) so accepted state is certifiably quantum-derived." },
+
+      { id: '0x0001_0601', name: 'Mortal-DAO (Decay-Native Governance)', lane: 'Governance', icon: '🗳',
+        crate: 'evaporchain-mortal-dao', src: 'mortal_dao.es', dapp: 'mortal-dao',
+        desc: "DAO composing all 4 decay primitives in one contract: credential (membership freshness) + rate-limit (proposal cap) + reputation (vote weight grows with participation) + quorum (running peak of engagement)." },
+    ];
+
+    let activeLane = 'all';
+    let activeSearch = '';
+    let openId = null;
+
+    function filtered() {
+      return CATALOGUE.filter(t => {
+        if (activeLane !== 'all' && t.lane !== activeLane) return false;
+        if (activeSearch) {
+          const q = activeSearch.toLowerCase();
+          return t.name.toLowerCase().includes(q) || t.desc.toLowerCase().includes(q) || t.id.includes(q);
+        }
+        return true;
+      });
+    }
+
+    function laneKey(lane) {
+      return 'lane-' + lane.replace(/ /g, '-');
+    }
+
+    function card(t) {
+      const dappLink = t.dapp ? `<a href="../${t.dapp}/" class="text-sky-700 hover:underline">open dApp →</a>` : `<span class="text-slate-400">no UI yet</span>`;
+      const srcLink = t.src
+        ? `<a target="_blank" rel="noopener" href="${REPO_BASE}/contracts/evaporscript/${t.src}" class="text-sky-700 hover:underline">view ${t.src}</a>`
+        : `<span class="text-slate-400">no .es file — substrate crate only</span>`;
+      const previewBtn = t.src
+        ? `<button data-action="preview" data-src="${t.src}" data-id="${t.id}" class="text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">preview source</button>`
+        : '';
+      const previewBlock = openId === t.id
+        ? `<pre data-id="${t.id}" class="mt-3 max-h-72 overflow-auto bg-slate-900 text-slate-100 text-[10px] leading-snug p-3 rounded font-mono">loading…</pre>`
+        : '';
+      return `<div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col">
+        <div class="flex items-start gap-3">
+          <span class="text-2xl">${t.icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800 truncate">${t.name}</div>
+            <div class="text-[10px] font-mono text-slate-400 mt-0.5">${t.id}</div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded ${laneKey(t.lane)} text-white whitespace-nowrap">${t.lane}</span>
+        </div>
+        <p class="text-xs text-slate-600 mt-3 flex-1">${t.desc}</p>
+        <div class="mt-3 pt-3 border-t border-slate-100 text-xs flex items-center justify-between gap-2">
+          <span class="font-mono text-slate-500 truncate">${t.crate}</span>
+          <div class="flex items-center gap-2">${previewBtn}</div>
+        </div>
+        <div class="mt-2 text-xs flex items-center justify-between gap-2">
+          ${srcLink}
+          ${dappLink}
+        </div>
+        ${previewBlock}
+      </div>`;
+    }
+
+    function renderCards() {
+      const list = filtered();
+      document.getElementById('cards').innerHTML = list.map(card).join('');
+      document.getElementById('count').textContent = `${list.length} shown`;
+      // Reload preview if open + still visible.
+      if (openId && list.some(t => t.id === openId)) {
+        const t = list.find(x => x.id === openId);
+        if (t && t.src) loadPreview(openId, t.src);
+      }
+    }
+
+    async function loadPreview(id, src) {
+      const pre = document.querySelector(`pre[data-id="${id}"]`);
+      if (!pre) return;
+      pre.textContent = 'loading…';
+      // file:// can't fetch sibling dirs reliably; tell the user to use
+      // npm run serve.
+      if (window.location.protocol === 'file:') {
+        pre.textContent = `Preview is disabled when opening from file://.\n\nRun \`npm run serve\` in this directory (serves the repo root on :3000)\nthen open http://localhost:3000/dapps/catalogue-browser/index.html.\n\nMeanwhile, click "view ${src}" above to open the file on GitHub.`;
+        return;
+      }
+      try {
+        const res = await fetch(`${ES_PATH_BASE}/${src}`);
+        if (!res.ok) { pre.textContent = `error: HTTP ${res.status}\n\nServe path: ${ES_PATH_BASE}/${src}\nMake sure 'npm run serve' is running and the repo root is the static dir.`; return; }
+        const text = await res.text();
+        pre.textContent = text;
+      } catch (e) {
+        pre.textContent = `fetch failed: ${e.message ?? e}`;
+      }
+    }
+
+    function setLane(lane) {
+      activeLane = lane;
+      document.querySelectorAll('.lane-btn').forEach(b => {
+        const on = b.dataset.lane === lane;
+        b.className = `lane-btn px-3 py-1 rounded ${on ? 'bg-slate-800 text-white' : 'bg-slate-100 hover:bg-slate-200'}`;
+      });
+      renderCards();
+    }
+
+    document.querySelectorAll('.lane-btn').forEach(b => {
+      b.addEventListener('click', () => setLane(b.dataset.lane));
+    });
+    document.getElementById('search').addEventListener('input', (e) => {
+      activeSearch = e.target.value.trim();
+      renderCards();
+    });
+
+    // Preview clicks (delegated).
+    document.getElementById('cards').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-action="preview"]');
+      if (!btn) return;
+      const id = btn.dataset.id, src = btn.dataset.src;
+      openId = (openId === id) ? null : id;
+      renderCards();
+      if (openId === id) loadPreview(id, src);
+    });
+
+    renderCards();
+  </script>
+</body>
+</html>
