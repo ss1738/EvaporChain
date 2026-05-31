@@ -15,10 +15,11 @@
 
 use evaporchain_app_templates::{
     class::{
-        CHILDKEY_LETTER, GALLERY_FORGETS, MAYFLY, MNEMOCHAIN_CARD, REFRESH_MARKET_NAMESPACE,
-        SAP_AQ, SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY,
-        SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA,
-        SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, WITNESSFIT_STREAK,
+        BELL_ORACLE, CHILDKEY_LETTER, DEADMAN_SWITCH, DECAY_ACCESS_PASS, GALLERY_FORGETS, MAYFLY,
+        MNEMOCHAIN_CARD, MORTAL_DAO, REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE,
+        SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE,
+        SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI,
+        SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -64,6 +65,8 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
             "window_epochs",
         ],
         c if c == REFRESH_MARKET_NAMESPACE => &["id_hex", "capacity", "base_rent"],
+        c if c == DECAY_ACCESS_PASS => &["energy", "half_life", "validity_floor"],
+        c if c == DEADMAN_SWITCH => &["initial_energy", "refresh_window"],
         // ── Wallet UX lane ────────────────────────────────────────
         c if c == SINGH_TRIAGE_CONTRACT => &["horizon_today", "horizon_tomorrow", "horizon_week"],
         c if c == SINGH_HEARTBEAT_PULSE => &[
@@ -89,6 +92,15 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
         c if c == SGB_TYPE_SYSTEM => &["fragment"],
         c if c == SBAV_RUNTIME => &["reg_count"],
         c if c == SSM_GAME_SEMANTICS => &["fragment"],
+        c if c == BELL_ORACLE => &["energy", "half_life", "threshold_milli", "max_age_epochs"],
+        // ── Governance lane ───────────────────────────────────────
+        c if c == MORTAL_DAO => &[
+            "energy",
+            "half_life",
+            "freshness_window",
+            "proposal_cap",
+            "voting_window",
+        ],
         // Unrecognised — empty (forward-compat).
         _ => &[],
     }
