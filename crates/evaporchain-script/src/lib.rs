@@ -5913,3 +5913,259 @@ mod mnemochain_pilot {
     }
 }
 
+#[cfg(test)]
+mod es_v2_operators {
+    //! EvaporScript V2.0 — operator extensions shipped 2026-05-31:
+    //!   *= and /= compound assignment (matching +=/-=)
+    //!   << and >> bit-shift (new precedence layer between
+    //!     comparison and additive)
+    //!   `if (expr) op Y` no longer trips the greedy-paren bug in
+    //!     parse_if — `parse_expr` handles paren-wrapped LHS naturally
+    //!     via `parse_primary`
+    //!
+    //! These were all blockers caught in the 2026-05-30/31 contract
+    //! arc; the linear-decay approximations in sap.es and
+    //! mnemochain.es exist because `>>` wasn't expressible, and
+    //! `bell_oracle.es` needed an awkward rewrite (`epoch > X + Y`
+    //! instead of `(epoch - X) > Y`) because of the if-paren bug.
+    use super::*;
+
+    fn owner_addr() -> AccountAddress {
+        [0x11; 32]
+    }
+    fn stranger() -> AccountAddress {
+        [0x33; 32]
+    }
+
+    fn run(source: &str, method: &str, args: Vec<Value>) -> Value {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(source, owner_addr(), 1_000_000, 100, 0).unwrap();
+        engine
+            .call(id, method, args, owner_addr(), 0)
+            .unwrap()
+            .return_value
+    }
+
+    #[test]
+    fn star_assign_state_field() {
+        // self.x *= literal — same path as self.x = self.x * literal
+        // but cleaner. State field site (line ~1107 in parser.rs).
+        const SRC: &str = r#"contract A {
+            state { x: u64 = 5 }
+            fn double() -> u64 {
+                self.x *= 2
+                return self.x
+            }
+        }"#;
+        assert_eq!(run(SRC, "double", vec![]), Value::U64(10));
+    }
+
+    #[test]
+    fn slash_assign_state_field() {
+        const SRC: &str = r#"contract A {
+            state { x: u64 = 10 }
+            fn halve() -> u64 {
+                self.x /= 2
+                return self.x
+            }
+        }"#;
+        assert_eq!(run(SRC, "halve", vec![]), Value::U64(5));
+    }
+
+    #[test]
+    fn star_assign_map_entry() {
+        // self.m[k] *= literal — map-entry site (line ~1054 in parser.rs).
+        const SRC: &str = r#"contract A {
+            state { m: map[address -> u64] }
+            fn set_and_double(who: address) -> u64 {
+                self.m[who] = 7
+                self.m[who] *= 3
+                return self.m[who]
+            }
+        }"#;
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, owner_addr(), 1_000_000, 100, 0).unwrap();
+        let result = engine
+            .call(id, "set_and_double", vec![Value::Address(stranger())], owner_addr(), 0)
+            .unwrap()
+            .return_value;
+        assert_eq!(result, Value::U64(21));
+    }
+
+    #[test]
+    fn slash_assign_map_entry() {
+        const SRC: &str = r#"contract A {
+            state { m: map[address -> u64] }
+            fn set_and_halve(who: address) -> u64 {
+                self.m[who] = 100
+                self.m[who] /= 4
+                return self.m[who]
+            }
+        }"#;
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, owner_addr(), 1_000_000, 100, 0).unwrap();
+        let result = engine
+            .call(id, "set_and_halve", vec![Value::Address(stranger())], owner_addr(), 0)
+            .unwrap()
+            .return_value;
+        assert_eq!(result, Value::U64(25));
+    }
+
+    #[test]
+    fn shl_basic_powers_of_two() {
+        // 1 << N for N = 0..10 — the canonical "fast power-of-two"
+        // pattern that exact-exponential decay needs.
+        const SRC: &str = r#"contract A {
+            state {}
+            fn shifted(n: u64) -> u64 {
+                return 1 << n
+            }
+        }"#;
+        assert_eq!(run(SRC, "shifted", vec![Value::U64(0)]), Value::U64(1));
+        assert_eq!(run(SRC, "shifted", vec![Value::U64(1)]), Value::U64(2));
+        assert_eq!(run(SRC, "shifted", vec![Value::U64(8)]), Value::U64(256));
+        assert_eq!(run(SRC, "shifted", vec![Value::U64(10)]), Value::U64(1024));
+    }
+
+    #[test]
+    fn shr_basic_halvings() {
+        // The doctrine halving — energy_at_epoch's `initial >> fullHalvings`.
+        const SRC: &str = r#"contract A {
+            state {}
+            fn halved(value: u64, n: u64) -> u64 {
+                return value >> n
+            }
+        }"#;
+        assert_eq!(run(SRC, "halved", vec![Value::U64(1024), Value::U64(0)]), Value::U64(1024));
+        assert_eq!(run(SRC, "halved", vec![Value::U64(1024), Value::U64(1)]), Value::U64(512));
+        assert_eq!(run(SRC, "halved", vec![Value::U64(1024), Value::U64(10)]), Value::U64(1));
+        // Past the value's bit width: shifts to zero.
+        assert_eq!(run(SRC, "halved", vec![Value::U64(1024), Value::U64(11)]), Value::U64(0));
+    }
+
+    #[test]
+    fn shift_amount_out_of_range_runtime_errors() {
+        // shift ≥ 64 is rejected with a clear error (NOT silent zero).
+        const SRC: &str = r#"contract A {
+            state {}
+            fn wide(value: u64, n: u64) -> u64 {
+                return value >> n
+            }
+        }"#;
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(SRC, owner_addr(), 1_000_000, 100, 0).unwrap();
+        let err = engine
+            .call(id, "wide", vec![Value::U64(1024), Value::U64(64)], owner_addr(), 0)
+            .unwrap_err();
+        let s = format!("{err:?}");
+        assert!(s.contains("shift amount out of range"), "got {s}");
+    }
+
+    #[test]
+    fn shift_precedence_below_additive_above_comparison() {
+        // a + b << c   parses as  (a + b) << c
+        // a < b << c   parses as  a < (b << c)
+        // Verified by writing literals where the two parses give
+        // visibly different answers.
+        const SRC1: &str = r#"contract A {
+            state {}
+            fn p() -> u64 {
+                // (1 + 2) << 3 = 24; if shift bound tighter, 1 + (2 << 3) = 17.
+                return 1 + 2 << 3
+            }
+        }"#;
+        assert_eq!(run(SRC1, "p", vec![]), Value::U64(24));
+
+        const SRC2: &str = r#"contract A {
+            state {}
+            fn p() -> bool {
+                // 10 < 1 << 4 == (10 < 16) == true.
+                // If parse_comparison called parse_additive (old shape),
+                // 10 < 1 would short-circuit and `<< 4` would dangle.
+                return 10 < 1 << 4
+            }
+        }"#;
+        assert_eq!(run(SRC2, "p", vec![]), Value::Bool(true));
+    }
+
+    #[test]
+    fn if_paren_wrapped_lhs_no_longer_trips_greedy_consumer() {
+        // The exact shape that broke bell_oracle.es on Mini-2:
+        //   if (epoch - X) > Y { ... }
+        // Previously parsed as `if (epoch - X)` + dangling `>`.
+        // Now parse_expr handles the inner paren via parse_primary;
+        // the `>` is a comparison op, the rest is the RHS.
+        const SRC: &str = r#"contract A {
+            state { stamp: u64 = 0 }
+            fn stamped(now: u64) -> bool {
+                self.stamp = 5
+                if (now - self.stamp) > 10 {
+                    return true
+                }
+                return false
+            }
+        }"#;
+        assert_eq!(run(SRC, "stamped", vec![Value::U64(16)]), Value::Bool(true));
+        assert_eq!(run(SRC, "stamped", vec![Value::U64(15)]), Value::Bool(false));
+    }
+
+    #[test]
+    fn if_with_paren_wrapped_full_condition_still_works() {
+        // Regression for the OLD parse_if behaviour — make sure
+        //   if (a > b) { ... }
+        // still works after removing the special case.
+        const SRC: &str = r#"contract A {
+            state {}
+            fn cmp(x: u64) -> bool {
+                if (x > 10) {
+                    return true
+                }
+                return false
+            }
+        }"#;
+        assert_eq!(run(SRC, "cmp", vec![Value::U64(11)]), Value::Bool(true));
+        assert_eq!(run(SRC, "cmp", vec![Value::U64(9)]), Value::Bool(false));
+    }
+
+    #[test]
+    fn exact_halving_decay_via_shift() {
+        // The headline doctrine — the canonical `initial >> halvings`
+        // pattern in `energy_at_epoch` is now expressible in user
+        // contracts. SAP V2 + MnemoChain V2 can swap their linear
+        // decay for this exact curve without a language change.
+        const SRC: &str = r#"contract A {
+            state {}
+            fn decay_at(initial: u64, half_life: u64, epoch_since_birth: u64) -> u64 {
+                if half_life == 0 {
+                    return 0
+                }
+                if epoch_since_birth >= 64 * half_life {
+                    return 0
+                }
+                return initial >> (epoch_since_birth / half_life)
+            }
+        }"#;
+        // initial=1000, half_life=100:
+        //   age 0    → 1000
+        //   age 100  → 500
+        //   age 1000 → 1000 / 1024 = 0 (integer-floored after 10 halvings)
+        //   age 6400 → 0 (past the 64-halving cap)
+        assert_eq!(
+            run(SRC, "decay_at", vec![Value::U64(1000), Value::U64(100), Value::U64(0)]),
+            Value::U64(1000)
+        );
+        assert_eq!(
+            run(SRC, "decay_at", vec![Value::U64(1000), Value::U64(100), Value::U64(100)]),
+            Value::U64(500)
+        );
+        assert_eq!(
+            run(SRC, "decay_at", vec![Value::U64(1024), Value::U64(100), Value::U64(1000)]),
+            Value::U64(1)
+        );
+        assert_eq!(
+            run(SRC, "decay_at", vec![Value::U64(1000), Value::U64(100), Value::U64(6400)]),
+            Value::U64(0)
+        );
+    }
+}
+

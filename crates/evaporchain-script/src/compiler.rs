@@ -26,6 +26,8 @@ pub enum Op {
     Mul,
     Div,
     Mod,
+    Shl, // V2: pop u64 shift, pop u64 value, push value << shift
+    Shr, // V2: pop u64 shift, pop u64 value, push value >> shift
 
     // Comparison
     Eq,
@@ -447,6 +449,8 @@ impl Compiler {
             BinOp::Lte => self.emit(Op::Lte),
             BinOp::And => self.emit(Op::And),
             BinOp::Or => self.emit(Op::Or),
+            BinOp::Shl => self.emit(Op::Shl),
+            BinOp::Shr => self.emit(Op::Shr),
         };
     }
 }
@@ -507,6 +511,8 @@ fn constant_fold(opcodes: &mut Vec<Op>) -> bool {
                     Op::Lte => fold_binop(a, b, BinOp::Lte),
                     Op::And => fold_binop(a, b, BinOp::And),
                     Op::Or => fold_binop(a, b, BinOp::Or),
+                    Op::Shl => fold_binop(a, b, BinOp::Shl),
+                    Op::Shr => fold_binop(a, b, BinOp::Shr),
                     _ => None,
                 };
                 if let Some(result) = folded {
@@ -576,6 +582,13 @@ fn fold_binop(a: &Value, b: &Value, op: BinOp) -> Option<Value> {
         (Value::Bool(x), Value::Bool(y), BinOp::Or) => Some(Value::Bool(*x || *y)),
         (Value::Bool(x), Value::Bool(y), BinOp::Eq) => Some(Value::Bool(x == y)),
         (Value::Bool(x), Value::Bool(y), BinOp::Neq) => Some(Value::Bool(x != y)),
+        // V2: bit-shift folding. Refuse to fold when the shift amount
+        // is ≥ 64 (the runtime VM would otherwise panic on
+        // `1u64 << 64`); emit the explicit Op::Shl / Op::Shr instead
+        // so the VM handles the wide-shift case at runtime via
+        // `checked_shl` / `checked_shr`.
+        (Value::U64(x), Value::U64(y), BinOp::Shl) if *y < 64 => Some(Value::U64(x << y)),
+        (Value::U64(x), Value::U64(y), BinOp::Shr) if *y < 64 => Some(Value::U64(x >> y)),
         (Value::Str(x), Value::Str(y), BinOp::Add) => {
             // SCR-N7 (audit 2026-05-15): refuse to fold a string
             // concat when the result would exceed

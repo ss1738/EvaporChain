@@ -51,6 +51,10 @@ pub enum Token {
     Assign,
     PlusAssign,
     MinusAssign,
+    StarAssign,  // V2: *=
+    SlashAssign, // V2: /=
+    Shl,         // V2: <<
+    Shr,         // V2: >>
     Arrow, // ->
 
     // Delimiters
@@ -163,6 +167,8 @@ pub enum BinOp {
     Lte,
     And,
     Or,
+    Shl, // V2: <<
+    Shr, // V2: >>
 }
 
 /// Unary operator.
@@ -386,8 +392,22 @@ impl Lexer {
                     Token::Minus
                 }
             }
-            '*' => Token::Star,
-            '/' => Token::Slash,
+            '*' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    Token::StarAssign
+                } else {
+                    Token::Star
+                }
+            }
+            '/' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    Token::SlashAssign
+                } else {
+                    Token::Slash
+                }
+            }
             '%' => Token::Percent,
             '=' => {
                 if self.peek() == Some('=') {
@@ -406,7 +426,10 @@ impl Lexer {
                 }
             }
             '>' => {
-                if self.peek() == Some('=') {
+                if self.peek() == Some('>') {
+                    self.advance();
+                    Token::Shr
+                } else if self.peek() == Some('=') {
                     self.advance();
                     Token::Gte
                 } else {
@@ -414,7 +437,10 @@ impl Lexer {
                 }
             }
             '<' => {
-                if self.peek() == Some('=') {
+                if self.peek() == Some('<') {
+                    self.advance();
+                    Token::Shl
+                } else if self.peek() == Some('=') {
                     self.advance();
                     Token::Lte
                 } else {
@@ -796,6 +822,24 @@ impl Parser {
                         value,
                     });
                 }
+                Token::StarAssign => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    return Ok(Stmt::CompoundAssign {
+                        target: AssignTarget::ArrayElement(name, Box::new(index)),
+                        op: BinOp::Mul,
+                        value,
+                    });
+                }
+                Token::SlashAssign => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    return Ok(Stmt::CompoundAssign {
+                        target: AssignTarget::ArrayElement(name, Box::new(index)),
+                        op: BinOp::Div,
+                        value,
+                    });
+                }
                 _ => {
                     return Ok(Stmt::ExprStmt(Expr::ArrayAccess(
                         Box::new(Expr::Variable(name)),
@@ -829,6 +873,24 @@ impl Parser {
                 Ok(Stmt::CompoundAssign {
                     target: AssignTarget::Variable(name),
                     op: BinOp::Sub,
+                    value,
+                })
+            }
+            Token::StarAssign => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Stmt::CompoundAssign {
+                    target: AssignTarget::Variable(name),
+                    op: BinOp::Mul,
+                    value,
+                })
+            }
+            Token::SlashAssign => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Stmt::CompoundAssign {
+                    target: AssignTarget::Variable(name),
+                    op: BinOp::Div,
                     value,
                 })
             }
@@ -873,15 +935,17 @@ impl Parser {
     fn parse_if(&mut self) -> Result<Stmt, ScriptError> {
         self.advance(); // consume 'if'
 
-        // Allow optional parens around condition
-        let has_paren = *self.peek() == Token::LParen;
-        if has_paren {
-            self.advance();
-        }
+        // V2 (2026-05-31): no special-case for paren-wrapped conditions.
+        // The previous "allow optional parens around the condition"
+        // hack greedily consumed `(...)` as if it wrapped the WHOLE
+        // condition, so `if (epoch - X) > Y { ... }` parsed as
+        // `if (epoch - X)` + unexpected `>`. `parse_expr()` already
+        // handles parenthesized sub-expressions via `parse_primary`,
+        // so we just call it directly:
+        //   if a > b { ... }        parses cleanly
+        //   if (a > b) { ... }      parens become a primary sub-expr
+        //   if (epoch - X) > Y { }  parens wrap LHS only, gate works
         let condition = self.parse_expr()?;
-        if has_paren {
-            self.expect(&Token::RParen)?;
-        }
 
         let then_body = self.parse_block()?;
 
@@ -987,6 +1051,24 @@ impl Parser {
                         value,
                     })
                 }
+                Token::StarAssign => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    Ok(Stmt::CompoundAssign {
+                        target,
+                        op: BinOp::Mul,
+                        value,
+                    })
+                }
+                Token::SlashAssign => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    Ok(Stmt::CompoundAssign {
+                        target,
+                        op: BinOp::Div,
+                        value,
+                    })
+                }
                 _ => {
                     // Expression statement: self.field[key] used as expression
                     // Reconstruct the expression
@@ -1022,6 +1104,24 @@ impl Parser {
                 Ok(Stmt::CompoundAssign {
                     target,
                     op: BinOp::Sub,
+                    value,
+                })
+            }
+            Token::StarAssign => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Stmt::CompoundAssign {
+                    target,
+                    op: BinOp::Mul,
+                    value,
+                })
+            }
+            Token::SlashAssign => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Stmt::CompoundAssign {
+                    target,
+                    op: BinOp::Div,
                     value,
                 })
             }
@@ -1095,13 +1195,43 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ScriptError> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_shift()?;
         loop {
             let op = match self.peek() {
                 Token::Gt => BinOp::Gt,
                 Token::Lt => BinOp::Lt,
                 Token::Gte => BinOp::Gte,
                 Token::Lte => BinOp::Lte,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_shift()?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    /// V2: bit-shift operators (<< and >>). Precedence sits BETWEEN
+    /// comparison (lower) and additive (higher), matching C / Rust
+    /// conventions:
+    ///   `a < b << c`  parses as  `a < (b << c)`
+    ///   `a + b << c`  parses as  `(a + b) << c`
+    ///
+    /// This is the canonical layer the on-chain `energy_at_epoch`
+    /// formula needs to be re-expressible in EvaporScript (the V1
+    /// reference contracts use linear-decay approximations because
+    /// the doctrine halving `initial >> fullHalvings` couldn't be
+    /// expressed at all).
+    fn parse_shift(&mut self) -> Result<Expr, ScriptError> {
+        let mut left = self.parse_additive()?;
+        loop {
+            let op = match self.peek() {
+                Token::Shl => BinOp::Shl,
+                Token::Shr => BinOp::Shr,
                 _ => break,
             };
             self.advance();

@@ -44,6 +44,10 @@ const GAS_EMIT_EVENT: u64 = 20;
 const GAS_CALL_EXTERNAL: u64 = 100;
 const GAS_RETURN: u64 = 1;
 const GAS_MOD: u64 = 5;
+/// V2: bit-shift gas. Same cost as a multiply — the operation is
+/// fundamentally cheap (CPU op) but lives in a tier where contracts
+/// can chain many of them to compute exact-exponential decay.
+const GAS_SHIFT: u64 = 5;
 const GAS_ARRAY_NEW: u64 = 5;
 const GAS_ARRAY_GET: u64 = 5;
 const GAS_ARRAY_SET: u64 = 10;
@@ -370,6 +374,35 @@ impl EvaporVM {
                         return Err(ScriptError::Runtime("modulo by zero".into()));
                     }
                     self.push(Value::U64(a % b))?;
+                }
+
+                Op::Shl => {
+                    // V2: pop shift amount (top), then value, push `value << shift`.
+                    // Shifts of ≥64 are rejected at runtime via `checked_shl` —
+                    // returning 0 silently like Rust's debug-mode would hide
+                    // bugs in user contracts; the compiler's constant folder
+                    // also refuses to fold shifts of ≥64 for the same reason.
+                    self.charge_gas(GAS_SHIFT)?;
+                    let shift = self.pop()?.as_u64()?;
+                    let value = self.pop()?.as_u64()?;
+                    if shift >= 64 {
+                        return Err(ScriptError::Runtime(format!(
+                            "shift amount out of range: {shift} >= 64 (use a smaller shift)"
+                        )));
+                    }
+                    self.push(Value::U64(value << shift))?;
+                }
+
+                Op::Shr => {
+                    self.charge_gas(GAS_SHIFT)?;
+                    let shift = self.pop()?.as_u64()?;
+                    let value = self.pop()?.as_u64()?;
+                    if shift >= 64 {
+                        return Err(ScriptError::Runtime(format!(
+                            "shift amount out of range: {shift} >= 64 (use a smaller shift)"
+                        )));
+                    }
+                    self.push(Value::U64(value >> shift))?;
                 }
 
                 Op::Eq => {
