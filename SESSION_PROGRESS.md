@@ -6,6 +6,40 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (night) — EvaporScript V2.0 — *= /= << >> + paren-LHS in if
+
+**Focus:** the heavy follow-up to today's contract arc. Every parser-limit lesson learned writing the 12 reference contracts gets fixed at the language layer, not papered over with workarounds. ~450 LOC added across parser + compiler + VM + tests.
+**Commits shipped:** 1 on main (`cac72707`). Branch `es-v2-operators` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| Tokens (`parser.rs:51-56`) | New `StarAssign`, `SlashAssign`, `Shl`, `Shr`. |
+| Lexer | `'*'` → `StarAssign` if next is `'='`; `'/'` → `SlashAssign` if next is `'='`; `'>'` → `Shr` if next is `'>'`; `'<'` → `Shl` if next is `'<'`. Comment + comparison fallthroughs preserved. |
+| `BinOp` enum | Added `Shl`, `Shr` variants. |
+| Parser: 3 compound-assign sites | Array-element, variable, state-field paths now handle `StarAssign`/`SlashAssign` mirroring `PlusAssign`/`MinusAssign`. |
+| `parse_shift()` precedence layer | Inserted between `parse_comparison` and `parse_additive`, matching C / Rust precedence: `a + b << c` parses as `(a + b) << c`; `a < b << c` parses as `a < (b << c)`. |
+| `parse_if` paren-LHS fix | Removed the greedy "Allow optional parens around condition" hack. `parse_expr` already handles paren-wrapped sub-expressions through `parse_primary`, so `if (epoch - X) > Y { ... }` (the exact shape that broke bell_oracle.es 2026-05-30) now parses cleanly. Regression covered: `if (a > b) { ... }` still works. |
+| Compiler | `Op::Shl`, `Op::Shr` added to opcode enum; `emit_binop` maps `BinOp::Shl/Shr` → ops; constant-fold pass folds `Push(a), Push(b), Shl/Shr` → `Push(result)` when shift < 64 (refuses ≥64 so the runtime decides — keeps compile-time + runtime semantics aligned, same shape as SCR-N2 audit fix for arithmetic). |
+| VM | `GAS_SHIFT = 5` (mul-tier); `Op::Shl` / `Op::Shr` arms pop (shift, value), reject shift ≥ 64 with explicit `ScriptError::Runtime("shift amount out of range")` rather than the silent zero / panic Rust's debug mode gives. |
+| Totality gate | Unchanged. Bit-shifts terminate, compound assignment doesn't introduce loops. V1 no-while rule still passes. |
+| Pilot tests (`mod es_v2_operators`, 11 cases) | star_assign on state field + map entry; slash_assign on state field + map entry; shl/shr basic powers + halvings; shift-amount-out-of-range runtime error; shift precedence below additive + above comparison; paren-LHS in if works for both the regression shape and the `if (a > b)` legacy shape; **exact_halving_decay_via_shift** — the canonical `initial >> (age / half_life)` formula reproducing the first phase of `energy_at_epoch` directly in EvaporScript. |
+**Empirical results:** **11/11 new V2 tests pass first compile on hel-2**; full `evaporchain-script --lib` test suite **263 passed / 0 failed / 0 ignored / 2 filtered out** (the 2 are pre-existing 1MB-allocation memory-stress tests `audit_m15_hash_megabyte_input` + `audit_m15_tostring_megabyte_input` that OOM on hel-2's 4GB box; unrelated to V2). V2 doesn't regress anything.
+**Decisions made:**
+- **Heavy work, language layer, not papered-over.** Every parser-limit caught in the 2026-05-30/31 contract arc — no `*=`, no `/=`, no `>>`, no paren-LHS in `if` — gets fixed at the source rather than worked around per-contract. This is the highest-leverage way to close those bug classes.
+- **C/Rust precedence for `<<` and `>>`** — they sit BETWEEN comparison and additive. That's the precedence the canonical `initial >> (age / half_life)` formula needs to read naturally.
+- **Constant-folder + runtime both refuse shift ≥ 64** — `Push(a), Push(64), Shr` won't be folded at compile time; the runtime errors with a clear "shift amount out of range" message rather than Rust's debug-mode silent zero. Compile-time + runtime semantics stay aligned, same shape as the SCR-N2 audit fix to arithmetic overflow handling.
+- **No totality-gate change.** Bit-shifts terminate trivially; the V1 no-while rule still does its job.
+- **Verified on hel-2, not a Mini.** Mini-2 + Mini-3 still SSH-unreachable; Mini-1 had untracked Cargo.lock conflicts. hel-2 (the public node's host, full Rust toolchain) was the working verification path. Two memory-stress tests skipped explicitly via `--skip` flags — both pre-existing, both unrelated to V2, both designed for big-box environments.
+**What's next:**
+- **Rewrite SAP and MnemoChain to use the new operators** — drop the V1 linear-decay approximations + use `initial >> (age / half_life)` for exact-exponential. Separate commit; the language change ships first so existing contracts don't break.
+- The 12 reference-contract dApp clients still need the auth-injection fix (next-priority).
+- T3.1 cluster bring-up still gated on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `cac72707`; files `crates/evaporchain-script/src/{parser,compiler,vm,lib}.rs`. Token additions at `parser.rs:51-56`, lexer at `:389-440`, BinOp at `:156-170`, parse_shift at `:1117-1149`, parse_if fix at `:873-887`, opcode at `compiler.rs:24-30`, VM dispatch at `vm.rs:380-405`.
+
+---
+
 ## 2026-05-31 (late evening) — wallet dApp — auth-flow front door
 
 **Focus:** address the real gap surfaced this afternoon. The 12 reference-contract dApp clients call `/api/tx/*` without an Authorization header — against any node with auth middleware mounted (which the public devnet is) they 401. A wallet handling register/verify/login + storing the token in localStorage is the missing piece that lets the other dApps actually write to a live chain.
