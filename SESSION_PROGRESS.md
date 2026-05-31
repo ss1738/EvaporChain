@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (overnight, latest) — Catalogue-browser sync: surface 3 new promotions
+
+**Focus:** close the loop on today's 3 catalogue promotions. The dApp-side `catalogue-browser` had a hardcoded 24-entry JS array; the chain side advanced to 27 entries today but the browser couldn't render them. Sync the surface.
+**Commits shipped:** 1 on main (`8977aca4`).
+**Deliverables:**
+| File | Change |
+|---|---|
+| `dapps/catalogue-browser/index.html` | 3 new CATALOGUE entries (`0x0001_0006` Mortal NFT, `0x0001_0108` DeadMan Switch, `0x0001_0109` Subscription) inserted in class-id order. Display strings: header "24 templates · 7 lanes" → "27", "all 24" button → "all 27", default "24 shown" footer → "27". |
+| `dapps/index.html` | Landing-page `<span id="catalogue-count">` 24 → 27. |
+**Empirical results:**
+- Served the repo root on port 8088; `GET /dapps/catalogue-browser/index.html` returns 200 with 5 of 5 expected markers (the 3 new class ids + "27 templates" + "all 27").
+- No stale "24" strings remain (`24 templates`, `all 24`, `24 shown` all gone).
+- `GET /contracts/evaporscript/deadman_switch.es` returns 200 — the browser can fetch the source for inline preview.
+**Decisions made:**
+- **Manual sync, not chain-fetched.** The catalogue-browser keeps the hardcoded JS array rather than fetching `/api/catalogue` from a node. Two reasons: (a) the dApp is the offline-OK "lens on the chain" so it must work without a node, and (b) the chain catalogue lives in Rust code that doesn't change unless a developer ships a new template — manual sync is straightforward each time and avoids a network dep at a doctrine-demo surface.
+- **Insertion in class-id order**, matching the registry's sort discipline (`catalogue.rs` sorts by class.0 then dedupes). Keeps the browser visually consistent with the chain-side serialisation.
+**Today's totals (incl. overnight roll):** 13 commits on main. Reference contracts 12 → 17, catalogue 24 → 27, landing-page lenses 4 → 6. The catalogue-browser, landing page, and chain registry now all agree at **27**.
+**What's next:** the catalogue-promotion + browser-sync pattern is end-to-end demonstrable. Possible next picks:
+- `mortal_message` → catalogue (Consumer lane; canonical pilot)
+- `bounty` → catalogue (Marketplace lane; distinct from existing SHLM_BOUNTY)
+- Another simulator UI for one of the recently promoted templates
+- A new from-scratch contract arc (.es + pilot + client + UI sim + catalogue)
+**Cross-references:** commit `8977aca4`. Files: `dapps/catalogue-browser/index.html`, `dapps/index.html`. Sources for the 3 new entries: `contracts/evaporscript/{mortal_nft,deadman_switch,subscription}.es`.
+
+---
+
 ## 2026-06-01 (overnight, later) — Mortal NFT catalogue promotion (27th template)
 
 **Focus:** promote `mortal_nft.es` to the 27th formal catalogue template — the headline "decaying NFT" doctrine claim gets a first-class slot in the NFT lane, distinct from the existing MAYFLY entry.
