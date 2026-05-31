@@ -152,20 +152,14 @@ function noArgCall(method: string, caller: number, contractId: number, epoch: nu
   return { caller, contract_id: contractId, method, args: [], epoch };
 }
 
-export interface TxResponse {
-  success: boolean;
-  tx_hash?: string;
-  message: string;
-}
+// Auth-injected POST: reads the session token from localStorage
+// (set by `dapps/wallet/`) and adds the Authorization header.
+// See `dapps/shared/auth.ts` for the contract.
+import { authedPost, type TxResponse } from "../../shared/auth.ts";
+export type { TxResponse };
 
-async function post(baseUrl: string, path: string, body: unknown): Promise<TxResponse> {
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return (await res.json()) as TxResponse;
-}
+const post = authedPost;
+
 
 export const deployTx = (baseUrl: string, o: Parameters<typeof deployPayload>[0]) =>
   post(baseUrl, DEPLOY_PATH, deployPayload(o));

@@ -1,0 +1,10 @@
+{
+  "name": "@evaporchain/shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared helpers for the EvaporChain dApp set. Currently auth.ts: a localStorage-backed token-injection layer the wallet writes to and the 12 reference-contract clients read from.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
