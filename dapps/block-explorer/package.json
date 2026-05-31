@@ -1,0 +1,10 @@
+{
+  "name": "block-explorer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Block Explorer — single-page dApp streaming the latest blocks from /api/blocks. Auto-refresh every 1.5s. Read-only, no auth. Defaults to the permanent public node at http://89.167.52.40:8099. Match the chain node's CORS allowlist on port 3000.",
+  "scripts": {
+    "serve": "python3 -m http.server 3000 --directory ."
+  }
+}
