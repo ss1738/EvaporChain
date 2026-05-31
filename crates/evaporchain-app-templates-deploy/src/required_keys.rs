@@ -19,7 +19,7 @@ use evaporchain_app_templates::{
         MNEMOCHAIN_CARD, MORTAL_DAO, REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE,
         SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE,
         SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI,
-        SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, WITNESSFIT_STREAK,
+        SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE, WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -67,6 +67,12 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
         c if c == REFRESH_MARKET_NAMESPACE => &["id_hex", "capacity", "base_rent"],
         c if c == DECAY_ACCESS_PASS => &["energy", "half_life", "validity_floor"],
         c if c == DEADMAN_SWITCH => &["initial_energy", "refresh_window"],
+        c if c == SUBSCRIPTION_SERVICE => &[
+            "initial_energy",
+            "half_life",
+            "period_amount",
+            "period_length",
+        ],
         // ── Wallet UX lane ────────────────────────────────────────
         c if c == SINGH_TRIAGE_CONTRACT => &["horizon_today", "horizon_tomorrow", "horizon_week"],
         c if c == SINGH_HEARTBEAT_PULSE => &[

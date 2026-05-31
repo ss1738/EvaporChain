@@ -123,6 +123,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("DeadMan Switch descriptor is constant"),
         TemplateDescriptor::new(
+            SUBSCRIPTION_SERVICE,
+            "Subscription (Chain-Keeper Recurring Payment)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "half_life": 100, "period_amount": 100, "period_length": 30}),
+            "Recurring payment whose lapse detector is the chain itself. Subscriber pay()s each period; the call refreshes the contract's energy via the runtime hook, so payments keep the contract alive. Missing payments lets it evaporate; on_evaporate flips lapsed = true. Cancellation (by either subscriber or provider) is one-shot, blocks future pay() calls, and is doctrinally distinct from lapsed-by-evaporation — a cancelled subscription ended cleanly and does NOT relapse. No off-chain reaper needed to detect non-payment and cancel; same chain-as-keeper claim as DeadMan Switch in a recurring-payment surface. Reference contract: contracts/evaporscript/subscription.es.",
+            "evaporchain-subscription",
+        )
+        .expect("Subscription descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -347,20 +356,22 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_25_templates() {
+    fn catalogue_lists_26_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
         // Access Pass credential (2026-05-29); 23 added Mortal-DAO
         // and opened the Governance lane (2026-05-30); 24 added the
         // Bell-Oracle in the Paradigm lane; 25 promoted DeadMan Switch
-        // into the Marketplace lane (2026-05-31). (Mayfly + Singh-Posthuma
-        // were ALREADY in the catalogue under different framings;
-        // the 2026-05-30 night mayfly.es backfill updated the Mayfly
-        // descriptor's description to point at the .es contract
-        // without changing the count.)
+        // into the Marketplace lane (2026-05-31); 26 promoted
+        // Subscription alongside it (2026-05-31 — the chain-as-keeper
+        // pair, secret-release + recurring-payment). (Mayfly +
+        // Singh-Posthuma were ALREADY in the catalogue under different
+        // framings; the 2026-05-30 night mayfly.es backfill updated
+        // the Mayfly descriptor's description to point at the .es
+        // contract without changing the count.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 25);
+        assert_eq!(cat.len(), 26);
     }
 
     #[test]

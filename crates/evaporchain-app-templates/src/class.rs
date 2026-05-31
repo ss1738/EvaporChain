@@ -73,6 +73,19 @@ pub const DECAY_ACCESS_PASS: TemplateClass = TemplateClass(0x0001_0107);
 /// `contracts/evaporscript/deadman_switch.es`. Verified cargo pilot:
 /// `crates/evaporchain-script/tests/deadman_switch_pilot.rs` (9/9).
 pub const DEADMAN_SWITCH: TemplateClass = TemplateClass(0x0001_0108);
+/// Subscription — recurring payment whose chain-as-keeper doctrine
+/// applies to a payment cadence. `pay()` IS the keep-alive: each
+/// call refreshes the contract's energy via the runtime hook;
+/// missing payments lets the contract evaporate; `on_evaporate`
+/// flips `lapsed = true`. No off-chain reaper needed to detect
+/// non-payment and cancel — the same chain-as-keeper claim as
+/// DEADMAN_SWITCH, in a different surface (recurring payment instead
+/// of secret release). Either subscriber or provider may cancel;
+/// cancellation is one-shot, blocks future pay() calls, and is
+/// distinct from lapsed-by-evaporation. Reference contract:
+/// `contracts/evaporscript/subscription.es`. Verified cargo pilot:
+/// `crates/evaporchain-script/tests/subscription_pilot.rs`.
+pub const SUBSCRIPTION_SERVICE: TemplateClass = TemplateClass(0x0001_0109);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -135,6 +148,7 @@ mod tests {
             REFRESH_MARKET_NAMESPACE,
             DECAY_ACCESS_PASS,
             DEADMAN_SWITCH,
+            SUBSCRIPTION_SERVICE,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -169,6 +183,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&SDDC_AUCTION.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&SAP_AQ.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&DEADMAN_SWITCH.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&SUBSCRIPTION_SERVICE.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         // Consumer: 0x0001_0300..

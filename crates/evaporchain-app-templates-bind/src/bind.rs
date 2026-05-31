@@ -420,6 +420,30 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("MortalDao", "voting_window must be > 0"));
             }
         }
+        // Subscription — initial_energy + half_life + period_amount
+        // + period_length must all be positive. Zero initial_energy
+        // means the contract is dead at deploy (pay() immediately
+        // fails the sealed-true gate); zero half_life is undefined
+        // for decay; zero period_amount means each "payment" credits
+        // nothing (degenerate); zero period_length means every
+        // refresh cycle ends instantly (off-chain coordinators
+        // can't pace billing). The .es contract enforces amount > 0
+        // and period > 0 at set_terms() runtime; pre-flight rejection
+        // here saves operators a confusing tx round-trip.
+        TypedInit::Subscription(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("Subscription", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("Subscription", "half_life must be > 0"));
+            }
+            if c.period_amount == 0 {
+                return Err(invariant("Subscription", "period_amount must be > 0"));
+            }
+            if c.period_length == 0 {
+                return Err(invariant("Subscription", "period_length must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

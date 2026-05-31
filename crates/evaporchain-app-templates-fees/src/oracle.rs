@@ -85,6 +85,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // primitives in one contract; ranks above consumer/wallet
         // but below paradigm.
         TypedInit::MortalDao(_) => SURCHARGE_MARKETPLACE,
+        // Subscription — marketplace-lane chain-as-keeper recurring
+        // payment. Same surcharge as its lane peers (Sddc / Sfsv /
+        // Shlm / Scl / Sap / Deadman); the state shape (subscriber +
+        // provider + period terms + counters + lifecycle flags) sits
+        // comfortably in the marketplace tier.
+        TypedInit::Subscription(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

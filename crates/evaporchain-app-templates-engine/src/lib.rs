@@ -69,6 +69,7 @@ pub mod init_singh_resonance;
 pub mod init_singh_sabi;
 pub mod init_singh_triage;
 pub mod init_ssm;
+pub mod init_subscription;
 pub mod init_witnessfit;
 
 pub use dispatch::{materialise, EngineError, TypedInit};
