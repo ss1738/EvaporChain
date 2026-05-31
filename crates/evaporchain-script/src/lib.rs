@@ -5358,10 +5358,12 @@ mod sap_pilot {
                 .return_value,
             Value::U64(0)
         );
-        // Way past expiry: still 0.
+        // Way past expiry but still within the chain contract's
+        // lifespan (deploy energy=1_000_000, half_life=100 → chain
+        // contract evaporates around epoch ~2000): AQ still 0.
         assert_eq!(
             engine
-                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 10_000)
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 200)
                 .unwrap()
                 .return_value,
             Value::U64(0)
