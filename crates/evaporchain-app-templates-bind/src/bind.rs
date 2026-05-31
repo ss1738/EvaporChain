@@ -355,6 +355,71 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("DeadManSwitch", "refresh_window must be > 0"));
             }
         }
+        // Decay Access Pass — energy, half_life, and validity_floor
+        // must all be positive. A zero floor would make the pass
+        // valid forever (defeats the credential premise); zero
+        // half_life is mathematically undefined for decay; zero
+        // energy means it starts already-invalid.
+        TypedInit::DecayAccessPass(c) => {
+            if c.energy == 0 {
+                return Err(invariant("DecayAccessPass", "energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("DecayAccessPass", "half_life must be > 0"));
+            }
+            if c.validity_floor == 0 {
+                return Err(invariant("DecayAccessPass", "validity_floor must be > 0"));
+            }
+            if c.validity_floor >= c.energy {
+                return Err(invariant(
+                    "DecayAccessPass",
+                    "validity_floor must be < energy (otherwise pass is invalid at deploy)",
+                ));
+            }
+        }
+        // Bell-Oracle — threshold_milli must be at least the
+        // local-realism floor (2000 milli = S=2.0); a contract
+        // accepting readings below S=2.0 would be defeating the
+        // whole point of the primitive. max_age_epochs must be
+        // positive (zero = every reading is stale instantly).
+        TypedInit::BellOracle(c) => {
+            if c.energy == 0 {
+                return Err(invariant("BellOracle", "energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("BellOracle", "half_life must be > 0"));
+            }
+            if c.threshold_milli < 2000 {
+                return Err(invariant(
+                    "BellOracle",
+                    "threshold_milli must be >= 2000 (local-realism floor)",
+                ));
+            }
+            if c.max_age_epochs == 0 {
+                return Err(invariant("BellOracle", "max_age_epochs must be > 0"));
+            }
+        }
+        // Mortal-DAO — every param must be positive. A zero
+        // freshness_window would expire all members instantly; a
+        // zero proposal_cap blocks all proposals; a zero
+        // voting_window closes every vote at the moment it opens.
+        TypedInit::MortalDao(c) => {
+            if c.energy == 0 {
+                return Err(invariant("MortalDao", "energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("MortalDao", "half_life must be > 0"));
+            }
+            if c.freshness_window == 0 {
+                return Err(invariant("MortalDao", "freshness_window must be > 0"));
+            }
+            if c.proposal_cap == 0 {
+                return Err(invariant("MortalDao", "proposal_cap must be > 0"));
+            }
+            if c.voting_window == 0 {
+                return Err(invariant("MortalDao", "voting_window must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

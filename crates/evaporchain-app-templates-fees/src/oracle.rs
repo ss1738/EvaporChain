@@ -71,6 +71,20 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // + window + release-tracking) sits comfortably in the
         // marketplace complexity tier.
         TypedInit::Deadman(_) => SURCHARGE_MARKETPLACE,
+        // Decay Access Pass — marketplace-lane credential primitive.
+        // Same surcharge as the rest of the marketplace block; the
+        // state shape (energy + floor + issuance ledger) sits in the
+        // marketplace tier.
+        TypedInit::DecayAccessPass(_) => SURCHARGE_MARKETPLACE,
+        // Bell-Oracle — paradigm-lane primitive (quantum-certified
+        // beacon consumer). Sits alongside SGB / SBAV / SSM in the
+        // paradigm tier per its catalogue lane assignment.
+        TypedInit::BellOracle(_) => SURCHARGE_PARADIGM,
+        // Mortal-DAO — governance-lane primitive. Treat as
+        // marketplace-class complexity since it composes four decay
+        // primitives in one contract; ranks above consumer/wallet
+        // but below paradigm.
+        TypedInit::MortalDao(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

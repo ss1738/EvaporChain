@@ -45,11 +45,14 @@
 
 pub mod dispatch;
 
+pub mod init_bell_oracle;
 pub mod init_childkey;
 pub mod init_deadman;
+pub mod init_decay_access_pass;
 pub mod init_gallery_forgets;
 pub mod init_mayfly;
 pub mod init_mnemochain;
+pub mod init_mortal_dao;
 pub mod init_refresh_market;
 pub mod init_sap;
 pub mod init_sbav;
