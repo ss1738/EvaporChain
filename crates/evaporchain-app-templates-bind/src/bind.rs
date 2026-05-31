@@ -444,6 +444,18 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("Subscription", "period_length must be > 0"));
             }
         }
+        // Mortal NFT (general) — both energy + half_life must be > 0.
+        // Zero initial_energy ⇒ NFT is already a Ghost at mint (the
+        // doctrine-defeating case); zero half_life is undefined for
+        // the decay schedule.
+        TypedInit::MortalNft(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("MortalNft", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("MortalNft", "half_life must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

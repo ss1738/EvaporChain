@@ -91,6 +91,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // provider + period terms + counters + lifecycle flags) sits
         // comfortably in the marketplace tier.
         TypedInit::Subscription(_) => SURCHARGE_MARKETPLACE,
+        // Mortal NFT — NFT-lane peer of SinghSabi / SinghMigrant /
+        // Mayfly. Single-token state with holder + metadata +
+        // counters; the doctrine-purest mortal NFT is Mayfly
+        // (NFT-base surcharge), Mortal NFT carries roughly the same
+        // structural weight.
+        TypedInit::MortalNft(_) => SURCHARGE_NFT_BASE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

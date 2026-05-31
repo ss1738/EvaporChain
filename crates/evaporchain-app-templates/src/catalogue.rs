@@ -76,6 +76,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-gallery-forgets",
         )
         .expect("Mayfly descriptor is constant"),
+        TemplateDescriptor::new(
+            MORTAL_NFT_GENERAL,
+            "Mortal NFT (Transferable, Decaying)",
+            "NFT",
+            json!({"initial_energy": 1000, "half_life": 100}),
+            "The general-purpose decaying NFT: named, collection-aware, transferable, with a metadata URI. Distinct from Mayfly (which is the doctrine-purest short-life mortal NFT with no terminal state). Each Mortal NFT is its own contract instance; the contract's OWN energy IS the NFT's lifespan; on evaporation it becomes a chain-level Ghost recoverable via the standard ghost-recovery flow. Mint-to-buyer is supported in one shot (set_metadata's recipient arg). Reference contract: contracts/evaporscript/mortal_nft.es; cargo pilot at crates/evaporchain-script/tests/mortal_nft_pilot.rs.",
+            "evaporchain-mortal-nft",
+        )
+        .expect("MortalNft descriptor is constant"),
         // ── Marketplace lane ────────────────────────────────────────
         TemplateDescriptor::new(
             SDDC_AUCTION,
@@ -356,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_26_templates() {
+    fn catalogue_lists_27_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -364,14 +373,13 @@ mod tests {
         // and opened the Governance lane (2026-05-30); 24 added the
         // Bell-Oracle in the Paradigm lane; 25 promoted DeadMan Switch
         // into the Marketplace lane (2026-05-31); 26 promoted
-        // Subscription alongside it (2026-05-31 — the chain-as-keeper
-        // pair, secret-release + recurring-payment). (Mayfly +
+        // Subscription alongside it (the chain-as-keeper pair); 27
+        // promoted Mortal NFT (general transferable decaying NFT)
+        // into the NFT lane (2026-05-31, late). (Mayfly +
         // Singh-Posthuma were ALREADY in the catalogue under different
-        // framings; the 2026-05-30 night mayfly.es backfill updated
-        // the Mayfly descriptor's description to point at the .es
-        // contract without changing the count.)
+        // framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 26);
+        assert_eq!(cat.len(), 27);
     }
 
     #[test]

@@ -16,10 +16,11 @@
 use evaporchain_app_templates::{
     class::{
         BELL_ORACLE, CHILDKEY_LETTER, DEADMAN_SWITCH, DECAY_ACCESS_PASS, GALLERY_FORGETS, MAYFLY,
-        MNEMOCHAIN_CARD, MORTAL_DAO, REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE,
-        SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE,
-        SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI,
-        SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE, WITNESSFIT_STREAK,
+        MNEMOCHAIN_CARD, MORTAL_DAO, MORTAL_NFT_GENERAL, REFRESH_MARKET_NAMESPACE, SAP_AQ,
+        SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY,
+        SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE,
+        SINGH_SABI, SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE,
+        WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -48,6 +49,7 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
             "n_committee",
         ],
         c if c == MAYFLY => &["initial_energy", "half_life"],
+        c if c == MORTAL_NFT_GENERAL => &["initial_energy", "half_life"],
         // ── Marketplace lane ──────────────────────────────────────
         c if c == SDDC_AUCTION => &["ceiling", "floor", "lot_lambda", "duration_epochs"],
         c if c == SFSV_VAULT => &[

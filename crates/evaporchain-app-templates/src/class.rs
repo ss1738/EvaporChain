@@ -42,6 +42,17 @@ pub const SINGH_MIGRANT: TemplateClass = TemplateClass(0x0001_0002);
 pub const SINGH_RESONANCE: TemplateClass = TemplateClass(0x0001_0003);
 pub const SINGH_POSTHUMA: TemplateClass = TemplateClass(0x0001_0004);
 pub const MAYFLY: TemplateClass = TemplateClass(0x0001_0005);
+/// Mortal NFT (general) — the headline "decaying NFT" doctrine
+/// claim in its full general-purpose form (transferable, named,
+/// collection-aware, with metadata URI). Distinct from MAYFLY (the
+/// doctrine-purest short-life mortal NFT) — Mortal NFT carries the
+/// holder lifecycle, transfer count, and collection identity that a
+/// marketplace dApp needs. The contract's own energy IS the NFT's
+/// lifespan; on evaporation it becomes a chain-level Ghost
+/// recoverable via the standard ghost-recovery flow. Reference
+/// contract: `contracts/evaporscript/mortal_nft.es`. Verified cargo
+/// pilot: `crates/evaporchain-script/tests/mortal_nft_pilot.rs`.
+pub const MORTAL_NFT_GENERAL: TemplateClass = TemplateClass(0x0001_0006);
 
 // Marketplace lane
 pub const SDDC_AUCTION: TemplateClass = TemplateClass(0x0001_0101);
@@ -140,6 +151,7 @@ mod tests {
             SINGH_RESONANCE,
             SINGH_POSTHUMA,
             MAYFLY,
+            MORTAL_NFT_GENERAL,
             SDDC_AUCTION,
             SFSV_VAULT,
             SHLM_BOUNTY,
@@ -179,6 +191,7 @@ mod tests {
         // NFT lane: 0x0001_0001..0x0001_00FF
         assert!((0x0001_0001..=0x0001_00FF).contains(&SINGH_SABI.0));
         assert!((0x0001_0001..=0x0001_00FF).contains(&MAYFLY.0));
+        assert!((0x0001_0001..=0x0001_00FF).contains(&MORTAL_NFT_GENERAL.0));
         // Marketplace lane: 0x0001_0100..0x0001_01FF
         assert!((0x0001_0100..=0x0001_01FF).contains(&SDDC_AUCTION.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&SAP_AQ.0));

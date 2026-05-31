@@ -53,6 +53,7 @@ pub mod init_gallery_forgets;
 pub mod init_mayfly;
 pub mod init_mnemochain;
 pub mod init_mortal_dao;
+pub mod init_mortal_nft;
 pub mod init_refresh_market;
 pub mod init_sap;
 pub mod init_sbav;
