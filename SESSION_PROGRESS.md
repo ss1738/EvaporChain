@@ -6,6 +6,48 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (late night) — Catalogue promotion + 3 latent-gap closures
+
+**Focus:** promote `deadman_switch` from free-floating .es contract to the 25th formal catalogue template. Multi-crate heavy work; the question I'd flagged as "operator decision" in the midday entry.
+**Commits shipped:** 3 on main (`04669dab`, `831846d3`, `a831bd29`).
+**Catalogue is now 25 templates** (up from 24, the long-stable number).
+**What landed in the deadman promotion (commit `04669dab`):**
+| Crate | Change |
+|---|---|
+| `evaporchain-app-templates::class` | New `pub const DEADMAN_SWITCH: TemplateClass(0x0001_0108)` in the Marketplace lane (after `DECAY_ACCESS_PASS` 0x0001_0107). Added to the `all_classes_in_app_range` and `lane_partitioning` test lists. |
+| `evaporchain-app-templates::catalogue` | New `TemplateDescriptor` in the Marketplace lane block with default params `{"initial_energy": 1000, "refresh_window": 60}`. The count test bumped 24 → 25. |
+| `evaporchain-app-templates-engine::init_deadman` (new module) | Typed init: `{ initial_energy: u64, refresh_window: u64 }` + `parse()`. |
+| `evaporchain-app-templates-engine::dispatch` | New `TypedInit::Deadman` variant + dispatch arm `else if cls == DEADMAN_SWITCH`. |
+| `evaporchain-app-templates-fees::oracle` | New `TypedInit::Deadman(_) => SURCHARGE_MARKETPLACE` arm. |
+| `evaporchain-app-templates-bind::bind` | New `TypedInit::Deadman` invariant arm: `initial_energy > 0`, `refresh_window > 0`. |
+**Latent gap closure 1 — required_keys (commit `831846d3`):**
+- The anti-regression test `bind::tests::every_catalogue_default_binds` was failing on parent commit 783ba377 with `NoRequiredKeysRow(65799)` = `DECAY_ACCESS_PASS`. Four catalogue entries (`DECAY_ACCESS_PASS`, `BELL_ORACLE`, `MORTAL_DAO`, `DEADMAN_SWITCH`) had no rows in `evaporchain-app-templates-deploy::required_keys_for`. The test had been silently broken for two days.
+- Added all four rows, keys mirror each descriptor's `default_params` top-level shape.
+**Latent gap closure 2 — engine wiring (commit `a831bd29`):**
+- With required_keys patched, the next `every_catalogue_default_binds` failure surfaced: `UnknownTemplate(65799)`. Three catalogue entries (`DECAY_ACCESS_PASS`, `BELL_ORACLE`, `MORTAL_DAO`) had NO engine-side `TypedInit` variants — `materialise()` rejected them outright. Latent for the same two days.
+- Added new `init_decay_access_pass.rs`, `init_bell_oracle.rs`, `init_mortal_dao.rs` modules + corresponding `TypedInit` variants + dispatch arms + fees arms + bind arms with primitive-specific invariants:
+  - `DecayAccessPass`: `energy/half_life/validity_floor > 0`, `validity_floor < energy`
+  - `BellOracle`: `threshold_milli >= 2000` (the local-realism floor — accepting weaker readings defeats the primitive)
+  - `MortalDao`: all five params positive
+**Empirical results on Mini-1 worktree (a831bd29):**
+- 220+ tests pass across 5 template crates (`-templates`, `-engine`, `-fees`, `-bind`, `-deploy`).
+- Previously-failing `every_catalogue_default_binds` is now green; all 25 templates bind cleanly with their default params.
+- Full workspace `cargo build --workspace` completes in 2m 10s. Only pre-existing dead-code warning (`wallet_encryption_ready` in auth.rs).
+- Worktree `/tmp/ec-catalogue` cleaned up.
+**Decisions made:**
+- **Closed the latent gaps as part of the same arc** rather than just adding the one entry I came for. The test failure pattern was deterministic — every new catalogue entry without engine wiring trips the same anti-regression. Doing one and leaving three broken would just defer the closure.
+- **DEADMAN_SWITCH in the Marketplace lane** rather than Wallet UX or Consumer. The doctrine pattern (commit-and-reveal escrow with a chain-keeper closer) is structurally the same family as SDDC (decay-Dutch auction) and SFSV (future-self vault) — multi-party agreements with deterministic settlement.
+- **Validity_floor < energy required for DecayAccessPass.** Without this, the pass is invalid at deploy (defeats the primitive). Bind-layer enforcement saves operators a confusing chain-rejection round-trip.
+- **BellOracle threshold_milli >= 2000 enforced.** The Bell-CHSH local-realism floor is doctrinally load-bearing; accepting weaker readings would let an oracle quietly admit non-quantum data without anyone noticing. The chain's first-class structural rejection of weak readings IS the primitive.
+**Today's totals:** 8 ships on main, 1,800+ LOC across .es / cargo / TS / HTML / catalogue-registry / engine plumbing. Reference contracts 12 → 17 (5 typed clients), catalogue 24 → 25 (1 formal promotion + 3 latent-gap engine wirings). One new contract + one new visceral simulator + one legacy-dApp documentation pass.
+**What's next:** the catalogue is now correctness-complete: every registered entry has typed init wiring and bind invariants. Real next options:
+- More .es typed clients (19 remaining).
+- Wire deadman-switch into the wallet's deploy form (the catalogue layer now supports this; the front-end form just needs to render the new entry).
+- T3.1 / EVAPORCHAIN_ADMIN_KEY / T0.12 — same operator gates.
+**Cross-references:** commits `04669dab`, `831846d3`, `a831bd29`. Files: class.rs / catalogue.rs (registry), 4 new init_*.rs modules, dispatch.rs / oracle.rs / bind.rs (3 new arms each), required_keys.rs (4 new rows). Verified on Mini-1 worktree.
+
+---
+
 ## 2026-05-31 (night) — Bounty typed client — chain-as-keeper for task escrow
 
 **Focus:** ship the typed client for `contracts/evaporscript/bounty.es`. Open-call task bounty primitive — poster posts, hunters submit, poster accepts, winner claims; unaccepted bounties auto-refund on evaporation. Pre-existing cargo pilot, missing dApp client.
