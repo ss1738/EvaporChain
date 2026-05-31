@@ -6,6 +6,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (early evening) — block-explorer + a real finding on deploy-auth
+
+**Focus:** add a "blocks-and-txs" lens to the dApp set. Started with a deploy-test against the public node (post a real `mortal_message` and watch four-act-console's eulogy counter tick) — discovered the deploy endpoint needs auth (Bearer token via the full /api/auth/{register, verify-email, login} flow). Pivoted to block-explorer (read-only, no auth needed).
+**Commits shipped:** 1 on main (`83cad0a4`). Pushed direct.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `dapps/block-explorer/index.html` | ~250 LOC single file. Polls `/api/blocks?limit=N` + `/api/network/health` every 1.5s. Each block renders as a click-to-expand row: number / epoch / age / tx_count / gas_used summary with badges for {evap, grace, tx, anchor, nova-proof} when non-zero; expand reveals parent hash, state root, data root, base fee, total fees, active objects, ghost count, DA square size, blob count, timestamp, nova_proof_size, anchor_epoch. New-top-block slide-in animation. URL + limit selector (10/20/50/100). |
+| `package.json` | `npm run serve` on port **3000** (matches four-act-console — chain node's default CORS allowlist hardcodes `http://localhost:3000`). Same gotcha: collides with Elevate Grads dev server. |
+**Empirical results:** block-explorer fetches green against the public node. Devnet is in syncing/no-validators mode so every block has `tx_count=0, evaporations=0, has_nova_proof=false` — but the page renders the badge logic correctly (no false-positive badges, just the bare epoch advance). Epoch is ticking ~1/sec; UI updates feel real-time.
+**Decisions made:**
+- **Deploy-test pivoted, not failed.** `/api/tx/deploy-script` requires auth — POST without a Bearer token returns `{"success":false,"message":"Authentication required: Missing authorization token"}`. The auth flow is at `/api/auth/{register, verify-email, login, me, logout}` (`api.rs:19010-19013`), which means a verified user account is required. The 12 reference-contract dApp clients I shipped today omit the Authorization header — they'll fail against the live node without changes. Flagging for the next session: the dApp clients need either a token-injection pattern OR the node needs an "unauthenticated devnet" mode.
+- **Block-explorer over /api/blocks, not /api/block/N.** Probed `/api/block/1175000` and `/api/blocks/1175000` — both 404. Only `/api/blocks?limit=N` is exposed. So the explorer is a TAIL view (most recent N blocks), not a SEARCH view. Matches the "what's happening right now" use case for the devnet.
+- **Port 3000 again, knowingly.** Same collision risk with Elevate Grads as four-act-console — but the CORS allowlist hardcodes that port. Documented inline; user can stop the other 3000-process or add a new origin via `EVAPORCHAIN_CORS_ORIGINS` env var on the node.
+**What's next:**
+- **Fix the dApp clients' auth gap.** The 12 reference-contract clients need a token-injection pattern before they'll work against any node that mounts the auth middleware.
+- T3.1 cluster bring-up still gated only on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+- Future doctrine-demo dApps could surface OTHER unique primitives — Bell beacon visualizer, Light-Cone DAG view, MEV (Crooks) flow, …
+**Blockers / open questions:**
+- Deploy-to-public-node is gated on the auth flow above.
+**Cross-references:** commit `83cad0a4`; files `dapps/block-explorer/{index.html,package.json}`; node auth routes at `crates/evaporchain-node/src/api.rs:19010-19013`; node CORS config at `:18975-19006`. Four lenses now: decay-vista (sim) · four-act-console (death ledger live) · catalogue-browser (templates index) · block-explorer (block stream live).
+
+---
+
 ## 2026-05-31 (later afternoon) — catalogue-browser — front door for the 24 templates
 
 **Focus:** ties everything we've shipped today into one navigable view. Anyone landing on EvaporChain can see the 24 templates, filter by lane, preview any `.es` source inline, and jump to the dApp client (for the 12 templates with one).
