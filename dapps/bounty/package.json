@@ -1,0 +1,10 @@
+{
+  "name": "bounty",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Bounty typed client — chain client for contracts/evaporscript/bounty.es. Open-call task with a fixed reward; the runtime is the closer (unaccepted bounties refund to the poster on evaporation, no off-chain liquidator needed).",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

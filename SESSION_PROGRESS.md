@@ -6,6 +6,38 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (night) — Bounty typed client — chain-as-keeper for task escrow
+
+**Focus:** ship the typed client for `contracts/evaporscript/bounty.es`. Open-call task bounty primitive — poster posts, hunters submit, poster accepts, winner claims; unaccepted bounties auto-refund on evaporation. Pre-existing cargo pilot, missing dApp client.
+**Commits shipped:** 1 on main (`<this>`).
+**Deliverables:**
+| File | Notes |
+|---|---|
+| `dapps/bounty/{package.json, src/contract.ts, src/client.ts, test/bounty.test.ts}` | Byte-stable inline copy + payload builders (5 mutators: `set_bounty`, `submit`, `accept`, `claim`, `cancel`; 7 views) + auth-injected Tx wrappers. **12/12 TS tests pass** via `npm test`. |
+| `dapps/index.html` | Reference-contract count bumped 16 → 17. |
+**Doctrine claim it activates:**
+- Unaccepted bounties refund automatically when the contract evaporates. No off-chain liquidator needed; the runtime IS the closer. Same chain-as-keeper claim as deadman_switch + subscription, surfaced in escrow form.
+- Cancel guard prevents rug-pull: once *any* hunter has submitted, the poster's cancel option is locked. Hunters' work commits them to acceptance-or-evaporation, not poster-discretion withdrawal.
+**Empirical results:** 12/12 TS tests green. Cargo pilot was already green pre-session (`crates/evaporchain-script/tests/bounty_pilot.rs`).
+**Decisions made:**
+- **Three pinned-invariant tests** beyond basic payload shape:
+  1. `cancel()` requires `submission_count == 0` (no rug-pull).
+  2. BOUNTY-1: `submission_of` guards against EvaporScript's missing-key-returns-zero gotcha via the parallel `has_submitted` presence map.
+  3. `on_evaporate` flips `refunded = true` *only if* not yet accepted (otherwise the winner is owed; no auto-refund).
+**Today's arc** (7 ships, all on the dApp-surface lane):
+1. (morning) Legacy dApps inventory → landing-page integration
+2. (midday) DeadMan Switch — contract + cargo pilot (9/9) + typed client
+3. (afternoon) DeadMan Vista — visceral simulator UI (5th lens)
+4. (late afternoon) Subscription typed client
+5. (evening) MortalMessage typed client
+6. (late evening) MortalNft typed client
+7. (night) Bounty typed client
+**Reference contracts: 12 → 17 in one day** (5 new typed clients shipped + 1 new contract + 1 new simulator UI + 1 legacy dApp documentation pass).
+**What's next:** 19 more .es files lack typed clients. Strongest candidates: `multisig`, `payment_split`, `time_lock`, `vesting_schedule`, `lottery`, `sealed_bid_auction`, `oracle_feed`.
+**Cross-references:** files `dapps/bounty/*`, `dapps/index.html`. Pilot source: `contracts/evaporscript/bounty.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/bounty_pilot.rs`.
+
+---
+
 ## 2026-05-31 (late evening) — MortalNft typed client — the headline doctrine claim
 
 **Focus:** ship the typed client for `contracts/evaporscript/mortal_nft.es`. Decaying NFTs are EvaporChain's headline catalogue claim ("mint, trade, refresh — hoarded NFTs evaporate, owned-and-loved ones persist"). The .es file + cargo pilot have been in tree; the typed client was the missing piece.
