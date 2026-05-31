@@ -6,6 +6,28 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (evening) — dapps/index.html — doctrine landing page
+
+**Focus:** wrap the four-dApp arc with a front door anyone can land on. Hero + four lens-cards + live chain status + local-dev cheatsheet, single file.
+**Commits shipped:** 1 on main (`b8e59193`).
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `dapps/index.html` | ~210 LOC. Hero ("data fades unless refreshed" + one explanatory paragraph). Live status badge polling `/api/network/health` every 5s (with graceful fallback when CORS blocks from file://). 2×2 grid of lens-cards: Decay Vista · Four-Act Console · Catalogue Browser · Block Explorer — each with a lane-gradient accent strip, icon, port label, and 2-line summary. Three secondary cards explaining where the math lives + the 12 reference contracts + the default node. Local-dev cheatsheet listing the four `npm run serve` commands. Footer with stack stats. |
+**Empirical results:** opens cleanly from file://; the chain-status badge falls back to "node unreachable (CORS or offline)" without breaking the page. From localhost the badge shows live chain epoch + status. All four lens-card links resolve to existing pages.
+**Decisions made:**
+- **No build step, no dependencies.** Tailwind CDN + vanilla JS — same constraint as the other four dApps. Anyone with a browser can land on this file via `file://` and understand the chain in 30 seconds.
+- **Live status badge as the ONLY chain dependency.** The landing page itself is static; the badge is a nice-to-have that fails open. Visitors who open the page offline see "node unreachable" + can still navigate to all the dApps.
+- **Card design uses lane-gradient accent strips matching the catalogue-browser's lane colour palette** (amber → red for decay, slate for death, emerald for catalogue, sky for blocks). Tiny visual consistency that ties the four-dApp set together.
+**What's next:**
+- The 12 reference-contract dApp clients still need the auth-injection fix surfaced this afternoon (Authorization header for /api/tx/* writes). That's the real next-priority gap.
+- T3.1 cluster bring-up still gated on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `b8e59193`; file `dapps/index.html`. Linked dApps: `dapps/{decay-vista,four-act-console,catalogue-browser,block-explorer}/`.
+
+---
+
 ## 2026-05-31 (early evening) — block-explorer + a real finding on deploy-auth
 
 **Focus:** add a "blocks-and-txs" lens to the dApp set. Started with a deploy-test against the public node (post a real `mortal_message` and watch four-act-console's eulogy counter tick) — discovered the deploy endpoint needs auth (Bearer token via the full /api/auth/{register, verify-email, login} flow). Pivoted to block-explorer (read-only, no auth needed).
