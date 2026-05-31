@@ -1,0 +1,10 @@
+{
+  "name": "deadman-switch",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "DeadMan Switch dApp — chain client for contracts/evaporscript/deadman_switch.es. Secret-release contract where the chain's own epoch advancement IS the trigger; no external keeper needed.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
