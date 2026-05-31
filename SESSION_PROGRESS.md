@@ -6,6 +6,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (midday) — DeadMan Switch — doctrine-native dead-man's secret-release
+
+**Focus:** ship a new EvaporScript reference contract that demonstrates a pattern genuinely *requiring* EvaporChain primitives: a dead-man's switch where the chain's own epoch advancement IS the trigger. No keeper service needed, no expensive ongoing storage burn.
+**Commits shipped:** 3 on main (`a13ff7c5` contract+dApp+pilot, `c318fe61` Value::Str API fix, `<this>` landing + session entry).
+**Deliverables:**
+| File | Notes |
+|---|---|
+| `contracts/evaporscript/deadman_switch.es` (~250 LOC) | Owner deploys + `arm(holder, secret_hash, refresh_window)`. Holder refreshes; on miss, anyone calls `release_dead(plaintext)` after `epoch >= last_refresh + window`. Holder may `trigger_early(plaintext)`. `transfer_holder()` preserves deadline. 17 methods + 3 lifecycle hooks. |
+| `dapps/deadman-switch/{contract.ts, client.ts, test/}` | Byte-stable inline source + payload builders (6 mutators, 12 views) + auth-injected Tx wrappers. **12/12 TS tests pass** via `npm test`. |
+| `crates/evaporchain-script/tests/deadman_switch_pilot.rs` (~430 LOC) | Parse → compile → VM pilot. 9 invariants: clean parse, arm() owner-only + one-shot, refresh() holder-only, release_dead() blocked before deadline + open at + after, trigger_early() holder-only, double-release rejected, transfer_holder() preserves deadline, view tri-state (alive / releasable / released), epochs_until_deadline countdown. |
+**Empirical results:**
+- **TS client:** 12/12 tests green.
+- **Rust pilot:** **9/9 tests green on Mini-1** (cargo test -p evaporchain-script --test deadman_switch_pilot, finished in 0.00s). Verified in a `git worktree add /tmp/ec-deadman` to avoid disturbing Mini-1's in-flight `chore/wallet-cli-coverage-b78` branch (ark-relations 0.6 migration work, Cargo.lock dirty).
+- **Doctrine claim closed:** the chain's epoch advancement IS the keeper. Other chains require Chainlink Keepers / Gelato to poll the deadline; the .es contract's `release_dead` guard `epoch >= last_refresh + window` opens to the world the moment the chain catches up.
+**Decisions made:**
+- **Not added to the formal catalogue registry** (`evaporchain-app-templates`). That's a separate multi-crate change: new `TypedInit` variant, new `init_deadman` crate, new `TemplateClass` constant, dispatch arm in `crates/evaporchain-app-templates-engine/src/dispatch.rs`, plus integration tests across `*-engine`, `*-receipt`, `*-eventlog`, `*-fees`. Out of scope for a single-contract ship. The contract is deployable today via `/api/tx/deploy-script` without registry inclusion.
+- **No UI dApp** — the deadman-switch dApp is a typed client peer of `sap/`, `mnemochain/`, `witnessfit/` etc. (no `index.html`). The landing page now reads "13 reference contracts" instead of 12.
+- **Two API gotchas surfaced on the first Mini-1 compile** — `Value::String` doesn't exist (the variant is `Value::Str`); `ExecutionResult.return_value` is `Value` directly, not `Option<Value>` (view methods that return nothing yield `Value::Null`). Both fixed in `c318fe61`.
+**Why this is doctrine-native (and not just "any chain can do this"):**
+- Ethereum can implement the basic state machine, but releases sit in active storage forever. EvaporChain's four-act lifecycle compresses released state into the tombstone after the contract evaporates — release events live in eulogies, not in hot state. The cleanup is free.
+- The "data fades unless refreshed" doctrine literally *is* the dead-man's switch product. Holder refreshes → state persists. Holder goes silent → state releases. Direct mapping.
+**What's next:**
+- Operator decision: promote deadman-switch into the formal catalogue (new `TypedInit` variant, registry constant, dispatch arm + tests across the *-engine/*-receipt/*-eventlog/*-fees crates)? Or keep it as a free-floating reference contract?
+- T3.1 cluster bring-up + EVAPORCHAIN_ADMIN_KEY flip + T0.12 auditor selection — same operator gates as the dawn entry.
+- Mini-1 SSH is healthy again as of this session (worktree-based test ran clean); Mini-2 + Mini-3 still untested.
+**Cross-references:** commits `a13ff7c5`, `c318fe61`; files `contracts/evaporscript/deadman_switch.es`, `dapps/deadman-switch/*`, `crates/evaporchain-script/tests/deadman_switch_pilot.rs`. Peer contracts for shape: `contracts/evaporscript/sap.es`, `contracts/evaporscript/mnemochain.es`. Catalogue dispatch (for future formal registration): `crates/evaporchain-app-templates-engine/src/dispatch.rs:93-149`.
+
+---
+
 ## 2026-05-31 (morning) — Legacy dApps inventory → landing-page integration
 
 **Focus:** close the older-dApps audit. Categorize the 10 pre-existing dApps in `dapps/`, decide revive vs archive, and bring them under the landing page's discoverability surface.
