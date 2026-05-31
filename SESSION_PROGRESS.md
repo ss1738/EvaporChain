@@ -6,6 +6,41 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (after midnight) — Subscription catalogue promotion (26th template)
+
+**Focus:** promote `subscription.es` to the 26th formal catalogue template — the chain-as-keeper sibling of DEADMAN_SWITCH, on the recurring-payment surface. Same multi-crate scope as the deadman_switch promotion earlier this session; the pattern is now sustainable.
+**Commits shipped:** 1 on main (`92f714b2`).
+**Catalogue is now 26 templates** (up from 25 after the deadman_switch promotion two commits earlier).
+**What landed:**
+| Crate | Change |
+|---|---|
+| `evaporchain-app-templates::class` | New `pub const SUBSCRIPTION_SERVICE: TemplateClass(0x0001_0109)` in the Marketplace lane (after `DEADMAN_SWITCH` 0x0001_0108). Added to `all_classes_in_app_range` + `lane_partitioning` test lists. |
+| `evaporchain-app-templates::catalogue` | New `TemplateDescriptor` with default params `{"initial_energy": 1000, "half_life": 100, "period_amount": 100, "period_length": 30}`. The catalogue count test bumped 25 → 26. |
+| `evaporchain-app-templates-engine::init_subscription` (new module) | Typed init: 4 u64 fields (initial_energy, half_life, period_amount, period_length) + `parse()`. |
+| `evaporchain-app-templates-engine::dispatch` | New `TypedInit::Subscription` variant + dispatch arm `else if cls == SUBSCRIPTION_SERVICE`. |
+| `evaporchain-app-templates-fees::oracle` | New `TypedInit::Subscription(_) => SURCHARGE_MARKETPLACE` arm. Same surcharge as its lane peers; the state shape (subscriber + provider + period terms + counters + lifecycle flags) sits in the marketplace complexity tier. |
+| `evaporchain-app-templates-bind::bind` | New `TypedInit::Subscription` invariant arm: `initial_energy / half_life / period_amount / period_length` all > 0. The .es runtime guard enforces amount + period > 0 at `set_terms()`; pre-flight rejection at deploy saves a confusing tx round-trip. |
+| `evaporchain-app-templates-deploy::required_keys` | New row for `SUBSCRIPTION_SERVICE` listing the 4 required keys. |
+**Doctrine claim it activates:**
+- `pay()` IS the keep-alive. Each call refreshes the contract's energy via the runtime hook; missing payments lets the contract evaporate; `on_evaporate` flips `lapsed = true`. No off-chain reaper needed to detect non-payment and cancel — the same chain-as-keeper claim as DEADMAN_SWITCH, in a different surface (recurring payment instead of secret release).
+- The two together form the doctrine's chain-as-keeper PAIR at the catalogue layer: secret-release + recurring-payment.
+**Empirical results on Mini-1 worktree (92f714b2):**
+- 220 tests pass across 5 template crates (`-templates`, `-engine`, `-fees`, `-bind`, `-deploy`). Zero failures.
+- The previously-fragile `every_catalogue_default_binds` test (closed earlier this session at `a831bd29`) still passes — all 26 templates now bind cleanly with their default params.
+- Full workspace `cargo build --workspace` completes in 2m 11s. Same pre-existing dead-code warning (`wallet_encryption_ready` in auth.rs), no new warnings.
+- Worktree `/tmp/ec-subscription` cleaned up.
+**Decisions made:**
+- **All 4 init params required** (no defaults via `serde(default)`). Catalogue descriptors carry exact defaults; missing-key rejection at the deploy layer is the contract. Consistent with mnemochain / mayfly / decay_access_pass shape.
+- **Marketplace lane** rather than Wallet UX or Consumer. The doctrine pattern (multi-party recurring commitment with structural lapse) sits with SDDC / SFSV / SHLM / SCL / SAP / Deadman.
+- **Period-length + period-amount in the init struct** rather than runtime-only. The on-chain `set_terms(provider, amount, period)` call still locks the actual values per-instance; init carries the wallet form's default cadence so deploy-fee quotes can be computed and the dApp UI can pre-populate.
+**Today's totals:** 10 commits on main, 2,000+ LOC across .es / cargo / TS / HTML / catalogue-registry / engine plumbing. Reference contracts 12 → 17 (5 typed clients), catalogue 24 → 26 (DEADMAN_SWITCH + SUBSCRIPTION_SERVICE promotions, plus 3 latent-gap engine wirings).
+**What's next:**
+- The chain-as-keeper doctrine pair is now fully represented at every layer (.es / cargo pilot / typed client / formal catalogue). Possible follow-ups: a `subscription-vista` visceral simulator (parallel to deadman-vista) or another catalogue promotion (`mortal_message`, `mortal_nft`, `bounty` are the natural picks — all already have typed clients).
+- Same operator gates open (`EVAPORCHAIN_ADMIN_KEY`, T3.1 Tailscale, T0.12 auditor).
+**Cross-references:** commit `92f714b2`. Files: class.rs / catalogue.rs (registry), init_subscription.rs (new), dispatch.rs / oracle.rs / bind.rs / required_keys.rs (1 arm each). Verified on Mini-1 worktree.
+
+---
+
 ## 2026-05-31 (late night) — Catalogue promotion + 3 latent-gap closures
 
 **Focus:** promote `deadman_switch` from free-floating .es contract to the 25th formal catalogue template. Multi-crate heavy work; the question I'd flagged as "operator decision" in the midday entry.
