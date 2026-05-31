@@ -73,7 +73,7 @@ fn arm(
         "arm",
         vec![
             Value::Address(holder),
-            Value::String(payload_hash.to_string()),
+            Value::Str(payload_hash.to_string()),
             Value::U64(window),
         ],
         initial_state(bc),
@@ -127,7 +127,7 @@ fn arm_is_owner_only_one_shot() {
         "arm",
         vec![
             Value::Address(holder),
-            Value::String("0xdeadbeef".to_string()),
+            Value::Str("0xdeadbeef".to_string()),
             Value::U64(100),
         ],
         initial_state(&bc),
@@ -150,7 +150,7 @@ fn arm_is_owner_only_one_shot() {
         "arm",
         vec![
             Value::Address(holder),
-            Value::String("0xbeefcafe".to_string()),
+            Value::Str("0xbeefcafe".to_string()),
             Value::U64(50),
         ],
         state,
@@ -204,7 +204,7 @@ fn release_dead_blocked_before_deadline_open_after() {
     let before = EvaporVM::execute(
         &bc,
         "release_dead",
-        vec![Value::String("".to_string())],
+        vec![Value::Str("".to_string())],
         state.clone(),
         &ctx(releaser, owner, 149, 10_000),
     );
@@ -214,7 +214,7 @@ fn release_dead_blocked_before_deadline_open_after() {
     let after = EvaporVM::execute(
         &bc,
         "release_dead",
-        vec![Value::String("the secret".to_string())],
+        vec![Value::Str("the secret".to_string())],
         state,
         &ctx(releaser, owner, 150, 10_000),
     )
@@ -224,7 +224,7 @@ fn release_dead_blocked_before_deadline_open_after() {
     assert_eq!(after.state_changes.get("released_by"), Some(&Value::Address(releaser)));
     assert_eq!(
         after.state_changes.get("revealed_secret"),
-        Some(&Value::String("the secret".to_string())),
+        Some(&Value::Str("the secret".to_string())),
     );
 }
 
@@ -241,7 +241,7 @@ fn trigger_early_is_holder_only() {
     let bad = EvaporVM::execute(
         &bc,
         "trigger_early",
-        vec![Value::String("".to_string())],
+        vec![Value::Str("".to_string())],
         state.clone(),
         &ctx(stranger, owner, 75, 10_000),
     );
@@ -251,7 +251,7 @@ fn trigger_early_is_holder_only() {
     let r = EvaporVM::execute(
         &bc,
         "trigger_early",
-        vec![Value::String("voluntary release".to_string())],
+        vec![Value::Str("voluntary release".to_string())],
         state,
         &ctx(holder, owner, 75, 10_000),
     )
@@ -272,7 +272,7 @@ fn double_release_rejected() {
     let r = EvaporVM::execute(
         &bc,
         "trigger_early",
-        vec![Value::String("first".to_string())],
+        vec![Value::Str("first".to_string())],
         state,
         &ctx(holder, owner, 75, 10_000),
     )
@@ -281,7 +281,7 @@ fn double_release_rejected() {
     let second = EvaporVM::execute(
         &bc,
         "release_dead",
-        vec![Value::String("second".to_string())],
+        vec![Value::Str("second".to_string())],
         r.state_changes,
         &ctx([7u8; 32], owner, 200, 10_000),
     );
@@ -328,7 +328,7 @@ fn views_track_alive_releasable_released_tristate() {
         &ctx(holder, owner, 75, 10_000),
     )
     .expect("is_alive must succeed");
-    assert_eq!(alive.return_value, Some(Value::Bool(true)));
+    assert_eq!(alive.return_value, Value::Bool(true));
 
     let releasable_pre = EvaporVM::execute(
         &bc,
@@ -338,7 +338,7 @@ fn views_track_alive_releasable_released_tristate() {
         &ctx(holder, owner, 75, 10_000),
     )
     .expect("is_releasable must succeed");
-    assert_eq!(releasable_pre.return_value, Some(Value::Bool(false)));
+    assert_eq!(releasable_pre.return_value, Value::Bool(false));
 
     // Epoch 200 — deadline lapsed, releasable.
     let releasable_post = EvaporVM::execute(
@@ -349,7 +349,7 @@ fn views_track_alive_releasable_released_tristate() {
         &ctx(holder, owner, 200, 10_000),
     )
     .expect("is_releasable must succeed");
-    assert_eq!(releasable_post.return_value, Some(Value::Bool(true)));
+    assert_eq!(releasable_post.return_value, Value::Bool(true));
 
     let alive_after = EvaporVM::execute(
         &bc,
@@ -359,14 +359,14 @@ fn views_track_alive_releasable_released_tristate() {
         &ctx(holder, owner, 200, 10_000),
     )
     .expect("is_alive must succeed");
-    assert_eq!(alive_after.return_value, Some(Value::Bool(false)));
+    assert_eq!(alive_after.return_value, Value::Bool(false));
 
     // After release, both is_alive and is_releasable flip to false;
     // is_released flips to true.
     let r = EvaporVM::execute(
         &bc,
         "release_dead",
-        vec![Value::String("x".to_string())],
+        vec![Value::Str("x".to_string())],
         state,
         &ctx([8u8; 32], owner, 200, 10_000),
     )
@@ -388,7 +388,7 @@ fn views_track_alive_releasable_released_tristate() {
         .expect("view must succeed");
         assert_eq!(
             v.return_value,
-            Some(Value::Bool(*expected)),
+            Value::Bool(*expected),
             "{m} mismatch after release"
         );
     }
@@ -413,7 +413,7 @@ fn epochs_until_deadline_counts_down() {
         .expect("epochs_until_deadline must succeed");
         assert_eq!(
             r.return_value,
-            Some(Value::U64(*expected)),
+            Value::U64(*expected),
             "epochs_until_deadline at epoch {epoch}",
         );
     }
