@@ -6,6 +6,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (later afternoon) — catalogue-browser — front door for the 24 templates
+
+**Focus:** ties everything we've shipped today into one navigable view. Anyone landing on EvaporChain can see the 24 templates, filter by lane, preview any `.es` source inline, and jump to the dApp client (for the 12 templates with one).
+**Commits shipped:** 1 on main (`c2973c1f`). Pushed direct.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `dapps/catalogue-browser/index.html` | ~280 LOC single file. Tailwind CDN. Catalogue data inlined (24 entries, sorted by class id, byte-mirror of `catalogue.rs`). Per-template card: lane-themed icon + title + 0x000Class id + color-coded lane badge + description + substrate crate name + GitHub link + dApp link + preview-source toggle. Lane filter bar (all/NFT/Marketplace/Wallet UX/Consumer/Cultural/Paradigm/Governance). Live search box (name + description + class id). |
+| Source preview | Click "preview source" → fetches the `.es` file from `/contracts/evaporscript/...` (page is served from repo root, so root-relative paths resolve). When opened from `file://` the preview falls back to a hint pointing at the `npm run serve` URL; the GitHub link still works (private repo — requires login). |
+| `package.json` | `npm run serve` binds REPO ROOT on **port 8088** (chose 8088 instead of 3000 because the user's Elevate Grads dev server already owns 3000 in this workspace; port 3000 is reserved for `four-act-console` which needs to match the chain node's CORS allowlist). |
+**Empirical results:** smoke-tested with `npm run serve` — 200 on /dapps/catalogue-browser/index.html, 200 on /contracts/evaporscript/mortal_dao.es with the byte-stable inline source. All 24 catalogue entries verified present in the inlined data array.
+**Decisions made:**
+- **Inline catalogue data, not fetch from a built JSON.** The data is small (~5KB), changes infrequently (only when class.rs grows), and inlining keeps the page self-contained. If the catalogue grows past ~100 entries this should be revisited.
+- **Port 8088, not 3000.** Caught at smoke-test that the user already has another Next.js project (Elevate Grads) on port 3000 — my python http.server was silently serving Elevate Grads' 404 page. Switched catalogue-browser to 8088 (it doesn't need the chain so no CORS dependency); four-act-console stays on 3000 because that's what the chain node's allowlist contains by default.
+- **Source-preview path uses root-relative URL** (`/contracts/evaporscript/...`), so the serve script binds the repo root rather than the dApp dir. Lets the page browse the actual on-disk reference contracts. file:// fallback gives a clear hint instead of a silent failure.
+- **No chain dependency.** This dApp is purely a catalogue index. For chain-live work, link out to decay-vista (thesis demo) or four-act-console (death-ledger).
+**What's next:**
+- T3.1 cluster bring-up still gated only on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+- Possible builds: block explorer (different lens on the live chain — blocks + transactions, not just death); EvaporScript V2 design doc (capture today's parser-limit lessons); a deploy-a-contract test against the public node.
+**Blockers / open questions:** none new.
+**Cross-references:** commit `c2973c1f`; files `dapps/catalogue-browser/{index.html,package.json}`. Data mirror source: `crates/evaporchain-app-templates/src/{class,catalogue}.rs`. Sibling dApps: `dapps/decay-vista/`, `dapps/four-act-console/`.
+
+---
+
 ## 2026-05-31 (afternoon) — Four-Act Console — the chain's death ledger, live
 
 **Focus:** decay-vista shows individual contracts dying; this is the chain-wide complement — a dApp that polls a live node's `/api/four_act` + `/api/network/health` and renders **the chain's accounting of death**. No other chain has primitives like eulogy_count, refresh_pool_total, mortis, evaporation_mmr — because no other chain has structural death to count.
