@@ -6,6 +6,37 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (morning) — Legacy dApps inventory → landing-page integration
+
+**Focus:** close the older-dApps audit. Categorize the 10 pre-existing dApps in `dapps/`, decide revive vs archive, and bring them under the landing page's discoverability surface.
+**Commits shipped:** 0 (uncommitted; awaiting operator-go on commit).
+**Deliverables:**
+| Category | dApps | Disposition |
+|---|---|---|
+| Static (1) | `explorer` (277 LOC, dark theme, multi-page: dashboard/blocks/objects/accounts/validators) | **Keep.** More thorough than the new lightweight `block-explorer/` — distinct value. Open `index.html` directly; defaults to `localhost:8080` (override in URL bar). |
+| Vite + vanilla TS (4) | `energy-pool`, `governance`, `mortal-messages`, `nft-marketplace` | **Keep.** Each has a built `dist/` but with absolute `/assets/` paths — not drop-in portable to a single static server. Need `npm install && npm run dev` per app. |
+| Next.js (4) | `explorer-light` (light-client w/ in-browser Verkle proofs), `gov-portal` (protocol governance), `singh-pool` (energy-decaying AMM), `validator-analytics` (read-only ops dashboard) | **Keep.** All four default to port 3000 → collide with each other and with `four-act-console`/`block-explorer`; run one at a time. |
+| Test harness (1) | `integration-tests` | **Not a dApp.** Vitest suite against a live node. Listed in landing page for inventory completeness, flagged amber. |
+| **Total** | **10** | **0 archived, 10 documented.** |
+**Landing-page update (`dapps/index.html`):**
+- New section "Legacy dApps · pre-existing, need a local build" (~95 LOC added)
+- 10 cards in a 2-column grid, each with: stack badge (static / next.js / vite), one-line description, one-line run command
+- Amber-styled card for the test harness so it doesn't look like a user-facing dApp
+- Port-collision note at section foot
+**Decisions made:**
+- **Zero archives.** Each legacy dApp demonstrates a distinct doctrine pattern (mortal NFTs, mortal DAO, decaying AMM LPs, light-client verification, validator ops). Archiving any would lose signal even though the build cost is real.
+- **Don't rebuild them with `--base ./` for portability.** That would let me serve all four Vite dists from a single static root, but it's churn on apps the operator may not exercise often. Documenting `npm install && npm run dev` is the lower-risk path.
+- **Did not run any `npm install`.** Triaged purely from `index.html` shells + `package.json` + `README.md` + `dist/index.html` artifacts. Avoided burning hours on builds for apps the operator may not actually want resurrected.
+**What works end-to-end on the public devnet:** unchanged from the dawn entry — register/login/read endpoints + 4 read-only doctrine-demo dApps + wallet auth flow.
+**What's next:**
+- Operator decision: do you want any of these legacy dApps actually re-launched on the public devnet (alongside `four-act-console`/`block-explorer`)? If yes, the natural pick is `validator-analytics` — read-only, no port collisions with what's running once you stop the four-act/block-explorer dev servers, and demonstrates the doctrine doesn't break operational visibility.
+- `EVAPORCHAIN_ADMIN_KEY` flip still gates write-side e2e (see dawn entry).
+- T3.1 cluster bring-up still gated on Tailscale auth key.
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Cross-references:** files touched: `dapps/index.html` only. Inventory source: `dapps/{name}/package.json` + `README.md` headers. No Rust code touched, no crate builds run.
+
+---
+
 ## 2026-05-31 (dawn) — End-to-end deploy test surfaces two real bugs + an operator gate
 
 **Focus:** drive the full wallet → shared/auth → 12-client flow against the live public node. Confirms what works + surfaces what's still gated.

@@ -198,6 +198,118 @@ cd dapps/block-explorer     &amp;&amp; npm run serve   # port 3000 (same as abov
         env var on the node side and restart.
       </p>
     </section>
+
+    <section class="mt-12">
+      <div class="flex items-baseline justify-between mb-4">
+        <h2 class="text-xs uppercase tracking-widest text-slate-500">legacy dApps · pre-existing, need a local build</h2>
+        <span class="text-[11px] mono text-slate-400">10 apps</span>
+      </div>
+      <p class="text-sm text-slate-600 mb-5 leading-relaxed max-w-3xl">
+        These shipped before the auth + token model and assume their own node URL.
+        They still build and demonstrate doctrine concepts (mortal NFTs, decaying governance,
+        validator analytics). Each needs <code class="bg-slate-100 px-1 rounded text-xs">npm install</code>
+        + its own dev server because they use Vite or Next.js with absolute asset paths.
+        Most default to a localhost node — point the URL bar at
+        <code class="bg-slate-100 px-1 rounded text-xs">http://89.167.52.40:8099</code> after launching.
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">static · single file</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">explorer</span>
+          </div>
+          <p class="text-sm text-slate-700">Multi-page explorer (dashboard / blocks / objects / accounts / validators). More thorough than the new <em>Block Explorer</em>; defaults to <code class="bg-slate-100 px-1 rounded text-xs">localhost:8080</code> — change in the URL bar.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">open dapps/explorer/index.html directly</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">next.js · light-client</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">explorer-light</span>
+          </div>
+          <p class="text-sm text-slate-700">Pulls compact CSLC headers, verifies tx-inclusion + Verkle state proofs <em>in-browser</em>. The only dApp that runs cryptographic verification client-side.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">cd dapps/explorer-light &amp;&amp; npm install &amp;&amp; npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">vite · vanilla TS</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">energy-pool</span>
+          </div>
+          <p class="text-sm text-slate-700">Shared energy staking — many wallets pooling refresh into one community object so it doesn't die.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">cd dapps/energy-pool &amp;&amp; npm install &amp;&amp; npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">vite · vanilla TS</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">governance</span>
+          </div>
+          <p class="text-sm text-slate-700">Mortal DAO — proposals carry their own energy and evaporate if not endorsed in time. Outcome-fades-from-disuse pattern.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">cd dapps/governance &amp;&amp; npm install &amp;&amp; npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">next.js · gov surface</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">gov-portal</span>
+          </div>
+          <p class="text-sm text-slate-700">Draft, endorse, and submit stake-quorum amendments to the chain's six governance flags. Different from <em>governance</em> — this is protocol parameters, not user DAOs.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">cd dapps/gov-portal &amp;&amp; npm install &amp;&amp; npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">vite · vanilla TS</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">mortal-messages</span>
+          </div>
+          <p class="text-sm text-slate-700">Self-destructing messages. Each ciphertext has a half-life; readable until decoded-energy crosses zero.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">cd dapps/mortal-messages &amp;&amp; npm install &amp;&amp; npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">vite · vanilla TS</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">nft-marketplace</span>
+          </div>
+          <p class="text-sm text-slate-700">Decaying NFTs — mint, trade, refresh. The "scarcity that requires care" thesis: hoarded NFTs evaporate; owned-and-loved ones persist.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">cd dapps/nft-marketplace &amp;&amp; npm install &amp;&amp; npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">next.js · AMM</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">singh-pool</span>
+          </div>
+          <p class="text-sm text-slate-700">Concentrated-liquidity AMM with <em>energy-decaying</em> LP positions. Stale liquidity drains; engaged LPs compound.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">cd dapps/singh-pool &amp;&amp; npm install &amp;&amp; npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-slate-500">next.js · read-only</span>
+            <span class="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5">validator-analytics</span>
+          </div>
+          <p class="text-sm text-slate-700">Stake, block-production, delegations, slashes, finality, peer-set health. Auto-refresh 15s. <code class="bg-slate-100 px-1 rounded text-xs">EVAPORCHAIN_RPC</code> env var picks the upstream.</p>
+          <code class="text-[11px] mono text-slate-500 block mt-2">EVAPORCHAIN_RPC=http://89.167.52.40:8099 npm run dev</code>
+        </div>
+
+        <div class="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs mono text-amber-700">test harness · not a dApp</span>
+            <span class="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5">integration-tests</span>
+          </div>
+          <p class="text-sm text-amber-900">Vitest suite, not a user-facing app. Listed here so the inventory is complete. Run with <code class="bg-white px-1 rounded text-xs">npm test</code> against a live node.</p>
+        </div>
+      </div>
+
+      <p class="text-xs text-slate-500 mt-4">
+        Port note: all 4 Next.js apps default to port 3000 and so collide with each other +
+        with <em>four-act-console</em> and <em>block-explorer</em>. Run one at a time, or pass
+        <code class="bg-slate-100 px-1 rounded">PORT=3001</code> etc. The Vite apps pick free ports automatically.
+      </p>
+    </section>
   </main>
 
   <footer class="max-w-5xl mx-auto px-6 pb-16 text-xs text-slate-500 text-center">
