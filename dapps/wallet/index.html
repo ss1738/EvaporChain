@@ -92,10 +92,21 @@ evaporchain_wallet_user_id</pre>
         <a class="text-sky-700 hover:underline" href="../decay-access-pass/">decay-access-pass</a>,
         <a class="text-sky-700 hover:underline" href="../mortal-dao/">mortal-dao</a>,
         <a class="text-sky-700 hover:underline" href="../bell-oracle/">bell-oracle</a>, …
-        (each one's <code class="bg-slate-100 px-1 rounded">client.ts</code> needs an
-        <code class="bg-slate-100 px-1 rounded">Authorization: Bearer ${'$'}token</code> header
-        on /api/tx/* — that's the next-step fix in `dapps/shared/auth.ts`.)
+        Their <code class="bg-slate-100 px-1 rounded">client.ts</code> reads
+        <code class="bg-slate-100 px-1 rounded">evaporchain_wallet_token</code> from
+        <code>localStorage</code> via <code class="bg-slate-100 px-1 rounded">dapps/shared/auth.ts</code>
+        and injects <code class="bg-slate-100 px-1 rounded">Authorization: Bearer ${'$'}token</code> on writes.
       </p>
+      <div class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+        <strong>One more step before you can deploy:</strong> writing transactions
+        (<code class="bg-amber-100 px-1 rounded">/api/tx/*</code>) needs a funded on-chain account.
+        The faucet endpoint <code class="bg-amber-100 px-1 rounded">/api/faucet</code> is gated by
+        <code class="bg-amber-100 px-1 rounded">EVAPORCHAIN_ADMIN_KEY</code> — your node operator
+        sets this env var, restarts the node, then funds your address. Until then, every
+        <code class="bg-amber-100 px-1 rounded">/api/tx/deploy-script</code> call returns
+        "Account not found — use faucet first."
+        Surfaced 2026-05-31 by an end-to-end test against the public devnet.
+      </div>
     </section>
 
     <!-- ── State: register ───────────────────────────────────── -->
@@ -260,12 +271,24 @@ evaporchain_wallet_user_id</pre>
       localStorage.setItem(LS.email, payload.email);
       localStorage.setItem(LS.display, payload.display_name);
       if (r.body.user_id != null) localStorage.setItem(LS.userId, r.body.user_id.toString());
-      // Pre-fill verify form.
+      // 2026-05-31: devnet flows auto-verify on register — the response
+      // omits verification_code, says "Account created and verified!",
+      // and login works directly. Detect by message text and skip the
+      // verify step. Production SMTP-enabled nodes include the code in
+      // their response (or just send it to email and we paste).
       $('form-verify').elements.email.value = payload.email;
-      if (r.body.verification_code) {
-        $('form-verify').elements.code.value = r.body.verification_code;
+      $('form-login').elements.email.value = payload.email;
+      const autoVerified = !r.body.verification_code &&
+        typeof r.body.message === 'string' &&
+        r.body.message.toLowerCase().includes('verified');
+      if (autoVerified) {
+        showPanel('login');
+      } else {
+        if (r.body.verification_code) {
+          $('form-verify').elements.code.value = r.body.verification_code;
+        }
+        showPanel('verify');
       }
-      showPanel('verify');
     });
 
     $('form-verify').addEventListener('submit', async (e) => {
