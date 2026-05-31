@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 — MnemoChain reference contract — CATALOGUE 100% BACKED
+
+**Focus:** ship the LAST catalogue gap (MNEMOCHAIN_CARD, 0x0001_0302, Consumer lane). Every class id declared in class.rs now has both a catalogue descriptor and a runnable .es reference contract.
+**Commits shipped:** 2 on main (`319ada83` + `b2425cee`). Branch `mnemochain-backfill` ff-merged + deleted.
+**Deliverables:**
+| Item | Action |
+|---|---|
+| `contracts/evaporscript/mnemochain.es` | ~220 LOC. FSRS-lite spaced-repetition: arm(holder, content_hash, initial_stability), review(rating: 1-4 = Again/Hard/Good/Easy), transfer(to). Stability progression: Again halves (floor 1), Hard unchanged, Good doubles, Easy triples — canonical FSRS interval doubling on Good held exactly. retrievability_bp(): linear from 10000 at review to 0 over `stability` epochs (V2 swap for exact exponential when EvaporScript gets bit-shift). is_due(): true when retrievability < 9000bp. Card transfer carries review history — the portable cognitive credential pattern. |
+| `mod mnemochain_pilot` (10 tests) | totality-clean, arm-validates-one-shot, review holder-only + rating in [1,4], **Again halves with floor 1** (10 → 5 → 2 → 1 → 1), **Good doubles + Easy triples + Hard unchanged** with counter bookkeeping, retrievability_decays_linearly (10000 → 5000 → 0 at age 0/5/10), is_due at the 90% threshold (epoch=0 not due, epoch=1 due), transfer carries history (new holder inherits review_count + can review; old holder rejected), pre-arm-views-safe, pre-first-review-retrievability=10000. **10/10 PASS** on hel-2 after the `*=` fix. |
+| dApp client | `dapps/mnemochain/` — RATING_AGAIN/HARD/GOOD/EASY constants + every method builder + every view. 9/9 node:test PASS. |
+| Catalogue pointer | MNEMOCHAIN_CARD descriptor extended with the portable-credentials framing + V1 linear-decay caveat. |
+**Empirical results:** 10/10 cargo + 9/9 TS pass after the fix. First-compile failed with "expected assignment operator after self.field" at lines using `self.stability *= 2` — EvaporScript V1 only has `+=` / `-=` (per parser.rs:373-388, no `*=`/`/=` tokens). Fix: `self.stability = self.stability * N` (the canonical form, already used for the Again-halving case which used `/`).
+**Decisions made:**
+- **Mini-2 + Mini-3 went unreachable mid-verification.** Both timed out on SSH banner exchange (Tailscale routing or VM-level issue — likely the same recurring chronic-unreliability the audit noted). Mini-1 had untracked Cargo.lock files blocking branch switch (didn't risk stashing user's WIP). Pivoted to **hel-2** (the new VM I provisioned this morning) — full Rust toolchain + warm cargo cache from the release build of evaporchain-node. Build for the test profile was ~minute on hel-2 (CX23 2c/4G + 4G swap).
+- **Linear retrievability, not exponential.** Same V1 EvaporScript constraint as SAP. The canonical FSRS Good-doubles-Easy-triples table on stability is exact; only the within-window retrievability shape differs. V2 swap is mechanical.
+- **Transfer carries history.** The new holder inherits `review_count`, `stability`, `last_review_epoch`. The "I've remembered this for two years" claim travels with the card.
+- **EvaporScript V1 compound-op gap logged.** `+=` and `-=` only; no `*=`, `/=`. The fix line in commit `b2425cee` adds an inline comment so future contracts catch this at write-time, not compile-time.
+**What's next:**
+- **The catalogue is COMPLETE.** 24 entries, all backed. Both lane-wise (7/7 lanes ≥ 1 backed) and item-wise (every registered class id has both descriptor + .es file).
+- T3.1 cluster bring-up still gated only on your Tailscale auth key.
+- New build directions worth considering: cross-contract composition (bell_oracle + lottery, mortal_dao + scl), block explorer, V2 EvaporScript (bit-shift + `*=`/`/=` + while-with-bound) to enable exact-exponential decay in sap/mnemochain.
+**Blockers / open questions:** **Mini-2 + Mini-3 down** — needs operator check on the M4 cluster's Tailscale connectivity / power state.
+**Cross-references:** commits `319ada83` (feat), `b2425cee` (compound-op fix); files `contracts/evaporscript/mnemochain.es`, `crates/evaporchain-script/src/lib.rs` (`mod mnemochain_pilot`), `crates/evaporchain-app-templates/src/catalogue.rs`, `dapps/mnemochain/{src,test}`; parser-op limitation at `crates/evaporchain-script/src/parser.rs:373-388`.
+
+---
+
 ## 2026-05-30 (mid-morning) — SAP reference contract (Marketplace lane closed 7/7)
 
 **Focus:** backfill SAP_AQ (0x0001_0105). Marketplace lane was 6/7 backed; this closes it 7/7 — the last Marketplace gap.
