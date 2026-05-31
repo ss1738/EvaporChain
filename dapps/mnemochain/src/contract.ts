@@ -42,10 +42,10 @@ export const MNEMOCHAIN_SOURCE = `contract MnemoChain {
         } else if rating == 2 {
             self.total_hard_count += 1
         } else if rating == 3 {
-            self.stability *= 2
+            self.stability = self.stability * 2
             self.total_good_count += 1
         } else {
-            self.stability *= 3
+            self.stability = self.stability * 3
             self.total_good_count += 1
         }
         self.last_review_epoch = epoch

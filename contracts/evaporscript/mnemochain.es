@@ -87,11 +87,12 @@ contract MnemoChain {
             self.total_hard_count += 1
         } else if rating == 3 {
             // Good — interval doubles (FSRS canonical).
-            self.stability *= 2
+            // EvaporScript V1 has no `*=`; use `field = field * N` form.
+            self.stability = self.stability * 2
             self.total_good_count += 1
         } else {
             // Easy (rating == 4) — interval triples.
-            self.stability *= 3
+            self.stability = self.stability * 3
             self.total_good_count += 1
         }
         self.last_review_epoch = epoch
