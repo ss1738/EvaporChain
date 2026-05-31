@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (late afternoon) — Subscription typed client — close a dApp-coverage gap
+
+**Focus:** ship the dApp client for `contracts/evaporscript/subscription.es`. The .es file + cargo pilot have been in tree for weeks; the typed client was the missing piece preventing browser-side deploys.
+**Commits shipped:** 1 on main (`<this>`).
+**Deliverables:**
+| File | Notes |
+|---|---|
+| `dapps/subscription/{package.json, src/contract.ts, src/client.ts, test/subscription.test.ts}` | Byte-stable inline copy of subscription.es + payload builders (3 mutators: `set_terms`, `pay`, `cancel`; 8 views) + auth-injected Tx wrappers. **8/8 TS tests pass** via `npm test`. |
+| `dapps/index.html` | Reference-contract count bumped 13 → 14. |
+**Doctrine claim it activates:**
+- `pay()` IS the keep-alive. Calling the method refreshes the contract's energy via the runtime hook; missing payments lets the contract evaporate; `on_evaporate` flips `lapsed=true`. **No off-chain reaper needed** — the same chain-as-keeper claim as the dead-man's switch, in a different surface (recurring payment instead of secret release).
+- Cancelled vs lapsed is distinct: a cancelled subscription ended cleanly and does NOT relapse on evaporation; a forgotten subscription (no payments, no cancel) DOES lapse. Two tests pin this invariant against future refactor drift.
+**Empirical results:** 8/8 TS tests green. Cargo pilot was already green pre-session (`crates/evaporchain-script/tests/subscription_pilot.rs`, pre-existing).
+**Why this matters:** the chain has 46 .es files; only 14 had TypeScript dApp clients before today. The pattern is repeatable (today's contract took ~45 min end-to-end), so the remaining gap can close incrementally each session.
+**Decisions made:**
+- **Smallest-possible-ship pattern.** No new contract, no new pilot, no new UI — just the missing dApp client. The pattern from deadman-switch (contract.ts + client.ts + tests) ports cleanly. Same 5 imports, same `noArgCall` helper, same auth integration via `shared/auth.ts`.
+- **Three pinning tests** beyond the basic payload assertions: `SUBSCRIPTION_SOURCE` structural markers, `on_evaporate` doctrine invariant (gates on `cancelled`), `pay()` counter-bump order. These catch future .es drift between the file and the inline copy without requiring a separate parser.
+**What's next:**
+- 22 more .es files still lack dApp clients (`bounty`, `multisig`, `payment_split`, `time_lock`, `vesting_schedule`, `lottery`, `sealed_bid_auction`, `oracle_feed`, `mortal_message`, `mortal_nft`, plus the substrate-tier ones). Each is ~30-60 min following today's template.
+- Same operator gates still open (catalogue promotion, `EVAPORCHAIN_ADMIN_KEY`, T3.1, T0.12).
+**Cross-references:** files `dapps/subscription/*`, `dapps/index.html`. Doctrine source: `contracts/evaporscript/subscription.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/subscription_pilot.rs`.
+
+---
+
 ## 2026-05-31 (afternoon) — DeadMan Vista — visceral simulator for the dead-man's switch doctrine
 
 **Focus:** make the dead-man's switch doctrine *visible*. The .es contract + cargo pilot prove it works; an interactive simulator lets a doctrine-curious visitor *see* the four-state lifecycle.

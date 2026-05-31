@@ -1,0 +1,10 @@
+{
+  "name": "subscription",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Subscription dApp — chain client for contracts/evaporscript/subscription.es. Recurring payment where the chain's own decay IS the lapse detector; no off-chain reaper needed.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
