@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EvaporChain — dApps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 9999px; display: inline-block; vertical-align: middle; animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .accent-decay   { background-image: linear-gradient(135deg, rgb(254 243 199) 0%, rgb(252 165 165) 100%); }
+    .accent-death   { background-image: linear-gradient(135deg, rgb(229 231 235) 0%, rgb(148 163 184) 100%); }
+    .accent-catalog { background-image: linear-gradient(135deg, rgb(220 252 231) 0%, rgb(167 243 208) 100%); }
+    .accent-blocks  { background-image: linear-gradient(135deg, rgb(219 234 254) 0%, rgb(147 197 253) 100%); }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <header class="max-w-5xl mx-auto px-6 pt-16 pb-10 text-center">
+    <p class="text-xs uppercase tracking-widest text-slate-500 mb-3">EvaporChain</p>
+    <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-slate-900">data fades unless refreshed</h1>
+    <p class="mt-5 max-w-2xl mx-auto text-base text-slate-600 leading-relaxed">
+      Most chains treat data as immortal — once written, forever stored, forever indexed.
+      EvaporChain inverts that: every contract holds a finite energy that decays automatically;
+      contracts evaporate when the energy runs out unless someone <em>refreshes</em> them.
+      The chain has a structural concept of death — eulogies, tombstones, refresh pools,
+      conservation audits. No other chain has these primitives because no other chain has
+      death to count.
+    </p>
+    <div class="mt-6 flex items-center justify-center gap-3 text-xs">
+      <span class="flex items-center gap-2 bg-white border border-slate-200 rounded-full px-3 py-1">
+        <span id="status-dot" class="pulse-dot bg-slate-400"></span>
+        <span id="status-text" class="text-slate-600">checking node…</span>
+      </span>
+      <span class="text-slate-400">|</span>
+      <span class="bg-white border border-slate-200 rounded-full px-3 py-1 text-slate-600">
+        chain epoch <span id="chain-epoch" class="mono">—</span>
+      </span>
+      <span class="text-slate-400">|</span>
+      <span class="bg-white border border-slate-200 rounded-full px-3 py-1 text-slate-600">
+        <span id="catalogue-count" class="mono">24</span> templates, <strong class="text-emerald-700">100% backed</strong>
+      </span>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-6 pb-12">
+    <h2 class="text-xs uppercase tracking-widest text-slate-500 mb-4">four lenses on the chain</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+      <a href="decay-vista/index.html" class="group block rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition">
+        <div class="accent-decay h-2"></div>
+        <div class="p-5">
+          <div class="flex items-start gap-3">
+            <span class="text-3xl">⏳</span>
+            <div class="flex-1">
+              <div class="text-sm uppercase tracking-wide text-slate-500">simulator</div>
+              <div class="text-lg font-semibold text-slate-800">Decay Vista</div>
+            </div>
+            <span class="text-xs text-slate-400 mono">offline OK</span>
+          </div>
+          <p class="text-sm text-slate-600 mt-3 leading-relaxed">
+            Six contracts (mortal message, decay pass, mayfly, attention quantum, witnessfit streak,
+            mnemochain card) decaying side-by-side in your browser. Tick the epoch forward, refresh any
+            of them, see the doctrine in motion. Same <code class="bg-slate-100 px-1 rounded text-xs">energy_at_epoch</code>
+            math as the live chain — but local, no node needed.
+          </p>
+          <div class="mt-4 text-xs text-sky-700 group-hover:underline">open vista →</div>
+        </div>
+      </a>
+
+      <a href="four-act-console/index.html" class="group block rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition">
+        <div class="accent-death h-2"></div>
+        <div class="p-5">
+          <div class="flex items-start gap-3">
+            <span class="text-3xl">⚰</span>
+            <div class="flex-1">
+              <div class="text-sm uppercase tracking-wide text-slate-500">live · read-only</div>
+              <div class="text-lg font-semibold text-slate-800">Four-Act Console</div>
+            </div>
+            <span class="text-xs text-slate-400 mono">port 3000</span>
+          </div>
+          <p class="text-sm text-slate-600 mt-3 leading-relaxed">
+            The chain's accounting of death. Polls
+            <code class="bg-slate-100 px-1 rounded text-xs">/api/four_act</code> and
+            <code class="bg-slate-100 px-1 rounded text-xs">/api/network/health</code>
+            every 2s. Shows eulogies, tombstones, refresh pool, evaporation MMR, mortis status,
+            conservation-audit streak. Primitives no other chain exposes — because no other chain
+            has structural death.
+          </p>
+          <div class="mt-4 text-xs text-sky-700 group-hover:underline">open console →</div>
+        </div>
+      </a>
+
+      <a href="catalogue-browser/index.html" class="group block rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition">
+        <div class="accent-catalog h-2"></div>
+        <div class="p-5">
+          <div class="flex items-start gap-3">
+            <span class="text-3xl">📇</span>
+            <div class="flex-1">
+              <div class="text-sm uppercase tracking-wide text-slate-500">index · static</div>
+              <div class="text-lg font-semibold text-slate-800">Catalogue Browser</div>
+            </div>
+            <span class="text-xs text-slate-400 mono">port 8088</span>
+          </div>
+          <p class="text-sm text-slate-600 mt-3 leading-relaxed">
+            All 24 registered templates with lane filters, search, and click-to-expand
+            <code class="bg-slate-100 px-1 rounded text-xs">.es</code> source previews. 7 lanes:
+            NFT, Marketplace, Wallet UX, Consumer, Cultural, Paradigm, Governance. Every entry
+            has both a catalogue descriptor and a runnable reference contract.
+          </p>
+          <div class="mt-4 text-xs text-sky-700 group-hover:underline">open catalogue →</div>
+        </div>
+      </a>
+
+      <a href="block-explorer/index.html" class="group block rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition">
+        <div class="accent-blocks h-2"></div>
+        <div class="p-5">
+          <div class="flex items-start gap-3">
+            <span class="text-3xl">🧱</span>
+            <div class="flex-1">
+              <div class="text-sm uppercase tracking-wide text-slate-500">live · read-only</div>
+              <div class="text-lg font-semibold text-slate-800">Block Explorer</div>
+            </div>
+            <span class="text-xs text-slate-400 mono">port 3000</span>
+          </div>
+          <p class="text-sm text-slate-600 mt-3 leading-relaxed">
+            The latest blocks, refreshing every 1.5 seconds. Click any block to expand the full
+            hash detail (parent, state root, data root) and per-block metadata. Badges fire for
+            evaporations, grace transitions, txs, anchor blocks, and Nova proofs.
+          </p>
+          <div class="mt-4 text-xs text-sky-700 group-hover:underline">open explorer →</div>
+        </div>
+      </a>
+    </div>
+
+    <section class="mt-12 grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div class="rounded-xl border border-slate-200 bg-white p-5">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">where the math lives</div>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Every decay number on every page resolves through
+          <code class="bg-slate-100 px-1 rounded text-xs">evaporchain-types::energy_at_epoch</code>,
+          a Coq-verified halving formula. The browser dApps inline the same math byte-for-byte
+          so simulations stay consistent with on-chain behaviour.
+        </p>
+      </div>
+      <div class="rounded-xl border border-slate-200 bg-white p-5">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">12 reference contracts</div>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Each template in the catalogue has a runnable <code class="bg-slate-100 px-1 rounded text-xs">.es</code>
+          contract + a TypeScript client (deploy / call / view payload builders). Use them as starting
+          points — the doctrine compiles, the tests are green, the patterns are repeatable.
+        </p>
+      </div>
+      <div class="rounded-xl border border-slate-200 bg-white p-5">
+        <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">the default node</div>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          <code class="bg-slate-100 px-1 rounded text-xs">http://89.167.52.40:8099</code> — the
+          permanent EvaporChain devnet, single-node, in Hetzner Helsinki. Live blocks every
+          ~1 second; mock-mode Bell beacon; eulogy counters at zero (no contracts have died here
+          yet, just open spaces in the tomb).
+        </p>
+      </div>
+    </section>
+
+    <section class="mt-10 rounded-xl border border-slate-200 bg-white p-5">
+      <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">running these locally</div>
+      <pre class="text-[11px] mono text-slate-700 bg-slate-50 p-3 rounded overflow-x-auto">cd dapps/decay-vista        &amp;&amp; npm run serve   # offline-OK simulator
+cd dapps/catalogue-browser  &amp;&amp; npm run serve   # port 8088 (serves repo root for .es previews)
+cd dapps/four-act-console   &amp;&amp; npm run serve   # port 3000 (matches chain CORS allowlist)
+cd dapps/block-explorer     &amp;&amp; npm run serve   # port 3000 (same as above)</pre>
+      <p class="text-xs text-slate-500 mt-2">
+        The two live-data dApps need port 3000 to satisfy the node's CORS allowlist. If another
+        dev server already owns that port (e.g., a Next.js project), either stop the other one
+        or add an extra origin via the <code class="bg-slate-100 px-1 rounded">EVAPORCHAIN_CORS_ORIGINS</code>
+        env var on the node side and restart.
+      </p>
+    </section>
+  </main>
+
+  <footer class="max-w-5xl mx-auto px-6 pb-16 text-xs text-slate-500 text-center">
+    <p>EvaporChain — Rust workspace · 159 crates · 25k+ tests · Coq + TLA+ verified primitives.</p>
+    <p class="mt-1">Source: <a class="text-sky-700 hover:underline" href="https://github.com/ss1738/EvaporChain">github.com/ss1738/EvaporChain</a> (private — requires login).</p>
+  </footer>
+
+  <script type="module">
+    const NODE_URL = 'http://89.167.52.40:8099';
+    const $ = (id) => document.getElementById(id);
+
+    async function checkChain() {
+      try {
+        const res = await fetch(`${NODE_URL}/api/network/health`, { cache: 'no-store' });
+        if (!res.ok) {
+          $('status-dot').className = 'pulse-dot bg-red-500';
+          $('status-text').textContent = `node HTTP ${res.status}`;
+          return;
+        }
+        const h = await res.json();
+        $('chain-epoch').textContent = h.epoch?.toLocaleString() ?? '—';
+        const color = h.status === 'healthy' ? 'bg-emerald-500'
+                    : h.status === 'syncing' ? 'bg-amber-500'
+                    : h.status === 'halted'  ? 'bg-red-500'
+                    : 'bg-slate-500';
+        $('status-dot').className = `pulse-dot ${color}`;
+        $('status-text').textContent = `node ${h.status}`;
+      } catch (e) {
+        $('status-dot').className = 'pulse-dot bg-slate-400';
+        $('status-text').textContent = 'node unreachable (CORS or offline)';
+      }
+    }
+
+    checkChain();
+    setInterval(checkChain, 5000);
+  </script>
+</body>
+</html>
