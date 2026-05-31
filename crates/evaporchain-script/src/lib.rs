@@ -5279,10 +5279,19 @@ mod sap_pilot {
     }
 
     #[test]
-    fn value_decays_linearly_to_zero_at_2hl() {
-        // initial=1000, half_life=10 → expiry at 2*hl=20 epochs.
-        // Linear: value(age) = 1000 * (20 - age) / 20.
-        //   age=0 → 1000;  age=10 → 500;  age=15 → 250;  age=20 → 0.
+    fn value_decays_exponentially_via_shift() {
+        // V2 math (ES V2.0 operators, commit cac72707): value halves
+        // every `half_life` epochs via `>>`. initial=1000, half_life=10:
+        //   age in [0,  10)  → shift 0 → value 1000
+        //   age in [10, 20)  → shift 1 → value 500
+        //   age in [20, 30)  → shift 2 → value 250
+        //   age in [30, 40)  → shift 3 → value 125
+        //   age in [90, 100) → shift 9 → value 1   (1000 >> 9 = 1)
+        //   age >= 100       → shift ≥10 → 1000 >> 10 = 0 by integer truncation
+        //
+        // V1 LINEAR (the previous shape this test asserted) had value
+        // = 0 at age=20 — V2 says 250. The exponential tail is the
+        // doctrine-correct shape.
         let (mut engine, id) = deploy_arm();
         engine
             .call(
@@ -5293,7 +5302,7 @@ mod sap_pilot {
                 0,
             )
             .unwrap();
-        // age=0 (epoch=0): value 1000.
+        // age=0 (epoch=0): value 1000 (no halvings yet).
         assert_eq!(
             engine
                 .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 0)
@@ -5301,7 +5310,15 @@ mod sap_pilot {
                 .return_value,
             Value::U64(1000)
         );
-        // age=10 (epoch=10): value 500 (half-life ✓).
+        // age=9: still in the first half-life window — value 1000.
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 9)
+                .unwrap()
+                .return_value,
+            Value::U64(1000)
+        );
+        // age=10 (half-life): value 500 (matches V1 here).
         assert_eq!(
             engine
                 .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 10)
@@ -5309,23 +5326,31 @@ mod sap_pilot {
                 .return_value,
             Value::U64(500)
         );
-        // age=15 (epoch=15): value 250.
-        assert_eq!(
-            engine
-                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 15)
-                .unwrap()
-                .return_value,
-            Value::U64(250)
-        );
-        // age=20 (epoch=20): value 0 (expiry).
+        // age=20 (2nd halving): value 250 (V1 said 0 — V2 says exponential).
         assert_eq!(
             engine
                 .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 20)
                 .unwrap()
                 .return_value,
-            Value::U64(0)
+            Value::U64(250)
         );
-        // Past expiry: still 0.
+        // age=30 (3rd halving): value 125.
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 30)
+                .unwrap()
+                .return_value,
+            Value::U64(125)
+        );
+        // age=99: shift=9, value 1000 >> 9 = 1.
+        assert_eq!(
+            engine
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 99)
+                .unwrap()
+                .return_value,
+            Value::U64(1)
+        );
+        // age=100: shift=10, value 1000 >> 10 = 0 (1024 > 1000).
         assert_eq!(
             engine
                 .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 100)
@@ -5333,17 +5358,26 @@ mod sap_pilot {
                 .return_value,
             Value::U64(0)
         );
-        // has_active_aq tracks the expiry too.
+        // Way past expiry: still 0.
         assert_eq!(
             engine
-                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 19)
+                .call(id, "current_value", vec![Value::Address(recipient())], stranger(), 10_000)
+                .unwrap()
+                .return_value,
+            Value::U64(0)
+        );
+        // has_active_aq tracks `current_value > 0`: still active at age=99,
+        // inactive at age=100.
+        assert_eq!(
+            engine
+                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 99)
                 .unwrap()
                 .return_value,
             Value::Bool(true)
         );
         assert_eq!(
             engine
-                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 20)
+                .call(id, "has_active_aq", vec![Value::Address(recipient())], stranger(), 100)
                 .unwrap()
                 .return_value,
             Value::Bool(false)
@@ -5352,6 +5386,15 @@ mod sap_pilot {
 
     #[test]
     fn epochs_until_expiry_counts_down() {
+        // V2: epochs_until_expiry is an OVER-APPROXIMATE upper bound
+        //   (64 × half_life − age)
+        // rather than the V1 exact `2*hl − age`. Computing the exact
+        // log2(initial)×half_life is awkward in EvaporScript, and
+        // 64×half_life is the safe ceiling (matches the runtime's
+        // shift-rejection threshold).
+        //
+        // initial=1000, half_life=10 → bound = 640 epochs. dApps that
+        // need the exact lifetime should poll `current_value` directly.
         let (mut engine, id) = deploy_arm();
         engine
             .call(
@@ -5362,26 +5405,34 @@ mod sap_pilot {
                 0,
             )
             .unwrap();
-        // 2*hl = 20. At epoch=0: 20 epochs left.
+        // At epoch=0: 640 epochs of headroom.
         assert_eq!(
             engine
                 .call(id, "epochs_until_expiry", vec![Value::Address(recipient())], stranger(), 0)
                 .unwrap()
                 .return_value,
-            Value::U64(20)
+            Value::U64(640)
         );
-        // At epoch 15: 5 epochs left.
+        // At epoch 15: 625 epochs left (640 − 15).
         assert_eq!(
             engine
                 .call(id, "epochs_until_expiry", vec![Value::Address(recipient())], stranger(), 15)
                 .unwrap()
                 .return_value,
-            Value::U64(5)
+            Value::U64(625)
         );
-        // At epoch 20: 0.
+        // At epoch 20: 620 epochs left.
         assert_eq!(
             engine
                 .call(id, "epochs_until_expiry", vec![Value::Address(recipient())], stranger(), 20)
+                .unwrap()
+                .return_value,
+            Value::U64(620)
+        );
+        // At epoch 640: 0 (shift would be 64 == cap).
+        assert_eq!(
+            engine
+                .call(id, "epochs_until_expiry", vec![Value::Address(recipient())], stranger(), 640)
                 .unwrap()
                 .return_value,
             Value::U64(0)

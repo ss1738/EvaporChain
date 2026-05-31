@@ -72,10 +72,13 @@ export const SAP_SOURCE = `contract SAP {
         if self.aq_redeemed[who] == 1 {
             return 0
         }
-        if epoch + 1 >= self.aq_born[who] + 2 * self.half_life {
+        if epoch + 1 < self.aq_born[who] {
+            return self.initial_value
+        }
+        if (epoch + 1 - self.aq_born[who]) / self.half_life >= 64 {
             return 0
         }
-        return self.initial_value * (self.aq_born[who] + 2 * self.half_life - epoch - 1) / (2 * self.half_life)
+        return self.initial_value >> ((epoch + 1 - self.aq_born[who]) / self.half_life)
     }
 
     fn has_active_aq(who: address) -> bool {
@@ -85,10 +88,13 @@ export const SAP_SOURCE = `contract SAP {
         if self.aq_redeemed[who] == 1 {
             return false
         }
-        if epoch + 1 >= self.aq_born[who] + 2 * self.half_life {
+        if epoch + 1 < self.aq_born[who] {
+            return true
+        }
+        if (epoch + 1 - self.aq_born[who]) / self.half_life >= 64 {
             return false
         }
-        return true
+        return self.initial_value >> ((epoch + 1 - self.aq_born[who]) / self.half_life) > 0
     }
 
     fn epochs_until_expiry(who: address) -> u64 {
@@ -98,10 +104,13 @@ export const SAP_SOURCE = `contract SAP {
         if self.aq_redeemed[who] == 1 {
             return 0
         }
-        if epoch + 1 >= self.aq_born[who] + 2 * self.half_life {
+        if epoch + 1 < self.aq_born[who] {
+            return 64 * self.half_life
+        }
+        if (epoch + 1 - self.aq_born[who]) / self.half_life >= 64 {
             return 0
         }
-        return self.aq_born[who] + 2 * self.half_life - epoch - 1
+        return self.aq_born[who] + 64 * self.half_life - epoch - 1
     }
 
     fn aq_born_view(who: address) -> u64 {

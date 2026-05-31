@@ -72,19 +72,23 @@ test("endpoint paths match the node API", () => {
   assert.equal(CALL_PATH, "/api/tx/call-script");
 });
 
-test("valueAtEpoch: matches contract math (initial=1000, hl=10)", () => {
+test("valueAtEpoch: V2 exact-exponential math (initial=1000, hl=10)", () => {
   const s: AqState = { bornEpochShifted: 1n, redeemed: false, initialValue: 1000n, halfLife: 10n };
-  // mint at real epoch 0 → bornEpochShifted = 1.
-  // age=0: value 1000.
+  // V2: value halves every `halfLife` epochs via `>>`.
+  // age=0: 1000 (no halvings).
   assert.equal(valueAtEpoch(s, 0n), 1000n);
-  // age=10 (half-life): value 500.
+  // age=9: still in first half-life window — 1000.
+  assert.equal(valueAtEpoch(s, 9n), 1000n);
+  // age=10 (1 halving): 500.
   assert.equal(valueAtEpoch(s, 10n), 500n);
-  // age=15: value 250.
-  assert.equal(valueAtEpoch(s, 15n), 250n);
-  // age=20 (expiry): 0.
-  assert.equal(valueAtEpoch(s, 20n), 0n);
-  // age=100 (way past): 0.
+  // age=20 (2 halvings): 250 — V1 LINEAR said 0 here; V2 says 250.
+  assert.equal(valueAtEpoch(s, 20n), 250n);
+  // age=99 (9 halvings): 1.
+  assert.equal(valueAtEpoch(s, 99n), 1n);
+  // age=100 (10 halvings): 1000 >> 10 = 0 by integer truncation.
   assert.equal(valueAtEpoch(s, 100n), 0n);
+  // age=10000 (way past): still 0 (shift clamped at 64).
+  assert.equal(valueAtEpoch(s, 10000n), 0n);
 });
 
 test("valueAtEpoch: never-issued + redeemed return 0", () => {
@@ -95,14 +99,16 @@ test("valueAtEpoch: never-issued + redeemed return 0", () => {
   assert.equal(valueAtEpoch(redeemed, 5n), 0n);
 });
 
-test("hasActiveAq + epochsUntilExpiry mirror current_value's gates", () => {
+test("hasActiveAq + epochsUntilExpiry: V2 (value > 0 + 64×hl upper bound)", () => {
   const live: AqState = { bornEpochShifted: 1n, redeemed: false, initialValue: 1000n, halfLife: 10n };
-  // At epoch 19 (just before expiry): active, 1 epoch left.
-  assert.equal(hasActiveAq(live, 19n), true);
-  assert.equal(epochsUntilExpiry(live, 19n), 1n);
-  // At epoch 20 (expiry): inactive, 0 epochs left.
-  assert.equal(hasActiveAq(live, 20n), false);
-  assert.equal(epochsUntilExpiry(live, 20n), 0n);
+  // V2: hasActiveAq = valueAtEpoch > 0. Lives until age=100 (when
+  // 1000 >> 10 floors to 0).
+  assert.equal(hasActiveAq(live, 99n), true);   // value=1 → active
+  assert.equal(hasActiveAq(live, 100n), false); // value=0 → inactive
+  // epochsUntilExpiry: 64 × half_life − age = 640 − age (over-approximate bound).
+  assert.equal(epochsUntilExpiry(live, 0n), 640n);
+  assert.equal(epochsUntilExpiry(live, 15n), 625n);
+  assert.equal(epochsUntilExpiry(live, 640n), 0n);
 });
 
 test("SAP_SOURCE contains all methods + lifecycle hooks + doctrine markers", () => {

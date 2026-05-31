@@ -109,11 +109,20 @@ contract SAP {
     }
 
     // ── Doctrine view: value at the current epoch ──────────────────
-    // Linear decay from initial_value to 0 over 2 * half_life epochs.
-    // value(age) = initial * (2*hl - age) / (2*hl)
-    // where age = epoch + 1 - aq_born[who].
-    // Returns 0 if never issued, already redeemed, or past 2*hl
-    // epochs since mint.
+    // V2 EXACT-EXPONENTIAL: value halves every `half_life` epochs.
+    //   value(age) = initial_value >> (age / half_life)
+    // where age = (epoch + 1 - aq_born[who]) due to the +1 sentinel.
+    //
+    // Matches `evaporchain_types::energy_at_epoch`'s first phase
+    // byte-for-byte. The V1 contract used linear-decay
+    //   value(age) = initial * (2*hl - age) / (2*hl)
+    // as an approximation because EvaporScript V1 had no `>>`. With
+    // the V2.0 operator extension (commit cac72707, 2026-05-31), the
+    // doctrine-correct exponential is expressible directly.
+    //
+    // The runtime rejects shifts ≥ 64, so we clamp the shift count.
+    // initial=1000, hl=10 reaches 0 by integer-truncation at
+    // shift=10 (1000 >> 10 = 0). 64 is a safe ceiling.
     fn current_value(who: address) -> u64 {
         if self.aq_born[who] == 0 {
             return 0
@@ -121,13 +130,20 @@ contract SAP {
         if self.aq_redeemed[who] == 1 {
             return 0
         }
-        if epoch + 1 >= self.aq_born[who] + 2 * self.half_life {
+        if epoch + 1 < self.aq_born[who] {
+            return self.initial_value
+        }
+        if (epoch + 1 - self.aq_born[who]) / self.half_life >= 64 {
             return 0
         }
-        return self.initial_value * (self.aq_born[who] + 2 * self.half_life - epoch - 1) / (2 * self.half_life)
+        return self.initial_value >> ((epoch + 1 - self.aq_born[who]) / self.half_life)
     }
 
     // ── Composite gate: is the AQ live ─────────────────────────────
+    // V2: equivalent to `current_value > 0`. Reads the AQ's current
+    // value once; the doctrine claim is "alive while value > 0", and
+    // the natural integer-truncation under `>>` floors value to 0
+    // for sufficiently-old AQs (≈ log2(initial) * half_life epochs).
     fn has_active_aq(who: address) -> bool {
         if self.aq_born[who] == 0 {
             return false
@@ -135,13 +151,22 @@ contract SAP {
         if self.aq_redeemed[who] == 1 {
             return false
         }
-        if epoch + 1 >= self.aq_born[who] + 2 * self.half_life {
+        if epoch + 1 < self.aq_born[who] {
+            return true
+        }
+        if (epoch + 1 - self.aq_born[who]) / self.half_life >= 64 {
             return false
         }
-        return true
+        return self.initial_value >> ((epoch + 1 - self.aq_born[who]) / self.half_life) > 0
     }
 
-    // ── Epochs until the AQ's value hits 0 ─────────────────────────
+    // ── Epochs until the AQ's value floors to 0 ────────────────────
+    // V2: returns an over-approximate upper bound — `64 * half_life`
+    // minus current age — rather than the exact value, since
+    // computing `log2(initial_value)` in EvaporScript is awkward.
+    // For initial=1000 this returns up to 640 (vs. actual ~100 at
+    // hl=10), so dApps using this view will see a longer-than-actual
+    // lifetime estimate. Read `current_value` directly for the truth.
     fn epochs_until_expiry(who: address) -> u64 {
         if self.aq_born[who] == 0 {
             return 0
@@ -149,10 +174,13 @@ contract SAP {
         if self.aq_redeemed[who] == 1 {
             return 0
         }
-        if epoch + 1 >= self.aq_born[who] + 2 * self.half_life {
+        if epoch + 1 < self.aq_born[who] {
+            return 64 * self.half_life
+        }
+        if (epoch + 1 - self.aq_born[who]) / self.half_life >= 64 {
             return 0
         }
-        return self.aq_born[who] + 2 * self.half_life - epoch - 1
+        return self.aq_born[who] + 64 * self.half_life - epoch - 1
     }
 
     fn aq_born_view(who: address) -> u64 {
