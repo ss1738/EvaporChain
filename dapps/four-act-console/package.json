@@ -1,0 +1,10 @@
+{
+  "name": "four-act-console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Four-Act Console — a browser dApp that polls a live EvaporChain node's /api/four_act + /api/network/health and renders the chain's death ledger: eulogies, tombstones, refresh pool, mortis state, evaporation MMR, conservation-audit streak. Open dapps/four-act-console/index.html in a browser; defaults to the permanent public node at http://89.167.52.40:8099.",
+  "scripts": {
+    "serve": "python3 -m http.server 3000 --directory ."
+  }
+}

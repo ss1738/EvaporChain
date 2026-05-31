@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EvaporChain — Four-Act Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .pulse-dot {
+      width: 8px; height: 8px; border-radius: 9999px;
+      display: inline-block; vertical-align: middle;
+      animation: pulse 1.4s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.35; }
+    }
+    .tomb { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <div id="cors-banner" class="hidden bg-amber-100 border-b border-amber-300 text-amber-900 px-6 py-2 text-xs">
+    <strong>opened from <code>file://</code> — the node's CORS allowlist will reject this.</strong>
+    Run <code class="bg-amber-200 px-1 rounded">npm run serve</code> in <code>dapps/four-act-console</code> and visit
+    <a href="http://localhost:3000" class="underline font-medium">http://localhost:3000</a>
+    (the node already allows <code>localhost:3000</code> by default).
+  </div>
+  <header class="border-b border-slate-200 bg-white">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center gap-4">
+      <div class="flex-1">
+        <h1 class="text-xl font-semibold tracking-tight">Four-Act Console</h1>
+        <p class="text-xs text-slate-500">
+          The chain's accounting of death: eulogies, tombstones, refresh pool, mortis state, evaporation MMR.
+          Other chains don't track this — there is no death to track.
+        </p>
+      </div>
+      <div class="flex items-center gap-3 text-xs">
+        <span class="text-slate-500">node</span>
+        <input id="node-url" class="border rounded px-2 py-1 font-mono text-xs w-64" value="http://89.167.52.40:8099" />
+        <button id="connect" class="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700">connect</button>
+        <button id="disconnect" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300">stop</button>
+      </div>
+    </div>
+    <div class="max-w-6xl mx-auto px-6 pb-4 flex items-center gap-4 text-xs">
+      <span class="flex items-center gap-2">
+        <span id="status-dot" class="pulse-dot bg-slate-400"></span>
+        <span id="status-text" class="text-slate-500">idle</span>
+      </span>
+      <span class="text-slate-400">|</span>
+      <span class="text-slate-600">chain epoch <span id="chain-epoch" class="font-mono">—</span></span>
+      <span class="text-slate-400">|</span>
+      <span class="text-slate-600">last block age <span id="last-age" class="font-mono">—</span>s</span>
+      <span class="text-slate-400">|</span>
+      <span class="text-slate-600">peers <span id="peers" class="font-mono">—</span></span>
+      <span class="text-slate-400">|</span>
+      <span class="text-slate-600">status <span id="net-status" class="font-mono">—</span></span>
+      <span id="last-poll" class="ml-auto text-slate-400"></span>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8 space-y-6">
+
+    <!-- ── Top headline counters ──────────────────────────────── -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <div class="text-[11px] uppercase tracking-wide text-slate-500">Eulogies</div>
+        <div id="eulogy-count" class="text-3xl font-mono tabular-nums mt-1 text-slate-800">—</div>
+        <div class="text-[11px] text-slate-400 mt-1">contracts that have completed their lifecycle</div>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <div class="text-[11px] uppercase tracking-wide text-slate-500">Tombstones</div>
+        <div id="tomb-count" class="text-3xl font-mono tabular-nums mt-1 text-slate-800">—</div>
+        <div class="text-[11px] text-slate-400 mt-1">addresses whose contracts evaporated</div>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <div class="text-[11px] uppercase tracking-wide text-slate-500">Refresh Pool</div>
+        <div id="refresh-pool" class="text-3xl font-mono tabular-nums mt-1 text-emerald-700">—</div>
+        <div class="text-[11px] text-slate-400 mt-1">energy waiting to refresh contracts</div>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <div class="text-[11px] uppercase tracking-wide text-slate-500">Evaporation MMR</div>
+        <div id="mmr-size" class="text-3xl font-mono tabular-nums mt-1 text-slate-800">—</div>
+        <div class="text-[11px] text-slate-400 mt-1">cryptographic tomb size</div>
+      </div>
+    </section>
+
+    <!-- ── Mortis + audit row ─────────────────────────────────── -->
+    <section class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <div class="flex items-center justify-between">
+          <div class="text-sm font-semibold text-slate-800">Mortis</div>
+          <span id="mortis-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-300 text-white">—</span>
+        </div>
+        <div class="text-xs text-slate-500 mt-1">
+          The chain-wide shutdown signal. Once triggered, the network freezes at a known final state root
+          and writes one last entry to the eulogy book. Almost no chain has this as a first-class
+          primitive — most just keep going past the heat death.
+        </div>
+        <div class="mt-3 text-xs">
+          <div>epoch of death: <span id="mortis-epoch" class="font-mono">—</span></div>
+          <div>final state root: <span id="mortis-root" class="font-mono break-all text-[10px]">—</span></div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <div class="flex items-center justify-between">
+          <div class="text-sm font-semibold text-slate-800">Conservation audit</div>
+          <span id="audit-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-300 text-white">—</span>
+        </div>
+        <div class="text-xs text-slate-500 mt-1">
+          Every block, the chain audits whether energy conservation held. Breaks fail-close;
+          consecutive clean audits build up like a streak.
+        </div>
+        <div class="mt-3 text-xs">
+          <div>consecutive clean: <span id="audit-clean" class="font-mono">—</span></div>
+          <div>last violation: <span id="audit-violation" class="font-mono">—</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Tombstone list + light-cone counters ─────────────────── -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 md:col-span-2">
+        <div class="text-sm font-semibold text-slate-800">Tombstones</div>
+        <div class="text-xs text-slate-500 mb-3">Contract addresses that evaporated. Names you'll never see active again.</div>
+        <ul id="tomb-list" class="space-y-1 text-xs">
+          <li class="text-slate-400 italic">no tombstones yet</li>
+        </ul>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
+        <div>
+          <div class="text-[11px] uppercase tracking-wide text-slate-500">Light-Cone blocks</div>
+          <div id="lightcone-count" class="text-2xl font-mono tabular-nums text-slate-800">—</div>
+        </div>
+        <div>
+          <div class="text-[11px] uppercase tracking-wide text-slate-500">Ghost objects</div>
+          <div id="ghost-count" class="text-2xl font-mono tabular-nums text-slate-800">—</div>
+        </div>
+        <div>
+          <div class="text-[11px] uppercase tracking-wide text-slate-500">Dead-producer redirects</div>
+          <div id="redirect-count" class="text-2xl font-mono tabular-nums text-slate-800">—</div>
+          <div class="text-[10px] text-slate-400 mt-1">producers that died mid-slot; the chain reassigned</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Raw response (debug / curiosity) ──────────────────── -->
+    <details class="bg-white rounded-xl border border-slate-200 shadow-sm">
+      <summary class="px-4 py-3 cursor-pointer text-sm font-medium text-slate-700">raw /api/four_act</summary>
+      <pre id="raw-four-act" class="px-4 pb-4 text-[10px] font-mono text-slate-600 overflow-x-auto whitespace-pre-wrap">—</pre>
+    </details>
+  </main>
+
+  <footer class="max-w-6xl mx-auto px-6 pb-12 text-xs text-slate-500">
+    <p>Default node: <code class="bg-slate-100 px-1 rounded">http://89.167.52.40:8099</code> — the permanent EvaporChain devnet (Hetzner Helsinki).
+       Change the URL to point at any other node serving the same API.</p>
+    <p class="mt-1">Polls <code class="bg-slate-100 px-1 rounded">/api/four_act</code> + <code class="bg-slate-100 px-1 rounded">/api/network/health</code> every 2s while connected.
+       The node's CORS allowlist defaults to <code class="bg-slate-100 px-1 rounded">https://testnet.evaporchain.com</code> and <code class="bg-slate-100 px-1 rounded">http://localhost:3000</code> — for local dev, run <code class="bg-slate-100 px-1 rounded">npm run serve</code> in this directory and open <code class="bg-slate-100 px-1 rounded">http://localhost:3000</code>. Operators can extend the allowlist via the <code class="bg-slate-100 px-1 rounded">EVAPORCHAIN_CORS_ORIGINS</code> env var on the node.</p>
+  </footer>
+
+  <script type="module">
+    const $ = (id) => document.getElementById(id);
+    let timer = null;
+    let pollGen = 0; // bump to invalidate in-flight requests on disconnect
+
+    function setStatus(text, dotClass) {
+      $('status-dot').className = `pulse-dot ${dotClass}`;
+      $('status-text').textContent = text;
+    }
+
+    function setBadge(elId, text, color) {
+      const el = $(elId);
+      el.textContent = text;
+      el.className = `text-[10px] font-mono px-2 py-0.5 rounded ${color} text-white`;
+    }
+
+    function fmtAddr(arr) {
+      if (!Array.isArray(arr)) return String(arr);
+      return arr.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function shortenHex(s) {
+      if (typeof s !== 'string') return String(s);
+      if (s.length <= 18) return s;
+      return s.slice(0, 10) + '…' + s.slice(-8);
+    }
+
+    function renderHealth(h) {
+      $('chain-epoch').textContent = h.epoch?.toLocaleString() ?? '—';
+      $('last-age').textContent = h.last_block_age_secs ?? '—';
+      $('peers').textContent = h.peer_count ?? '—';
+      $('net-status').textContent = h.status ?? '—';
+      $('net-status').className = 'font-mono ' + (
+        h.status === 'healthy' ? 'text-emerald-600'
+        : h.status === 'syncing' ? 'text-amber-600'
+        : h.status === 'halted' ? 'text-red-600'
+        : 'text-slate-500');
+    }
+
+    function renderFourAct(f) {
+      $('eulogy-count').textContent = (f.eulogy_count ?? 0).toLocaleString();
+      const tombs = Array.isArray(f.tombstone_addresses) ? f.tombstone_addresses : [];
+      $('tomb-count').textContent = tombs.length.toLocaleString();
+      $('refresh-pool').textContent = (f.refresh_pool_total ?? 0).toLocaleString();
+      $('mmr-size').textContent = (f.evaporation_mmr_size ?? 0).toLocaleString();
+
+      // Mortis.
+      if (f.mortis_triggered) {
+        setBadge('mortis-badge', 'TRIGGERED', 'bg-red-500');
+      } else {
+        setBadge('mortis-badge', 'OK', 'bg-emerald-500');
+      }
+      $('mortis-epoch').textContent = f.mortis_epoch_of_death ?? '—';
+      $('mortis-root').textContent = f.mortis_final_state_root ? shortenHex(f.mortis_final_state_root) : '—';
+
+      // Audit.
+      if (f.last_conservation_audit_ok === true) {
+        setBadge('audit-badge', 'CLEAN', 'bg-emerald-500');
+      } else if (f.last_conservation_audit_ok === false) {
+        setBadge('audit-badge', 'VIOLATION', 'bg-red-500');
+      } else {
+        setBadge('audit-badge', 'NO DATA', 'bg-slate-400');
+      }
+      $('audit-clean').textContent = f.consecutive_clean_audits ?? '—';
+      $('audit-violation').textContent = f.last_conservation_violation_type ?? 'none';
+
+      // Tombstone list.
+      const list = $('tomb-list');
+      if (tombs.length === 0) {
+        list.innerHTML = `<li class="text-slate-400 italic">no tombstones yet — every contract on this chain is either alive or never existed</li>`;
+      } else {
+        list.innerHTML = tombs.slice(0, 12).map(addr => {
+          const hex = Array.isArray(addr) ? fmtAddr(addr) : String(addr);
+          return `<li class="tomb text-slate-600 truncate">⚰ 0x${shortenHex(hex)}</li>`;
+        }).join('') + (tombs.length > 12 ? `<li class="text-slate-400 italic">+${tombs.length - 12} more…</li>` : '');
+      }
+
+      // Light cone + extras.
+      $('lightcone-count').textContent = (f.light_cone_block_count ?? 0).toLocaleString();
+      $('ghost-count').textContent = (f.ghost_object_count ?? 0).toLocaleString();
+      $('redirect-count').textContent = (f.dead_producer_redirect_total ?? 0).toLocaleString();
+
+      // Raw.
+      $('raw-four-act').textContent = JSON.stringify(f, null, 2);
+    }
+
+    async function pollOnce(baseUrl, myGen) {
+      const start = Date.now();
+      try {
+        const [healthRes, fourActRes] = await Promise.all([
+          fetch(`${baseUrl}/api/network/health`, { cache: 'no-store' }),
+          fetch(`${baseUrl}/api/four_act`, { cache: 'no-store' }),
+        ]);
+        if (myGen !== pollGen) return; // disconnected mid-flight
+        if (!healthRes.ok || !fourActRes.ok) {
+          setStatus(`http error (health ${healthRes.status} / four_act ${fourActRes.status})`, 'bg-red-500');
+          return;
+        }
+        const health = await healthRes.json();
+        const fourAct = await fourActRes.json();
+        if (myGen !== pollGen) return;
+        renderHealth(health);
+        renderFourAct(fourAct);
+        const ms = Date.now() - start;
+        $('last-poll').textContent = `polled in ${ms}ms · ${new Date().toLocaleTimeString()}`;
+        setStatus('live', 'bg-emerald-500');
+      } catch (e) {
+        if (myGen !== pollGen) return;
+        setStatus(`fetch failed: ${e.message ?? e}`, 'bg-red-500');
+      }
+    }
+
+    function startPolling() {
+      stopPolling();
+      pollGen += 1;
+      const myGen = pollGen;
+      const url = $('node-url').value.trim().replace(/\/$/, '');
+      if (!url) {
+        setStatus('no URL', 'bg-red-500');
+        return;
+      }
+      setStatus('connecting…', 'bg-amber-500');
+      pollOnce(url, myGen);
+      timer = setInterval(() => pollOnce(url, myGen), 2000);
+    }
+
+    function stopPolling() {
+      if (timer !== null) { clearInterval(timer); timer = null; }
+      pollGen += 1;
+      setStatus('idle', 'bg-slate-400');
+      $('last-poll').textContent = '';
+    }
+
+    $('connect').onclick = startPolling;
+    $('disconnect').onclick = stopPolling;
+    $('node-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') startPolling(); });
+
+    // Show CORS hint banner when opened from file://.
+    if (window.location.protocol === 'file:') {
+      $('cors-banner').classList.remove('hidden');
+    }
+
+    // Auto-connect on page load.
+    startPolling();
+  </script>
+</body>
+</html>
