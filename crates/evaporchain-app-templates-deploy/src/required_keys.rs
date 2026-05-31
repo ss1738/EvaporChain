@@ -16,11 +16,11 @@
 use evaporchain_app_templates::{
     class::{
         BELL_ORACLE, CHILDKEY_LETTER, DEADMAN_SWITCH, DECAY_ACCESS_PASS, GALLERY_FORGETS, MAYFLY,
-        MNEMOCHAIN_CARD, MORTAL_DAO, MORTAL_NFT_GENERAL, REFRESH_MARKET_NAMESPACE, SAP_AQ,
-        SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY,
-        SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE,
-        SINGH_SABI, SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE,
-        WITNESSFIT_STREAK,
+        MNEMOCHAIN_CARD, MORTAL_DAO, MORTAL_MESSAGE_PILOT, MORTAL_NFT_GENERAL,
+        REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT,
+        SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY, SINGH_MIGRANT,
+        SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS,
+        SUBSCRIPTION_SERVICE, WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -93,6 +93,7 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
         ],
         c if c == MNEMOCHAIN_CARD => &["initial_energy", "initial_stability"],
         c if c == WITNESSFIT_STREAK => &["half_life", "boost_bp"],
+        c if c == MORTAL_MESSAGE_PILOT => &["initial_energy", "half_life"],
         // ── Cultural lane ─────────────────────────────────────────
         c if c == GALLERY_FORGETS => &["opened_at_epoch"],
         // ── Paradigm lane (no runtime params; validators check the

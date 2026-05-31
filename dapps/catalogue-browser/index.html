@@ -22,11 +22,11 @@
     <div class="max-w-6xl mx-auto px-6 py-5 flex items-baseline gap-4">
       <h1 class="text-xl font-semibold tracking-tight">Template Catalogue</h1>
       <span class="text-xs text-slate-500">
-        27 templates · 7 lanes · 100% backed by reference .es contracts
+        28 templates · 7 lanes · 100% backed by reference .es contracts
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 27</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 28</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,7 +35,7 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">27 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">28 shown</span>
     </div>
   </header>
 
@@ -151,6 +151,9 @@
       { id: '0x0001_0303', name: 'WitnessFit (Singh-Streak)', lane: 'Consumer', icon: '🏃',
         crate: 'evaporchain-witnessfit', src: 'witnessfit.es', dapp: 'witnessfit',
         desc: "Wearable streaks where the streak ITSELF decays. Graceful fade, not cliff (boost active while streak >= 50% of peak)." },
+      { id: '0x0001_0304', name: 'Mortal Message (Self-Destructing Message)', lane: 'Consumer', icon: '✉',
+        crate: 'evaporchain-mortal-message', src: 'mortal_message.es', dapp: 'mortal-message',
+        desc: "The canonical EvaporScript pilot — a self-destructing message where the contract's own energy IS the message lifespan. Sender seals (set_payload) once; sender + recipient may read() while alive; on_evaporate ends the message. The shape every other .es contract follows." },
 
       { id: '0x0001_0401', name: 'The Gallery That Forgets', lane: 'Cultural', icon: '🖼',
         crate: 'evaporchain-gallery-forgets', src: 'gallery_forgets.es', dapp: 'gallery-forgets',

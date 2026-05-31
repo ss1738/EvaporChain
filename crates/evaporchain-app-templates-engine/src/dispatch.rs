@@ -29,10 +29,11 @@ use evaporchain_app_templates_materialise::MaterialiseInstruction;
 
 use crate::{
     init_bell_oracle, init_childkey, init_deadman, init_decay_access_pass, init_gallery_forgets,
-    init_mayfly, init_mnemochain, init_mortal_dao, init_mortal_nft, init_refresh_market, init_sap,
-    init_sbav, init_scl, init_sddc, init_sfsv, init_sgb, init_shlm, init_singh_heartbeat,
-    init_singh_lineage, init_singh_migrant, init_singh_posthuma, init_singh_resonance,
-    init_singh_sabi, init_singh_triage, init_ssm, init_subscription, init_witnessfit,
+    init_mayfly, init_mnemochain, init_mortal_dao, init_mortal_message, init_mortal_nft,
+    init_refresh_market, init_sap, init_sbav, init_scl, init_sddc, init_sfsv, init_sgb, init_shlm,
+    init_singh_heartbeat, init_singh_lineage, init_singh_migrant, init_singh_posthuma,
+    init_singh_resonance, init_singh_sabi, init_singh_triage, init_ssm, init_subscription,
+    init_witnessfit,
 };
 
 /// Typed init configs — one variant per registered template. The
@@ -67,6 +68,7 @@ pub enum TypedInit {
     MortalDao(init_mortal_dao::InitConfig),
     Subscription(init_subscription::InitConfig),
     MortalNft(init_mortal_nft::InitConfig),
+    MortalMessage(init_mortal_message::InitConfig),
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -163,6 +165,8 @@ pub fn materialise(instr: &MaterialiseInstruction) -> Result<TypedInit, EngineEr
         TypedInit::Subscription(init_subscription::parse(cd).map_err(parse_err)?)
     } else if cls == MORTAL_NFT_GENERAL {
         TypedInit::MortalNft(init_mortal_nft::parse(cd).map_err(parse_err)?)
+    } else if cls == MORTAL_MESSAGE_PILOT {
+        TypedInit::MortalMessage(init_mortal_message::parse(cd).map_err(parse_err)?)
     } else {
         return Err(EngineError::UnknownTemplate(cls.0));
     };

@@ -97,6 +97,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // (NFT-base surcharge), Mortal NFT carries roughly the same
         // structural weight.
         TypedInit::MortalNft(_) => SURCHARGE_NFT_BASE,
+        // Mortal Message — Consumer-lane peer of ChildKey /
+        // Mnemochain / Witnessfit. Small bounded state (body string,
+        // sender, recipient, sealed flag, boost counters); the
+        // canonical pilot's structural weight is the consumer-lane
+        // floor.
+        TypedInit::MortalMessage(_) => SURCHARGE_CONSUMER,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

@@ -108,6 +108,18 @@ pub const SINGH_LINEAGE_POLICY: TemplateClass = TemplateClass(0x0001_0203);
 pub const CHILDKEY_LETTER: TemplateClass = TemplateClass(0x0001_0301);
 pub const MNEMOCHAIN_CARD: TemplateClass = TemplateClass(0x0001_0302);
 pub const WITNESSFIT_STREAK: TemplateClass = TemplateClass(0x0001_0303);
+/// Mortal Message — the canonical EvaporScript pilot contract.
+/// Self-destructing message where the contract's own energy IS the
+/// message lifespan; sender + recipient may `read()` while alive,
+/// `on_refresh` boosts the boost_count, `on_evaporate` ends the
+/// message. Per project CLAUDE.md "Two unifying invariants" #2, this
+/// is the *reference pilot* every other EvaporScript contract is
+/// shaped from. The 24-entry registry historically excluded it because
+/// it was framed as a stdlib pilot rather than a deployable consumer
+/// primitive; this entry surfaces it as a first-class catalogue slot.
+/// Reference contract: `contracts/evaporscript/mortal_message.es`.
+/// Verified cargo pilot: `crates/evaporchain-script/tests/mortal_message_pilot.rs`.
+pub const MORTAL_MESSAGE_PILOT: TemplateClass = TemplateClass(0x0001_0304);
 
 // Cultural launch wedge
 pub const GALLERY_FORGETS: TemplateClass = TemplateClass(0x0001_0401);
@@ -167,6 +179,7 @@ mod tests {
             CHILDKEY_LETTER,
             MNEMOCHAIN_CARD,
             WITNESSFIT_STREAK,
+            MORTAL_MESSAGE_PILOT,
             GALLERY_FORGETS,
             SGB_TYPE_SYSTEM,
             SBAV_RUNTIME,
@@ -201,6 +214,7 @@ mod tests {
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         // Consumer: 0x0001_0300..
         assert!((0x0001_0300..=0x0001_03FF).contains(&CHILDKEY_LETTER.0));
+        assert!((0x0001_0300..=0x0001_03FF).contains(&MORTAL_MESSAGE_PILOT.0));
         // Cultural: 0x0001_0400..
         assert!((0x0001_0400..=0x0001_04FF).contains(&GALLERY_FORGETS.0));
         // Paradigm: 0x0001_0500..

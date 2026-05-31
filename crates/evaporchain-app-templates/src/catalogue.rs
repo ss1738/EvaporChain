@@ -223,6 +223,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-witnessfit",
         )
         .expect("WitnessFit descriptor is constant"),
+        TemplateDescriptor::new(
+            MORTAL_MESSAGE_PILOT,
+            "Mortal Message (Self-Destructing Message)",
+            "Consumer",
+            json!({"initial_energy": 1000, "half_life": 50}),
+            "The canonical EvaporScript pilot — a self-destructing message where the contract's own energy IS the message lifespan. Sender seals (set_payload) exactly once; sender and recipient may read() while alive; on_refresh bumps the boost_count + last_boost_epoch; on_evaporate emits a terminal event and the message becomes a chain-level Ghost. The shape every other .es contract in the tree follows. Reference contract: contracts/evaporscript/mortal_message.es; cargo pilot: crates/evaporchain-script/tests/mortal_message_pilot.rs.",
+            "evaporchain-mortal-message",
+        )
+        .expect("MortalMessage descriptor is constant"),
         // ── Cultural launch wedge ──────────────────────────────────
         TemplateDescriptor::new(
             GALLERY_FORGETS,
@@ -365,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_27_templates() {
+    fn catalogue_lists_28_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -375,11 +384,12 @@ mod tests {
         // into the Marketplace lane (2026-05-31); 26 promoted
         // Subscription alongside it (the chain-as-keeper pair); 27
         // promoted Mortal NFT (general transferable decaying NFT)
-        // into the NFT lane (2026-05-31, late). (Mayfly +
-        // Singh-Posthuma were ALREADY in the catalogue under different
-        // framings.)
+        // into the NFT lane; 28 promoted Mortal Message — the canonical
+        // EvaporScript pilot — into the Consumer lane (2026-06-01).
+        // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
+        // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 27);
+        assert_eq!(cat.len(), 28);
     }
 
     #[test]
