@@ -6,6 +6,51 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-31 (dawn) — End-to-end deploy test surfaces two real bugs + an operator gate
+
+**Focus:** drive the full wallet → shared/auth → 12-client flow against the live public node. Confirms what works + surfaces what's still gated.
+**Commits shipped:** 1 on main (`2319a6de`).
+**End-to-end trace (curl, http://89.167.52.40:8099):**
+| Step | Result |
+|---|---|
+| `POST /api/auth/register {email, password, display_name}` | ✅ **200, success: true, user_id: 114, message: "Account created and verified!"** — and crucially: **no `verification_code` in the response**. Devnet auto-verifies. |
+| `POST /api/auth/verify-email {email, code: ""}` | ❌ "Invalid verification code" — superfluous step on this devnet. |
+| `POST /api/auth/login {email, password}` | ✅ token returned, `user.email_verified: true` |
+| `GET /api/auth/me` (with token) | ✅ profile back |
+| `POST /api/tx/deploy-script` (with token) | ❌ **"Account not found — use faucet first"** — registered user has no on-chain account; deploy gated on a funded address |
+| `POST /api/faucet {address}` (with token) | ❌ **"unauthorized: invalid admin key"** — the faucet is admin-gated via `require_admin_auth` (api.rs:1458-1480), which checks `EVAPORCHAIN_ADMIN_KEY` env var |
+| Public node systemd config | `ExecStart=/usr/local/bin/evaporchain-node --mock-prove --mock-consensus --no-da-enforcement --faucet-rate-limit-disabled --api --api-port 8099 --interval 1000 --data-dir /var/lib/evaporchain` — **no `EVAPORCHAIN_ADMIN_KEY` configured.** Admin endpoints are effectively locked. |
+**Wallet UX fixes shipped (`2319a6de`):**
+| Bug | Fix |
+|---|---|
+| Wallet jumped to the verify panel even when devnet auto-verified | Detect `autoVerified` (message contains "verified" + no `verification_code` field) → skip verify, jump straight to login. Production SMTP-enabled nodes still take the verify path when a code is returned. |
+| Logged-in panel had no hint about the faucet/admin-key gate | Amber banner spelling out the gate + remedy (operator sets `EVAPORCHAIN_ADMIN_KEY`, restarts, funds user's address). |
+**Decisions made:**
+- **Did NOT modify the public node.** Setting `EVAPORCHAIN_ADMIN_KEY` on the running VPS + restarting would have been the natural completion of the e2e test, but: (a) the chain is currently serving traffic to the live dApps + ongoing user reads; (b) admin key is a permanent operational decision (key rotation policy, secret-store, etc.) that's the operator's call. Documented the exact path for when you want to flip it.
+- **Faucet gate is the SAME operator-action pattern as T3.1.** The chain is engineering-complete; mainnet readiness is gated on two operator decisions (T3.1 = Tailscale auth key for cluster bring-up + EVAPORCHAIN_ADMIN_KEY for faucet/write enabling) + one external decision (T0.12 auditor selection).
+- **Logged the e2e trace in the commit message** rather than scattering bug reports. Future-me reads `git show 2319a6de` and sees the exact curl-driven path that worked + where it stopped.
+**What works end-to-end on the public devnet right now:**
+- register / verify (auto on devnet) / login / /api/auth/me / read endpoints (/api/blocks, /api/network/health, /api/four_act, /api/bell/latest)
+- the 4 read-only doctrine-demo dApps (decay-vista, four-act-console, catalogue-browser, block-explorer) + landing page + wallet (auth flow)
+**What's gated on operator action:**
+- `/api/faucet` + `/api/tx/*` writes (admin key, node restart)
+- T3.1 cluster bring-up (Tailscale auth key, hel-2 already provisioned + V5 BLS restored + binary built earlier today)
+- T0.12 external audit kickoff
+**What's next:**
+- Flip `EVAPORCHAIN_ADMIN_KEY` on the VPS when you want to validate the full write-side e2e. Steps:
+  ```bash
+  ssh root@89.167.52.40
+  KEY=$(openssl rand -hex 32)
+  echo "$KEY" > /root/.evaporchain-admin-key  # save it
+  systemctl edit evaporchain-node  # add Environment=EVAPORCHAIN_ADMIN_KEY=$KEY
+  systemctl restart evaporchain-node
+  # then: curl -H "Authorization: Bearer $KEY" -d '{"address":[114,0,...]}' http://89.167.52.40:8099/api/faucet
+  ```
+- Mini-2 + Mini-3 still SSH-unreachable.
+**Cross-references:** commit `2319a6de`; test trace + bugs logged in commit message; auth.rs schema at `crates/evaporchain-node/src/auth.rs:46-90`; admin-key gate at `crates/evaporchain-node/src/api.rs:1458-1497`; faucet at `:13126`; deploy_script at `:12104`.
+
+---
+
 ## 2026-05-31 (pre-dawn) — shared/auth.ts + 12 client integration — real unblock
 
 **Focus:** the audit-flagged auth-injection gap. The 12 reference-contract dApp clients called /api/tx/* without an Authorization header → they 401 against any auth-mounted node (incl. the public devnet). Wallet shipped the token; this commit makes the rest of the dApps read it.
