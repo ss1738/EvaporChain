@@ -1,0 +1,10 @@
+{
+  "name": "wallet",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Wallet — front-door auth flow for EvaporChain. Register / verify-email / login. Stores the session token in localStorage as `evaporchain_wallet_token`; other dApps in this directory can read it and inject Authorization headers on /api/tx/* writes.",
+  "scripts": {
+    "serve": "python3 -m http.server 3000 --directory ."
+  }
+}

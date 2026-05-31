@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EvaporChain — Wallet</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 9999px; display: inline-block; vertical-align: middle; animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+    input:focus { outline: 2px solid rgb(56 189 248); outline-offset: -1px; }
+    .step.active { background: rgb(15 23 42); color: white; }
+    .step.done   { background: rgb(16 185 129); color: white; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <div id="cors-banner" class="hidden bg-amber-100 border-b border-amber-300 text-amber-900 px-6 py-2 text-xs">
+    <strong>opened from <code>file://</code> — the node's CORS allowlist will reject auth POSTs.</strong>
+    Run <code class="bg-amber-200 px-1 rounded">npm run serve</code> in <code>dapps/wallet</code> and open
+    <a href="http://localhost:3000" class="underline font-medium">http://localhost:3000</a>
+    (chain node hardcodes <code>localhost:3000</code> in its allowlist).
+  </div>
+
+  <header class="border-b border-slate-200 bg-white">
+    <div class="max-w-3xl mx-auto px-6 py-4 flex items-center gap-4">
+      <div class="flex-1">
+        <h1 class="text-xl font-semibold tracking-tight">Wallet</h1>
+        <p class="text-xs text-slate-500">Auth flow for the 12 reference-contract dApps. Register → verify → login → the token lives in your browser's localStorage so the other dApps can read it.</p>
+      </div>
+      <div class="flex items-center gap-3 text-xs">
+        <span class="text-slate-500">node</span>
+        <input id="node-url" class="border rounded px-2 py-1 mono w-56" value="http://89.167.52.40:8099" />
+      </div>
+    </div>
+    <div class="max-w-3xl mx-auto px-6 pb-4 flex items-center gap-4 text-xs">
+      <span class="flex items-center gap-2">
+        <span id="status-dot" class="pulse-dot bg-slate-400"></span>
+        <span id="status-text" class="text-slate-500">checking node…</span>
+      </span>
+      <span class="text-slate-400">|</span>
+      <span class="text-slate-600">chain epoch <span id="chain-epoch" class="mono">—</span></span>
+      <span class="text-slate-400">|</span>
+      <span class="text-slate-600">status <span id="net-status" class="mono">—</span></span>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-6 py-8">
+
+    <!-- ── Stepper ───────────────────────────────────────────── -->
+    <ol class="flex items-center gap-2 text-xs mb-6">
+      <li id="step-register" class="step active w-1/3 text-center py-2 rounded-l">1. register</li>
+      <li id="step-verify"   class="step w-1/3 text-center py-2 bg-slate-200 text-slate-600">2. verify email</li>
+      <li id="step-login"    class="step w-1/3 text-center py-2 rounded-r bg-slate-200 text-slate-600">3. login</li>
+    </ol>
+
+    <!-- ── State: logged-in ──────────────────────────────────── -->
+    <section id="panel-logged-in" class="hidden bg-white border border-emerald-200 rounded-xl shadow-sm p-5">
+      <div class="flex items-start gap-3">
+        <span class="text-2xl">🔑</span>
+        <div class="flex-1">
+          <div class="text-sm uppercase tracking-wide text-emerald-700">authenticated</div>
+          <div class="text-lg font-semibold text-slate-800">Logged in as <span id="ui-email" class="mono">—</span></div>
+          <div class="text-xs text-slate-500 mt-1">display name <span id="ui-display" class="mono">—</span> · user id <span id="ui-user-id" class="mono">—</span></div>
+        </div>
+        <button id="btn-logout" class="px-3 py-1 rounded bg-slate-200 hover:bg-slate-300 text-xs">log out</button>
+      </div>
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        <div class="bg-slate-50 border border-slate-200 rounded p-3">
+          <div class="text-slate-500 uppercase tracking-wide mb-1">token (in localStorage)</div>
+          <div class="mono text-[10px] text-slate-700 break-all" id="ui-token">—</div>
+          <button id="btn-copy-token" class="mt-2 text-[10px] px-2 py-1 rounded bg-sky-100 hover:bg-sky-200 text-sky-800">copy</button>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded p-3">
+          <div class="text-slate-500 uppercase tracking-wide mb-1">localStorage keys</div>
+          <pre class="text-[10px] mono leading-snug text-slate-700">evaporchain_wallet_node
+evaporchain_wallet_token
+evaporchain_wallet_email
+evaporchain_wallet_user_id</pre>
+          <div class="text-[10px] text-slate-500 mt-1">other dApps in this directory read these on load.</div>
+        </div>
+      </div>
+      <div class="mt-4 text-xs">
+        <div class="text-slate-500 uppercase tracking-wide mb-1">/api/auth/me — verify the token is alive</div>
+        <button id="btn-check-me" class="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">GET /api/auth/me</button>
+        <pre id="ui-me" class="mt-2 text-[10px] mono bg-slate-50 border border-slate-200 rounded p-2 text-slate-700 overflow-x-auto">click to fetch.</pre>
+      </div>
+      <p class="text-xs text-slate-500 mt-4 border-t border-slate-100 pt-3">
+        Now jump to a contract dApp:
+        <a class="text-sky-700 hover:underline" href="../decay-access-pass/">decay-access-pass</a>,
+        <a class="text-sky-700 hover:underline" href="../mortal-dao/">mortal-dao</a>,
+        <a class="text-sky-700 hover:underline" href="../bell-oracle/">bell-oracle</a>, …
+        (each one's <code class="bg-slate-100 px-1 rounded">client.ts</code> needs an
+        <code class="bg-slate-100 px-1 rounded">Authorization: Bearer ${'$'}token</code> header
+        on /api/tx/* — that's the next-step fix in `dapps/shared/auth.ts`.)
+      </p>
+    </section>
+
+    <!-- ── State: register ───────────────────────────────────── -->
+    <section id="panel-register" class="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">Register</h2>
+      <p class="text-xs text-slate-500 mb-4">
+        Devnet convenience: the verification_code is returned in the response (no SMTP wired up on this node).
+        Your password is hashed server-side; the node never stores plaintext.
+      </p>
+      <form id="form-register" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <label class="block">
+          <span class="text-xs text-slate-500">email</span>
+          <input name="email" type="email" required class="mt-1 w-full border rounded px-3 py-2" placeholder="you@example.com" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-slate-500">display name</span>
+          <input name="display_name" required class="mt-1 w-full border rounded px-3 py-2" placeholder="Alice" />
+        </label>
+        <label class="block md:col-span-2">
+          <span class="text-xs text-slate-500">password (min 8 chars)</span>
+          <input name="password" type="password" required minlength="8" class="mt-1 w-full border rounded px-3 py-2" placeholder="••••••••" />
+        </label>
+        <button class="md:col-span-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium">register →</button>
+      </form>
+      <pre id="ui-register-resp" class="hidden mt-4 text-[10px] mono bg-slate-50 border border-slate-200 rounded p-2 text-slate-700 overflow-x-auto"></pre>
+      <p class="text-xs text-slate-500 mt-3">
+        Already have a verification code? <a href="#" id="link-skip-to-verify" class="text-sky-700 hover:underline">skip to verify →</a>
+        · Already verified? <a href="#" id="link-skip-to-login" class="text-sky-700 hover:underline">jump to login →</a>
+      </p>
+    </section>
+
+    <!-- ── State: verify ─────────────────────────────────────── -->
+    <section id="panel-verify" class="hidden bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">Verify email</h2>
+      <p class="text-xs text-slate-500 mb-4">Paste the 6-digit code from the register response (or your email, on a node with SMTP wired).</p>
+      <form id="form-verify" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <label class="block">
+          <span class="text-xs text-slate-500">email</span>
+          <input name="email" type="email" required class="mt-1 w-full border rounded px-3 py-2" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-slate-500">verification code</span>
+          <input name="code" required class="mt-1 w-full border rounded px-3 py-2 mono" placeholder="123456" />
+        </label>
+        <button class="md:col-span-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium">verify →</button>
+      </form>
+      <pre id="ui-verify-resp" class="hidden mt-4 text-[10px] mono bg-slate-50 border border-slate-200 rounded p-2 text-slate-700 overflow-x-auto"></pre>
+    </section>
+
+    <!-- ── State: login ──────────────────────────────────────── -->
+    <section id="panel-login" class="hidden bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">Log in</h2>
+      <p class="text-xs text-slate-500 mb-4">Returns a session token (24-hour TTL) that other dApps can read from <code class="bg-slate-100 px-1 rounded">localStorage</code>.</p>
+      <form id="form-login" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <label class="block md:col-span-2">
+          <span class="text-xs text-slate-500">email</span>
+          <input name="email" type="email" required class="mt-1 w-full border rounded px-3 py-2" />
+        </label>
+        <label class="block md:col-span-2">
+          <span class="text-xs text-slate-500">password</span>
+          <input name="password" type="password" required class="mt-1 w-full border rounded px-3 py-2" />
+        </label>
+        <button class="md:col-span-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium">log in →</button>
+      </form>
+      <pre id="ui-login-resp" class="hidden mt-4 text-[10px] mono bg-slate-50 border border-slate-200 rounded p-2 text-slate-700 overflow-x-auto"></pre>
+    </section>
+
+    <!-- ── Generic error region (auth failures etc.) ─────────── -->
+    <div id="error-bar" class="hidden mt-4 bg-red-50 border border-red-200 text-red-800 rounded p-3 text-sm"></div>
+  </main>
+
+  <footer class="max-w-3xl mx-auto px-6 pb-16 text-xs text-slate-500">
+    <p>Auth flow handled by <code class="bg-slate-100 px-1 rounded">crates/evaporchain-node/src/auth.rs</code>
+       (register / verify-email / login / me / logout). Rate limits: registration is globally bucketed,
+       login is per-email, verify-email is per-email (R11 audit 2026-05-15 added the latter to block
+       brute-force against the 6-digit code).</p>
+    <p class="mt-1">Companion dApps: <a class="text-sky-700 hover:underline" href="../index.html">dApps index</a> ·
+       <a class="text-sky-700 hover:underline" href="../decay-vista/">decay-vista</a> ·
+       <a class="text-sky-700 hover:underline" href="../four-act-console/">four-act-console</a> ·
+       <a class="text-sky-700 hover:underline" href="../catalogue-browser/">catalogue-browser</a> ·
+       <a class="text-sky-700 hover:underline" href="../block-explorer/">block-explorer</a>.</p>
+  </footer>
+
+  <script type="module">
+    const $ = (id) => document.getElementById(id);
+    const LS = {
+      node:    'evaporchain_wallet_node',
+      token:   'evaporchain_wallet_token',
+      email:   'evaporchain_wallet_email',
+      userId:  'evaporchain_wallet_user_id',
+      display: 'evaporchain_wallet_display_name',
+    };
+
+    function getNode() {
+      const v = $('node-url').value.trim().replace(/\/$/, '');
+      return v || 'http://89.167.52.40:8099';
+    }
+
+    function setError(msg) {
+      const bar = $('error-bar');
+      if (!msg) { bar.classList.add('hidden'); bar.textContent = ''; return; }
+      bar.textContent = msg;
+      bar.classList.remove('hidden');
+    }
+
+    function showPanel(name) {
+      ['register','verify','login','logged-in'].forEach(p => {
+        $('panel-' + p).classList.toggle('hidden', p !== name);
+      });
+      // Step indicators.
+      const stepMap = { register: 0, verify: 1, login: 2, 'logged-in': 3 };
+      const idx = stepMap[name] ?? 0;
+      ['step-register','step-verify','step-login'].forEach((id, i) => {
+        const el = $(id);
+        el.classList.remove('active', 'done');
+        if (i < idx) el.classList.add('done');
+        else if (i === idx && name !== 'logged-in') el.classList.add('active');
+      });
+    }
+
+    function fmtJSON(v) {
+      try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+    }
+
+    async function postJSON(path, body, token = null) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${getNode()}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const text = await res.text();
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+      return { ok: res.ok, status: res.status, body: parsed };
+    }
+
+    async function getJSON(path, token = null) {
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${getNode()}${path}`, { headers });
+      const text = await res.text();
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+      return { ok: res.ok, status: res.status, body: parsed };
+    }
+
+    // ── Forms ────────────────────────────────────────────────
+    $('form-register').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setError(null);
+      const fd = new FormData(e.target);
+      const payload = {
+        email: fd.get('email'),
+        password: fd.get('password'),
+        display_name: fd.get('display_name'),
+      };
+      const r = await postJSON('/api/auth/register', payload);
+      $('ui-register-resp').textContent = `HTTP ${r.status}\n` + fmtJSON(r.body);
+      $('ui-register-resp').classList.remove('hidden');
+      if (!r.ok || !r.body.success) {
+        setError(r.body.message ?? 'register failed');
+        return;
+      }
+      localStorage.setItem(LS.email, payload.email);
+      localStorage.setItem(LS.display, payload.display_name);
+      if (r.body.user_id != null) localStorage.setItem(LS.userId, r.body.user_id.toString());
+      // Pre-fill verify form.
+      $('form-verify').elements.email.value = payload.email;
+      if (r.body.verification_code) {
+        $('form-verify').elements.code.value = r.body.verification_code;
+      }
+      showPanel('verify');
+    });
+
+    $('form-verify').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setError(null);
+      const fd = new FormData(e.target);
+      const payload = { email: fd.get('email'), code: fd.get('code') };
+      const r = await postJSON('/api/auth/verify-email', payload);
+      $('ui-verify-resp').textContent = `HTTP ${r.status}\n` + fmtJSON(r.body);
+      $('ui-verify-resp').classList.remove('hidden');
+      if (!r.ok || !r.body.success) {
+        setError(r.body.message ?? 'verify failed');
+        return;
+      }
+      // Pre-fill login form with the email.
+      $('form-login').elements.email.value = payload.email;
+      showPanel('login');
+    });
+
+    $('form-login').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setError(null);
+      const fd = new FormData(e.target);
+      const payload = { email: fd.get('email'), password: fd.get('password') };
+      const r = await postJSON('/api/auth/login', payload);
+      $('ui-login-resp').textContent = `HTTP ${r.status}\n` + fmtJSON(r.body);
+      $('ui-login-resp').classList.remove('hidden');
+      if (!r.ok || !r.body.success || !r.body.token) {
+        setError(r.body.message ?? 'login failed');
+        return;
+      }
+      // Store everything we need.
+      localStorage.setItem(LS.node, getNode());
+      localStorage.setItem(LS.token, r.body.token);
+      localStorage.setItem(LS.email, payload.email);
+      if (r.body.user?.display_name) localStorage.setItem(LS.display, r.body.user.display_name);
+      if (r.body.user?.id != null) localStorage.setItem(LS.userId, r.body.user.id.toString());
+      renderLoggedIn();
+    });
+
+    $('btn-logout').addEventListener('click', async () => {
+      const token = localStorage.getItem(LS.token);
+      if (token) {
+        // Best-effort logout; ignore failures.
+        try { await postJSON('/api/auth/logout', {}, token); } catch {}
+      }
+      [LS.token, LS.email, LS.userId, LS.display].forEach(k => localStorage.removeItem(k));
+      showPanel('register');
+    });
+
+    $('btn-copy-token').addEventListener('click', async () => {
+      const t = localStorage.getItem(LS.token) ?? '';
+      try { await navigator.clipboard.writeText(t); $('btn-copy-token').textContent = 'copied ✓'; setTimeout(() => $('btn-copy-token').textContent = 'copy', 1500); } catch {}
+    });
+
+    $('btn-check-me').addEventListener('click', async () => {
+      const token = localStorage.getItem(LS.token);
+      if (!token) { $('ui-me').textContent = 'no token in localStorage'; return; }
+      const r = await getJSON('/api/auth/me', token);
+      $('ui-me').textContent = `HTTP ${r.status}\n` + fmtJSON(r.body);
+    });
+
+    $('link-skip-to-verify').addEventListener('click', (e) => { e.preventDefault(); showPanel('verify'); });
+    $('link-skip-to-login').addEventListener('click',  (e) => { e.preventDefault(); showPanel('login'); });
+
+    function renderLoggedIn() {
+      const email = localStorage.getItem(LS.email) ?? '—';
+      const display = localStorage.getItem(LS.display) ?? '—';
+      const userId = localStorage.getItem(LS.userId) ?? '—';
+      const token = localStorage.getItem(LS.token) ?? '—';
+      $('ui-email').textContent = email;
+      $('ui-display').textContent = display;
+      $('ui-user-id').textContent = userId;
+      $('ui-token').textContent = token === '—' ? '—' : (token.slice(0, 12) + '…' + token.slice(-8));
+      showPanel('logged-in');
+    }
+
+    // ── Status badge ────────────────────────────────────────
+    async function checkStatus() {
+      try {
+        const res = await fetch(`${getNode()}/api/network/health`, { cache: 'no-store' });
+        if (!res.ok) {
+          $('status-dot').className = 'pulse-dot bg-red-500';
+          $('status-text').textContent = `HTTP ${res.status}`;
+          $('chain-epoch').textContent = '—';
+          $('net-status').textContent = 'error';
+          return;
+        }
+        const h = await res.json();
+        const color = h.status === 'healthy' ? 'bg-emerald-500'
+                    : h.status === 'syncing' ? 'bg-amber-500'
+                    : h.status === 'halted'  ? 'bg-red-500'
+                    : 'bg-slate-500';
+        $('status-dot').className = `pulse-dot ${color}`;
+        $('status-text').textContent = 'live';
+        $('chain-epoch').textContent = h.epoch?.toLocaleString() ?? '—';
+        $('net-status').textContent = h.status ?? '—';
+      } catch (e) {
+        $('status-dot').className = 'pulse-dot bg-slate-400';
+        $('status-text').textContent = 'unreachable';
+        $('chain-epoch').textContent = '—';
+        $('net-status').textContent = 'offline';
+      }
+    }
+
+    $('node-url').addEventListener('change', () => { localStorage.setItem(LS.node, getNode()); checkStatus(); });
+
+    // ── Boot ────────────────────────────────────────────────
+    if (window.location.protocol === 'file:') {
+      $('cors-banner').classList.remove('hidden');
+    }
+    // Restore node URL from localStorage if present.
+    const savedNode = localStorage.getItem(LS.node);
+    if (savedNode) $('node-url').value = savedNode;
+    // If we already have a token, jump to logged-in (best-effort — token may be expired).
+    if (localStorage.getItem(LS.token)) {
+      renderLoggedIn();
+    }
+    checkStatus();
+    setInterval(checkStatus, 5000);
+  </script>
+</body>
+</html>
