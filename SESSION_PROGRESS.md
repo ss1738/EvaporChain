@@ -6,6 +6,42 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (late evening) — Phase C: ARCHITECTURE.md surgical refresh
+
+**Focus:** the system-design overview referenced by SPEC.md and README.md. Surgical fixes against HEAD; no structural rewrite — the lane-grouped substrate section + how-decay/proofs/consensus-work sections still good.
+**Commits shipped:** 1 on main (`453d4dde`).
+**What landed:**
+- `evaporchain-types`: "all 7 transaction types" → "25 tx variants"; added typed `chain_ids` constants and the surfaces they bind into.
+- New entry: `evaporchain-consensus-types` — the extraction that made the browser-side WASM light client viable.
+- `evaporchain-contracts`: 8-template framing acknowledged but recontextualised against the 30-template catalogue.
+- **New entry: `evaporchain-app-templates` pipeline** — the registry + materialise + engine + fees + bind + receipt + eventlog + deploy crates that together drive typed-init dispatch + invariant enforcement + fee oracle + required-keys table for the 30 catalogue templates. Chain-as-keeper triplet called out by name. `every_catalogue_default_binds` anti-regression gate documented.
+- `evaporchain-script`: → "EvaporScript V2" with the operator list, opcode count, gas tier for shifts, lifecycle hook list.
+- `evaporchain-da`: "Empty-block path tracked in audit backlog" → closed; new paragraph capturing the DA-cert forgery class closure (Q1-Q3/Q8 via `verify_signatures_bound`).
+- New entries: `evaporchain-eth-bridge` / `evaporchain-nova-bridge` / `evaporchain-paymaster` (production bridging + L1 verifier + multi-token-gas Option B paymaster).
+- New entry: `evaporchain-light-client-wasm` / `evaporchain-crypto-wasm` (browser-side surface, 10 cross-backend interop tests).
+- §Substrate-crates header: "60+ crates" → "~120 crates" (current actual 137 substrate / lane crates).
+
+**Filename gotcha:** the doc is `docs/architecture.md` (lowercase) on disk. macOS's case-insensitive FS let the edits go through against `docs/ARCHITECTURE.md` but `git add` needs the exact tracked-case name. Resolved in the commit retry; flagging here so a future refresh hits the right name first.
+
+### Phase C doc-refresh sextet
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| `README.md` (repo root) | Status + checklist + dev-net live + docs split | `6abce250` |
+| `docs/SPEC.md` (one-pager) | Status + Hardening + What's-open + Where-to-go-next | `f87554e9` |
+| `docs/AUDIT_SCOPE.md` (engagement) | header/§2/§6/§7/§10 | `3537c32e` |
+| `docs/THREAT_MODEL.md` (risk surface) | §6.1 closures + §8 cross-links | `8f899eda` |
+| `docs/RUN_A_NODE.md` (operator) | --mainnet section + cross-links | `f54880a0` |
+| `docs/architecture.md` (system design) | crate descriptions + new entries + substrate count | `453d4dde` |
+
+Six docs an external visitor lands on now all reference each other and accurately describe HEAD as of 2026-06-01.
+
+**Today's mainnet sprint commit total: 8 ship commits + 6 session entries = 14 commits.**
+
+**Cross-references:** commit `453d4dde`. Files: `docs/architecture.md`.
+
+---
+
 ## 2026-06-01 (evening) — Phase C: repo-root README refresh
 
 **Focus:** repo-root README is the first thing any GitHub visitor sees. Was last refreshed 2026-05-12 (PR #38 test/crate count drift sweep), 3 weeks before the audit-PR marathon + #469 P0 pack + the catalogue 24 → 30 sprint + the mainnet sprint kick-off. Visitors form their first impression of project maturity + momentum from this doc; staleness misrepresents both.
