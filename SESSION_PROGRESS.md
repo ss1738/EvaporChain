@@ -6,6 +6,34 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (final) — MAINNET_READINESS.md sprint header + T1.17/18/19 stale-status fix
+
+**Focus:** bring the lane board (last touched 2026-05-19) in sync with today's reality without restructuring its 60+ entries. Two updates: top-of-file sprint header + correction of three lanes that claimed "T3.1 ✅" against the same doc's later "T3.1 REGRESSED" note.
+**Commits shipped:** 1 on main (`ccb2883d`) — 27 insertions, 3 deletions.
+**What landed:**
+- **New §0 Mainnet Sprint 2026-06-01** — captures the 22 commits shipped today in a single table. Phases A (✅ done), B (🟡 open with the 4 operator-decision flags listed), C (✅ done with the 10-doc-refresh + production block explorer), D (🔴 operator-blocked). Companion catalogue sprint (6 promotions, 24 → 30 templates, chain-as-keeper escrow triplet) noted. All 5 remaining sprint blockers — all operator-decision — listed. Cross-links SESSION_PROGRESS.md for per-commit detail.
+- **T1.17/T1.18/T1.19 status correction**: each row claimed "T3.1 ✅; cluster live" but the same doc's §Lane spec at line 161 explicitly says T3.1 is REGRESSED as of 2026-05-18 (0/5 nodes serving). An operator looking at the lane board would have claimed one of these lanes and then discovered the regression mid-execution. Now reads "🟡 OPEN — runbook at <path>; T3.1 status REGRESSED per 2026-05-18 verification".
+
+**Decisions made:**
+- **Sprint header at §0, not woven into the existing tables.** The lane board is dense (60+ entries) and gets edited atomically by other sessions. Restructuring it would mean coordinating with future sessions; the sprint header captures the salient state in one place without altering the established lane-claim protocol.
+- **Did not retro-add per-doc lane entries** for the 10 refreshed docs. They're not "lanes" in the lane-board sense (operator-claimable units with parallel-safety constraints); they're audit-prep hygiene. SESSION_PROGRESS.md is the right source of truth for them, not the lane board.
+
+### Mainnet sprint final state — 2026-06-01
+
+| Phase | Lane | Status | Last commit |
+|---|---|---|---|
+| A | chain-id constants + MAINNET_LAUNCH | ✅ | `fa426c72` |
+| B | per-chain governance-flag defaults | 🟡 OPEN (4 operator calls) | (none) |
+| C | audit-prep + 10 docs + production block explorer | ✅ | `95c85ac3` |
+| C | MAINNET_READINESS lane-board hygiene | ✅ | `ccb2883d` |
+| D | ETH bridge + paymaster prod config | 🔴 operator-blocked | (none) |
+
+**Today's mainnet sprint commit total: 13 ship commits + 11 session entries = 24 commits.**
+
+**Cross-references:** commit `ccb2883d`. Files: `MAINNET_READINESS.md`. Cross-links: SESSION_PROGRESS.md, MAINNET_LAUNCH.md §5, PARAMETERS.md §8.5.
+
+---
+
 ## 2026-06-01 (almost-2026-06-02) — Phase C closes: PARAMETERS.md refresh
 
 **Focus:** the final solo-shippable Phase C item. Operational-tuning reference + the table operators reach for when configuring node parameters. Closes the Phase C doc-refresh arc.
