@@ -103,6 +103,14 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // canonical pilot's structural weight is the consumer-lane
         // floor.
         TypedInit::MortalMessage(_) => SURCHARGE_CONSUMER,
+        // Open Bounty — Marketplace-lane chain-as-keeper escrow.
+        // Same surcharge as its lane peers (Sddc / Sfsv / Shlm / Scl /
+        // Sap / Deadman / Subscription); the state shape (poster +
+        // task + reward + submissions map + has_submitted presence
+        // map + accept/claim/cancel lifecycle flags) sits at the
+        // marketplace tier. Open submission map is the cost driver
+        // but its growth is gas-paid per submit() at the call layer.
+        TypedInit::OpenBounty(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

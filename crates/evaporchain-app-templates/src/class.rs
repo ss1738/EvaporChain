@@ -97,6 +97,19 @@ pub const DEADMAN_SWITCH: TemplateClass = TemplateClass(0x0001_0108);
 /// `contracts/evaporscript/subscription.es`. Verified cargo pilot:
 /// `crates/evaporchain-script/tests/subscription_pilot.rs`.
 pub const SUBSCRIPTION_SERVICE: TemplateClass = TemplateClass(0x0001_0109);
+/// Open-Call Bounty — task bounty whose un-accepted-on-evaporation
+/// path refunds the poster, no off-chain liquidator required. Poster
+/// (deployer) sets task + reward; any address may submit a solution;
+/// poster accepts a winner from the submission ledger; winner claims
+/// the reward exactly once. Cancellation is blocked the moment any
+/// hunter submits (no rug-pull on done work). On evaporation without
+/// an accepted winner, `refunded = true` and the off-chain coordinator
+/// returns funds — the chain-as-keeper escrow doctrine in the
+/// task-bounty surface. Distinct from `SHLM_BOUNTY` (Skill Half-Life
+/// Bounty), which is the skill-credential decay market. Reference
+/// contract: `contracts/evaporscript/bounty.es`. Verified cargo
+/// pilot: `crates/evaporchain-script/tests/bounty_pilot.rs`.
+pub const OPEN_BOUNTY: TemplateClass = TemplateClass(0x0001_010A);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -173,6 +186,7 @@ mod tests {
             DECAY_ACCESS_PASS,
             DEADMAN_SWITCH,
             SUBSCRIPTION_SERVICE,
+            OPEN_BOUNTY,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -210,6 +224,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&SAP_AQ.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&DEADMAN_SWITCH.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&SUBSCRIPTION_SERVICE.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&OPEN_BOUNTY.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         // Consumer: 0x0001_0300..

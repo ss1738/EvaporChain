@@ -141,6 +141,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("Subscription descriptor is constant"),
         TemplateDescriptor::new(
+            OPEN_BOUNTY,
+            "Open Bounty (Chain-Keeper Task Escrow)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "half_life": 100, "default_reward": 500}),
+            "Open-call task bounty where the un-accepted-on-evaporation refund IS the chain runtime. Poster sets task + reward; any address submits solutions; poster accepts one winner; winner claims. Cancellation blocks the moment any hunter submits — no rug-pull on done work. If the contract evaporates without an accepted winner, on_evaporate flips refunded=true and the off-chain coordinator returns funds to the poster. Same chain-as-keeper escrow doctrine as DeadMan Switch and Subscription, in a task-bounty surface. Distinct from SHLM_BOUNTY (Skill Half-Life Bounty, the skill-credential decay market). Reference contract: contracts/evaporscript/bounty.es.",
+            "evaporchain-open-bounty",
+        )
+        .expect("OpenBounty descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -374,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_28_templates() {
+    fn catalogue_lists_29_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -385,11 +394,13 @@ mod tests {
         // Subscription alongside it (the chain-as-keeper pair); 27
         // promoted Mortal NFT (general transferable decaying NFT)
         // into the NFT lane; 28 promoted Mortal Message — the canonical
-        // EvaporScript pilot — into the Consumer lane (2026-06-01).
-        // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
-        // different framings.)
+        // EvaporScript pilot — into the Consumer lane (2026-06-01);
+        // 29 promoted Open Bounty into the Marketplace lane (the third
+        // chain-as-keeper escrow primitive, alongside DeadMan Switch
+        // and Subscription). (Mayfly + Singh-Posthuma were ALREADY in
+        // the catalogue under different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 28);
+        assert_eq!(cat.len(), 29);
     }
 
     #[test]

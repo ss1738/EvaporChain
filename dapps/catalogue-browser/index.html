@@ -22,11 +22,11 @@
     <div class="max-w-6xl mx-auto px-6 py-5 flex items-baseline gap-4">
       <h1 class="text-xl font-semibold tracking-tight">Template Catalogue</h1>
       <span class="text-xs text-slate-500">
-        28 templates · 7 lanes · 100% backed by reference .es contracts
+        29 templates · 7 lanes · 100% backed by reference .es contracts
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 28</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 29</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,7 +35,7 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">28 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">29 shown</span>
     </div>
   </header>
 
@@ -131,6 +131,9 @@
       { id: '0x0001_0109', name: 'Subscription (Chain-Keeper Recurring Payment)', lane: 'Marketplace', icon: '💧',
         crate: 'evaporchain-subscription', src: 'subscription.es', dapp: 'subscription',
         desc: "Recurring payment whose lapse detector is the chain itself. pay() is the keep-alive (refreshes contract energy via runtime hook); missing payments lets the contract evaporate; on_evaporate flips lapsed=true. Cancellation (subscriber OR provider) is one-shot and clean — doctrinally distinct from lapsed-by-evaporation." },
+      { id: '0x0001_010A', name: 'Open Bounty (Chain-Keeper Task Escrow)', lane: 'Marketplace', icon: '🎯',
+        crate: 'evaporchain-open-bounty', src: 'bounty.es', dapp: 'bounty',
+        desc: "Open-call task bounty whose un-accepted-on-evaporation refund IS the chain runtime. Poster sets task + reward; any address submits; poster accepts a winner; winner claims. Cancellation blocks the moment any hunter submits (no rug-pull). Distinct from SHLM_BOUNTY (Skill Half-Life Bounty, the skill-credential decay market)." },
 
       { id: '0x0001_0201', name: 'Singh-Triage (Wallet Inbox)', lane: 'Wallet UX', icon: '📥',
         crate: 'evaporchain-singh-triage', src: 'singh_triage.es', dapp: null,

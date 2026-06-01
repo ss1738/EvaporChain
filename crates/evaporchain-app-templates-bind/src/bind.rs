@@ -468,6 +468,23 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("MortalMessage", "half_life must be > 0"));
             }
         }
+        // Open Bounty — energy, half_life, default_reward all > 0.
+        // Zero initial_energy ⇒ contract starts dead (set_bounty
+        // can't be called); zero half_life undefined for decay; zero
+        // default_reward means the wallet pre-populates 0 (the .es
+        // contract's set_bounty rejects reward==0 at runtime, so
+        // pre-flight rejection here saves a confusing tx round-trip).
+        TypedInit::OpenBounty(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("OpenBounty", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("OpenBounty", "half_life must be > 0"));
+            }
+            if c.default_reward == 0 {
+                return Err(invariant("OpenBounty", "default_reward must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

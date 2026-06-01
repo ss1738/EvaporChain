@@ -16,7 +16,7 @@
 use evaporchain_app_templates::{
     class::{
         BELL_ORACLE, CHILDKEY_LETTER, DEADMAN_SWITCH, DECAY_ACCESS_PASS, GALLERY_FORGETS, MAYFLY,
-        MNEMOCHAIN_CARD, MORTAL_DAO, MORTAL_MESSAGE_PILOT, MORTAL_NFT_GENERAL,
+        MNEMOCHAIN_CARD, MORTAL_DAO, MORTAL_MESSAGE_PILOT, MORTAL_NFT_GENERAL, OPEN_BOUNTY,
         REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT,
         SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY, SINGH_MIGRANT,
         SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS,
@@ -75,6 +75,7 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
             "period_amount",
             "period_length",
         ],
+        c if c == OPEN_BOUNTY => &["initial_energy", "half_life", "default_reward"],
         // ── Wallet UX lane ────────────────────────────────────────
         c if c == SINGH_TRIAGE_CONTRACT => &["horizon_today", "horizon_tomorrow", "horizon_week"],
         c if c == SINGH_HEARTBEAT_PULSE => &[
