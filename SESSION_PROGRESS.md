@@ -6,6 +6,50 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (almost-2026-06-02) — Phase C closes: PARAMETERS.md refresh
+
+**Focus:** the final solo-shippable Phase C item. Operational-tuning reference + the table operators reach for when configuring node parameters. Closes the Phase C doc-refresh arc.
+**Commits shipped:** 1 on main (`95c85ac3`) — 34 insertions, 7 deletions.
+**What landed:**
+- **Header**: last-refreshed bumped + new "See also" panel with cross-links to MAINNET_LAUNCH.md §5 (governance-flag defaults), AUDIT_SCOPE.md, `evaporchain_types::chain_ids`.
+- **§3 Centralization note**: status date refreshed; stale 2026-04-27 audit reference replaced by AUDIT_SCOPE.md §6.1; cross-link to TOKENOMICS.md (Foundation share % is among the 28 Q's the ceremony resolves).
+- **§6 Identifiers**: all three chain_ids now reference `evaporchain_types::chain_ids` constants. Testnet line notes the live public devnet at 89.167.52.40:8099. Devnet row added with rationale. Genesis-time placeholder cross-links AUDIT_SCOPE.md §10. New row for the `is_canonical()` helper.
+- **§7 Cryptography**: Poseidon row's stale "unaudited (H-15)" — H-15 doesn't appear in AUDIT_2026_05_17 — replaced with current-state reference ("audit-priority 1 per AUDIT_SCOPE.md §3.1").
+- **§8.5 (new) Governance-flag mainnet defaults**: surfaces the 4 operator-decision flags from MAINNET_LAUNCH.md §5 inline. Each flag's current default + mainnet options + recommendation + notes. Explicitly notes that per-chain-id default selection is "not yet implemented (Phase B of the mainnet sprint)"; current defaults apply uniformly — accurate disclosure for auditors.
+- **§9 How to update**: stale `audit/audit_readiness_pack_2026_04_27.md §10` reference replaced by cross-check against AUDIT_SCOPE.md.
+
+### Phase C operator+auditor doc set — 10 docs, all cross-linked, all HEAD-true
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| `README.md` (repo root) | Status + docs split + dev-net live | `6abce250` |
+| `docs/SPEC.md` (one-pager) | Status + Hardening + Where-to-go-next | `f87554e9` |
+| `docs/AUDIT_SCOPE.md` (engagement) | header/§2/§6/§7/§10 | `3537c32e` |
+| `docs/THREAT_MODEL.md` (risk surface) | §6.1 + §8 cross-links | `8f899eda` |
+| `docs/RUN_A_NODE.md` (operator) | --mainnet section + cross-links | `f54880a0` |
+| `docs/architecture.md` (system design) | crate descriptions | `453d4dde` |
+| `docs/CRYPTO_SPEC.md` (auditor P1) | §2.2/§3.1-3.4/§9 | `6ac28e9c` |
+| `docs/GENESIS_CEREMONY.md` (launch ritual) | §Status/Pre-ceremony/Step 1/7 | `7d312481` |
+| `docs/VALIDATOR_ONBOARDING.md` (post-launch joining) | const name + env vars + cross-links | `e213ac31` |
+| `docs/PARAMETERS.md` (operational tuning) | §header/§3/§6/§7 + new §8.5 + §9 | `95c85ac3` |
+
+**Phase C complete.** The 10 docs an external operator or auditor encounters on the launch path now reference each other coherently and accurately describe HEAD as of 2026-06-01.
+
+### Mainnet sprint state — end of 2026-06-01
+
+| Phase | Status |
+|---|---|
+| A — chain-id constants + MAINNET_LAUNCH playbook | ✅ `fa426c72` |
+| B — per-chain governance-flag defaults | Open — needs 4 operator calls (now also disclosed in PARAMETERS.md §8.5) |
+| C — audit-prep + docs + infra polish | ✅ 10 docs refreshed + production block explorer (`2d29caa8`) |
+| D — ETH bridge + paymaster production config | Operator-blocked |
+
+**Today's mainnet sprint commit total: 12 ship commits + 10 session entries = 22 commits.**
+
+**Cross-references:** commit `95c85ac3`. Files: `docs/PARAMETERS.md`. Cross-links: MAINNET_LAUNCH.md §5, AUDIT_SCOPE.md §6.1 / §10 / §3.1, THREAT_MODEL.md §4.9, TOKENOMICS.md, `evaporchain_types::chain_ids`.
+
+---
+
 ## 2026-06-01 (very late) — Phase C: VALIDATOR_ONBOARDING.md refresh
 
 **Focus:** the runbook every post-genesis validator reads. Two operationally-load-bearing drifts identified.
