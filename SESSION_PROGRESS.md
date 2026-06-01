@@ -6,6 +6,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (late morning) — Mainnet sprint, phase A: chain-id constants + launch playbook
+
+**Focus:** kick off the mainnet-launch sprint. Code-side prep is the lane I can drive solo while the operator handles the long-pole strategic items (external audit T0.12, tokenomics ceremony 28 open Q's, Foundation entity, multi-validator soak).
+**Commits shipped:** 1 on main (`fa426c72`).
+**What landed:**
+| File | Change |
+|---|---|
+| `crates/evaporchain-types/src/chain_ids.rs` (new) | Typed constants: `MAINNET = "evaporchain-mainnet-1"`, `TESTNET`, `DEVNET` + `is_canonical()`. 4 tests pin distinct values, version suffix (`-1`), `evaporchain-` prefix, and is_canonical's three-and-only-three behaviour. |
+| `crates/evaporchain-types/src/lib.rs` | New `pub mod chain_ids`. |
+| `crates/evaporchain-types/src/genesis.rs` | `ChainParams::default()` references `chain_ids::MAINNET`; `ChainParams::testnet()` references `chain_ids::TESTNET`. |
+| `crates/evaporchain-cli/src/main.rs` | Three `#[arg(default_value = ...)]` sites now reference the consts via `default_value = evaporchain_types::chain_ids::MAINNET/TESTNET`. |
+| `crates/evaporchain-node/src/main.rs` | `--chain-id` fallback references `chain_ids::TESTNET`. |
+| `docs/MAINNET_LAUNCH.md` (new) | Operator-facing end-to-end playbook for the `--mainnet` strict-mode launch path. Pre-launch checklist, chain-id naming, genesis-config shape, the 11 pre-flight checks the binary enforces, founding-validator launch command, governance-flag defaults table with "operator-decision-required?" column, cross-links to GENESIS_CEREMONY / VALIDATOR_ONBOARDING / TOKENOMICS / AUDIT_SCOPE. |
+**Why this matters:**
+- Chain-id is bound into the BLS signing message, the VRF leader-selection input (`leader_vrf_input(height, round, chain_id)`), the paymaster sponsorship payload (`TransferTx::paymaster_sponsorship_payload`), and the gossipsub topic namespace. A one-character typo in any literal silently creates a partition. Pinning them at `evaporchain_types::chain_ids` removes that drift surface.
+- The `--mainnet` strict-mode pre-flight exists in code (`validate_mainnet_strict` in node/src/main.rs:1515-1600+) but wasn't walked through in any single doc. Operators following docs/RUN_A_NODE.md couldn't see the full pre-flight at once. MAINNET_LAUNCH.md is the single canonical reference.
+**Empirical results on Mini-1 worktree (fa426c72):** 4/4 chain_ids tests green; full `cargo build` of touched crates (types, cli, node) clean in 1m 45s. Same pre-existing `wallet_encryption_ready` dead-code warning; no new warnings. Worktree cleaned up.
+**What did NOT change in this commit:**
+- No behavior change to the chain — every chain-id resolution returns the same string today; the literals just live in one place now.
+- `MAINNET_COORDINATOR_PK_BYTES` still `None` (operator decision; not shippable from this side until the coordinator ceremony happens — flagged as item #0 in the playbook's pre-launch checklist).
+- The 4 governance-flag defaults flagged "operator-decision-required" in the playbook (`block_source_mode`, `parent_acceptance_mode`, `crooks_mev_settlement_mode`, `lambda_fold_mode`) still have their current defaults. Flipping them is the next phase of the mainnet sprint, not this commit.
+**Mainnet sprint lane plan (decision the operator made):** drive code-side mainnet prep in parallel with the long-pole strategic items. The 3 remaining shippable phases:
+- **Phase B**: per-chain governance-flag defaults — separate `governance_defaults_for_chain(chain_id)` so mainnet can flip the 4 decision-required flags without changing devnet defaults. Needs operator input on which way each flag goes for mainnet launch.
+- **Phase C**: production infrastructure polish — block explorer, validator analytics against mainnet config, BUG_BOUNTY.md go-live, AUDIT_SCOPE.md cleanup. Pure ship-mode.
+- **Phase D**: ETH bridge production config + paymaster operational policy. Reads `MULTI_TOKEN_GAS_OPTIONS.md` + `ETHEREUM_BRIDGE_PLAN.md`; selects the production-policy defaults.
+**Cross-references:** commit `fa426c72`. Files: chain_ids.rs (new), MAINNET_LAUNCH.md (new), 4 modified Rust files. Verified on Mini-1 worktree. Pre-launch checklist in MAINNET_LAUNCH.md §0 lists every operator-decision item still open.
+
+---
+
 ## 2026-06-01 (mid-morning) — Multisig full atomic arc (30th template, heaviest single ship)
 
 **Focus:** ship the multisig primitive across every layer in a single atomic commit — typed dApp client + catalogue promotion + browser sync + bind/fees/required-keys + landing-page count. Heaviest single-commit ship of the session; demonstrates the established cadence can absorb multi-layer work atomically.
