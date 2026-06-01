@@ -2,7 +2,12 @@
 
 **Source of truth:** Rust source constants and `genesis-mainnet.json`. This table consolidates everything an operator, auditor, or integrator needs at a glance. Each row cites file:line so it stays grounded; if the value changes in source, update this table in the same PR.
 
-**Last refreshed:** 2026-05-03.
+**Last refreshed:** 2026-06-01.
+
+**See also**:
+- [`docs/MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md) §5 — governance-flag mainnet defaults requiring explicit operator decisions before launch (`block_source_mode`, `parent_acceptance_mode`, `crooks_mev_settlement_mode`, `lambda_fold_mode`).
+- [`docs/AUDIT_SCOPE.md`](AUDIT_SCOPE.md) — auditor-engagement scope; every parameter here is in audit scope.
+- `evaporchain_types::chain_ids` — typed chain-id constants (canonical source for `MAINNET`/`TESTNET`/`DEVNET`); referenced in §6 below.
 
 ## 1. Block & consensus
 
@@ -52,7 +57,7 @@
 | Community Airdrop | 100,000,000 | 10% |
 | Validator Operators (×4) | 50,000,000 each | 20% combined |
 
-⚠ **Centralization note (status 2026-05-03):** Foundation Treasury alone holds 35% of supply. The "Foundation passes anything solo" path is now closed in code: governance enforces stake-weighted vote-weight (`min(balance, stake)`), a quorum threshold, parameter range validation against §8 floor bounds, and a timelock between proposal pass and apply. The supply-distribution centralization itself remains an operational concern for genesis ceremony — see `audit/end_to_end_audit_2026_04_27.md` and `docs/THREAT_MODEL.md` §4.9 (Governance Layer).
+⚠ **Centralization note (status 2026-06-01):** Foundation Treasury alone holds 35% of supply. The "Foundation passes anything solo" path is now closed in code: governance enforces stake-weighted vote-weight (`min(balance, stake)`), a quorum threshold, parameter range validation against §8 floor bounds, and a timelock between proposal pass and apply. The supply-distribution centralization itself remains an operational concern for genesis ceremony — see [`docs/AUDIT_SCOPE.md`](AUDIT_SCOPE.md) §6.1 and [`docs/THREAT_MODEL.md`](THREAT_MODEL.md) §4.9 (Governance Layer). The Foundation-share % is also revisited by the [tokenomics ceremony](TOKENOMICS.md) Q's before genesis.
 
 ## 4. Execution + smart contract limits
 
@@ -90,9 +95,11 @@
 
 | Field | Value |
 |---|---|
-| Mainnet chain_id | `evaporchain-mainnet-1` (`genesis-mainnet.json`) |
-| Testnet chain_id | distinct (per `genesis-tailscale-3node.json`) |
-| Genesis time (current placeholder) | `2026-10-01T00:00:00Z` — **must be replaced before launch** |
+| Mainnet chain_id | `evaporchain-mainnet-1` (`evaporchain_types::chain_ids::MAINNET`) |
+| Testnet chain_id | `evaporchain-testnet-1` (`evaporchain_types::chain_ids::TESTNET`) — currently live on the public devnet at `89.167.52.40:8099` |
+| Devnet chain_id | `evaporchain-devnet-1` (`evaporchain_types::chain_ids::DEVNET`) — recommended for local development to avoid wallet-token cross-replay with the public testnet |
+| Genesis time (current placeholder) | `2026-10-01T00:00:00Z` — **must be replaced before launch**. Per [`docs/AUDIT_SCOPE.md`](AUDIT_SCOPE.md) §10 target is Q4 2026 / Q1 2027. |
+| `is_canonical(chain_id)` helper | `evaporchain_types::chain_ids::is_canonical` — returns true iff the supplied id matches one of the three constants above. Useful for early-startup pre-flight ("don't boot with an unrecognised chain-id"). |
 
 ## 7. Cryptography
 
@@ -101,7 +108,7 @@
 | ML-DSA Dilithium3 | `pqc_dilithium` | 0.2.0 | (NIST FIPS 204) |
 | BLS12-381 | `blst` | 0.3.16 | `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_` (sig)<br/>`BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_` (PoP) |
 | BLAKE3 | `blake3` | 1.x (workspace) | per-context keyed derivation |
-| Poseidon | bespoke | — | Custom constants — **unaudited (H-15)** |
+| Poseidon | bespoke | — | Custom constants — **audit-priority 1** (`docs/AUDIT_SCOPE.md` §3.1; per-constraint R1CS review still pending external auditor) |
 | XChaCha20-Poly1305 | `chacha20poly1305` | 0.10.1 | wallet-key encryption only |
 | Nova IVC | `nova-snark` | 0.68.0 | HyperKZG over BN254 |
 | RocksDB | `rocksdb` | 0.22.0 | 5 column families |
@@ -144,9 +151,29 @@ A defense-in-depth consistency check at `apply_governance_params` (the
 state-readback that the executor runs each block) skips the apply if the
 floor/ceiling pair is somehow inconsistent.
 
+## 8.5 Governance-flag mainnet defaults
+
+The chain currently ships with **universal** defaults across all chains
+(per `tendermint.rs::governance_flags_snapshot`). Four flags require
+explicit operator calls before mainnet launch — they are the operator-
+decision items in [`MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md) §5:
+
+| Flag | Current default | Mainnet decision options | Notes |
+|---|---|---|---|
+| `conservation_enforcement` | `enforce` | `enforce` (recommended) / `observe` (legacy) | Default is the mainnet posture; no decision needed. |
+| `block_source_mode` | `fifo` | `fifo` (recommended at launch) / `antichain` | `antichain` is closer to the doctrine but isn't the default; both are mainnet-safe. |
+| `parent_acceptance_mode` | `linear` | `linear` (recommended at launch) / `mcc` | `mcc` enables Boltzmann fork-choice; flip post-launch via governance once soak data accumulates. |
+| `crooks_mev_settlement_mode` | `observe` | `observe` / `enforce` | **Decision required.** `enforce` settles MEV refunds on-chain; observe-mode keeps the chain bit-compatible with pre-flag history but means no actual MEV refunds at launch. |
+| `light_cone_state_branches_enabled` | `false` | `false` (recommended at launch) | Keep `false`; flip later via governance after soak. |
+| `lambda_fold_mode` | `hash_chain` | `hash_chain` / `nova` | **Decision required.** `nova` switches to real Nova IVC accumulator; operationally heavier; conservative launch is `hash_chain`. |
+| `cartel_alarm_mode` | (defaults from CHSH track) | (operator confirms with doctrine team) | |
+| `script_vm_mode` | (defaults from script track) | (operator confirms) | |
+
+Flags are governance-mutable post-launch via `POST /api/governance/param` + the stake-quorum amendment process. Per-chain-id default selection is **not** yet implemented (Phase B of the mainnet sprint); current defaults apply uniformly across mainnet/testnet/devnet.
+
 ## 9. How to update this table
 
 When you change a constant in source:
 1. Update the line citation here.
 2. Confirm `genesis-mainnet.json` and `genesis-target.json` still match if the parameter is genesis-tunable.
-3. Update `audit/audit_readiness_pack_2026_04_27.md §10` accordingly so auditors see the same numbers.
+3. Cross-check against [`docs/AUDIT_SCOPE.md`](AUDIT_SCOPE.md) (priority tier + closure rows in §3-§6) so auditors see the same numbers.
