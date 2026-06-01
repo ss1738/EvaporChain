@@ -125,6 +125,16 @@ space-efficient consensus certificates. Finality requires ≥ 2/3 stake weight.
 the same message. This is correct for consensus (all validators attest to the
 same block hash). Mixed-message aggregate verification is not used.
 
+**Rogue-key precondition (H-4, closed 2026-05-28 via PR #414):** the
+validator-set hot path enforces proof-of-possession at registration time
+(`add_validator()` + genesis-time `verify_pop`). The portable backend's
+`aggregate_verify` (used by browser dApps, light clients, and indexers
+where `blst` isn't available) now requires per-key PoP precondition at
+the verify site too — the previous code summed G1 keys with no per-key
+PoP check, leaving non-validator callers with rogue-key exposure even
+though the validator path was sound. See
+`crates/evaporchain-crypto/src/bls_portable.rs:62-118`.
+
 ---
 
 ## 3. Commitment Schemes
@@ -161,10 +171,15 @@ commit(children: BTreeMap<u8, Node>) → Ep:
     return C
 ```
 
-**Node Hashing:**
+**Node Hashing (post-CR-1, 2026-05-28):**
 - Empty node: `[0u8; 32]`
-- Leaf node: `BLAKE3(key || value)`
-- Internal node: serialize `commit(children)` to 32 bytes via affine coordinates
+- Leaf node: `BLAKE3(VERKLE_LEAF_DST || key || value)` where `VERKLE_LEAF_DST = "evaporchain:verkle:leaf:v1\0"`
+- Internal node: `BLAKE3(VERKLE_INTERNAL_DST || serialize(commit(children)))` where `VERKLE_INTERNAL_DST = "evaporchain:verkle:internal:v1\0"`
+
+Producer and verifier (single + multi-proof paths) share these DSTs via
+`EnergyNode::hash`. The pre-fix shape (no DST prefix in `EnergyNode::hash`
+while `EnergyVerkleTrie::verify` reconstructed with DSTs) broke any
+non-trivial trie root and is closed under CR-1/CR-3 of AUDIT_2026_05_17.
 
 **Proof Structure:**
 ```
@@ -188,6 +203,13 @@ top-level result against the expected root.
 - Commitments are algebraically commutative (order of summation doesn't affect result)
 - Binding property relies on ECDLP hardness on Pallas
 - Hiding property is not provided (commitments are deterministic)
+- **Path-indices binding (CR-2, closed 2026-05-28):** `verify` now checks
+  `proof.path_indices[level] == proof.key[level]` at every level. The
+  pre-fix shape combined with `leaf_hash = [0u8; 32]` for non-existence
+  proofs (scalar zero = identity contribution) let an attacker forge a
+  non-existence proof for an *existing* key by routing the path through
+  an empty trie slot at a level where `path_indices` diverged from `key`.
+  Closed at `crates/evaporchain-crypto/src/verkle.rs:461`.
 
 ### 3.2 Merkle Mountain Range (Custom Implementation)
 
@@ -217,6 +239,42 @@ node_position(leaf_index) = 2 × leaf_index - popcount(leaf_index)
 ```
 
 **Proof:** Merkle proof from leaf to its peak, plus all other peaks for root reconstruction.
+
+**Structural validation (H-3, closed 2026-05-28):** `MMRProof.mmr_size`
+is now structurally validated before any hash work. The validation
+derives `leaf_count` from `mmr_size`, bounds the supplied `leaf_index`
+against `leaf_count`, computes the expected peak count via
+`popcount(leaf_count)`, and checks the sibling-list length matches the
+expected height. The pre-fix `mmr_size` field was plumbed through but
+never validated against any external commitment, leaving verifiers
+unable to perform the cheap `proof.mmr_size == known_size` pre-check
+(SUB-N1 class). See `crates/evaporchain-crypto/src/accumulator.rs:251`.
+
+### 3.3 Address Derivation (Domain-Separated, Pre-Mainnet Hard Fork)
+
+**File:** `crates/evaporchain-types/src/lib.rs`
+
+```
+address = BLAKE3(ADDRESS_DST || public_key_bytes)
+where ADDRESS_DST = "evaporchain:address:v1\0"
+```
+
+**H-2 (closed 2026-05-28 via PR #413):** addresses were previously
+derived as raw `blake3(public_key_bytes)` with no domain separation —
+the highest-leverage 32-byte target on the chain shared its preimage
+space with every other BLAKE3 call in the workspace. H4 applied DST
+hardening to MMR leaves/nodes; H-2 closes the same class for addresses.
+This is a pre-mainnet hard-fork: every address on the chain changes
+once this helper is wired through the genesis path. The `ADDRESS_DST`
+constant is canonical and not configurable.
+
+### 3.4 State-Proof DST (Q7, closed 2026-05-28)
+
+`consensus/src/bridge.rs::StateProof::verify` previously used an
+unsafe sorted-Merkle reconstruction with no leaf-index, no tree-size,
+and no DST — tree-size confusion class parallel to SUB-N1. Now uses
+a DST'd sorted-Merkle path with leaf-index + tree-size bound checks
+identical to the MMR pre-flight above.
 
 ---
 
@@ -342,3 +400,15 @@ enforce_less_than(cs, a, b, num_bits):
 | Energy decay | `crates/evaporchain-state/src/evaporation.rs` | ~170 | Medium |
 | EvaporScript VM | `crates/evaporchain-script/src/vm.rs` | ~500 | Medium |
 | Fee controller | `crates/evaporchain-execution/src/fees.rs` | ~100 | Low |
+
+---
+
+## 9. Audit closure cross-link
+
+The crypto-relevant findings from AUDIT_2026_05_17 (CR-1/CR-2/CR-3 Verkle
+DST drift + path-indices binding, H-2 address-derivation DST, H-3 MMR
+structural validation, H-4 BLS PoP at non-validator verify sites, Q7
+StateProof sorted-Merkle DST) are all closed as of 2026-05-28. Per-finding
+trail with file paths + commit refs in [`AUDIT_SCOPE.md`](AUDIT_SCOPE.md)
+§6.2. The threat-model abstraction view of these closures lives in
+[`THREAT_MODEL.md`](THREAT_MODEL.md) §6.1.
