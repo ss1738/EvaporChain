@@ -6,6 +6,39 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (very late) — Phase C: VALIDATOR_ONBOARDING.md refresh
+
+**Focus:** the runbook every post-genesis validator reads. Two operationally-load-bearing drifts identified.
+**Commits shipped:** 1 on main (`e213ac31`) — 45 insertions, 4 deletions.
+**What landed:**
+- **Constant naming fix (×2 sites):** doc referenced `MAINNET_COORDINATOR_PK`. Actual baked-in constant is `MAINNET_COORDINATOR_PK_BYTES` (`crates/evaporchain-node/src/main.rs:1418`). A validator pasting the doc's error string into a grep would get no hits; the corrected name now matches source.
+- **§6 launch command was missing env vars** that strict-mode refuses to boot without. Added explicit `EVAPORCHAIN_KEY_MASTER` + `EVAPORCHAIN_BLS_PASSPHRASE` export lines with comment explaining the gate.
+- **New front-matter "See also" panel** cross-linking MAINNET_LAUNCH.md + GENESIS_CEREMONY.md.
+- **Build-genesis section** points at canonical chain-id constants at `evaporchain_types::chain_ids` — previously the example used the literal string, which is exactly the surface a one-character typo silently partitions.
+- **§What goes wrong** extended with two new pre-flight error strings: missing/short/dev-default `EVAPORCHAIN_KEY_MASTER` + unset `EVAPORCHAIN_VALIDATOR_KEY_PASS`, with remedy commands.
+
+A new validator following the previous doc would have hit the `--mainnet` strict-mode pre-flight wall at boot. The refresh makes the launch command real.
+
+### Phase C operator+auditor doc set — 9 docs cross-linked
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| `README.md` (repo root) | Status + docs split | `6abce250` |
+| `docs/SPEC.md` | Status + Hardening | `f87554e9` |
+| `docs/AUDIT_SCOPE.md` | header/§2/§6/§7/§10 | `3537c32e` |
+| `docs/THREAT_MODEL.md` | §6.1 + §8 | `8f899eda` |
+| `docs/RUN_A_NODE.md` | --mainnet section | `f54880a0` |
+| `docs/architecture.md` | crate descriptions | `453d4dde` |
+| `docs/CRYPTO_SPEC.md` | §2.2/§3.1-3.4/§9 | `6ac28e9c` |
+| `docs/GENESIS_CEREMONY.md` | §Status/Pre-ceremony/Step 1/7 | `7d312481` |
+| `docs/VALIDATOR_ONBOARDING.md` | const name + env vars + cross-links | `e213ac31` |
+
+**Today's mainnet sprint commit total: 11 ship commits + 9 session entries = 20 commits.**
+
+**Cross-references:** commit `e213ac31`. Files: `docs/VALIDATOR_ONBOARDING.md`. Cross-links: MAINNET_LAUNCH.md, GENESIS_CEREMONY.md, evaporchain_types::chain_ids.
+
+---
+
 ## 2026-06-01 (deep night) — Phase C: GENESIS_CEREMONY.md refresh — operationally critical
 
 **Focus:** the operational launch ritual. Last edited 2026-04-27 — 5+ weeks stale on a doc that's normative for mainnet launch. An operator running this ceremony today would have used a non-existent flag (`--tendermint-mode`, instead of `--mainnet`) and skipped the entire `--mainnet` strict-mode pre-flight.
