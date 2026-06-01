@@ -26,6 +26,35 @@ cargo run --release -p evaporchain-node -- --api --demo
 
 This starts a single-node chain with MockConsensus. Good for development and testing.
 
+## Mainnet Launch
+
+For the production launch path see **[`docs/MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md)** —
+the operator-facing end-to-end walkthrough of `--mainnet` strict-mode:
+pre-launch checklist, genesis-config shape, the 11 pre-flight checks the
+binary refuses to skip, founding-validator launch command, and the
+governance-flag defaults table.
+
+The minimum-shape command, for reference:
+
+```bash
+export EVAPORCHAIN_KEY_MASTER="<32+ hex chars from /dev/urandom>"
+export EVAPORCHAIN_BLS_PASSPHRASE="<the validator's own EVPL passphrase>"
+
+cargo run -p evaporchain-node --release -- \
+    --mainnet \
+    --genesis-config /etc/evaporchain/mainnet-genesis.json \
+    --data-dir /var/lib/evaporchain \
+    --api --api-port 8080
+```
+
+`--mainnet` strict-mode refuses to boot with `--mock-consensus`, `--mock-prove`,
+`--demo`, `--no-da-enforcement`, `--faucet-rate-limit-disabled`, or
+`--validators=N > 1` without a `--genesis-config`. It also requires
+`EVAPORCHAIN_KEY_MASTER` set to a non-dev-default value ≥ 16 chars,
+`EVAPORCHAIN_BLS_PASSPHRASE` set non-empty, no plaintext `*-key.pem` files
+under the data-dir, and `MAINNET_COORDINATOR_PK_BYTES` baked into the
+binary at compile time.
+
 ## Tendermint BFT Node
 
 Run a validator participating in multi-node BFT consensus:
@@ -55,8 +84,9 @@ cargo run --release -p evaporchain-node -- \
 | `--api` | Enable HTTP API + dashboard | off |
 | `--demo` | Auto-generate transactions | off |
 | `--prove` | Enable real Nova IVC proving (release-only; debug builds use MockProver) | off |
-| `--mainnet` | Bootstrap from `genesis-mainnet.json` with mainnet defaults (block interval, gas limits, coordinator pk) | off |
-| `--genesis-config PATH` | Bootstrap from a JSON genesis config (supersedes built-in defaults) | none |
+| `--mainnet` | Enable mainnet strict-mode pre-flight (refuses incompatible flags + requires signed genesis-config + EVPL passphrase). **Always pair with `--genesis-config <path>`.** See [§ Mainnet Launch](#mainnet-launch) below + the full playbook at [`docs/MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md). | off |
+| `--genesis-config PATH` | Bootstrap from a JSON genesis config (supersedes built-in defaults). Required by `--mainnet`. | none |
+| `--chain-id ID` | Chain identifier. Canonical values are `evaporchain-mainnet-1` / `evaporchain-testnet-1` / `evaporchain-devnet-1` — see `evaporchain_types::chain_ids`. Empty value is refused (would downgrade gossipsub to unscoped topics). | `evaporchain-testnet-1` |
 | `--fast-sync` | On startup, fetch the latest finalized snapshot from peers and apply it before joining consensus; the node then catches up over normal sync. Verified end-to-end on the 3-Mini cluster 2026-05-02 | off |
 | `--block-gas-limit N` | Per-block gas ceiling | 500_000 |
 | `--high-throughput` | Preset: 10M gas, 200ms blocks | off |
