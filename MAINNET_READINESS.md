@@ -8,6 +8,30 @@
 
 ---
 
+## 0. Mainnet Sprint 2026-06-01 (in flight)
+
+The dissertation milestone closed 2026-06-01 and the mainnet sprint began the same day. The sprint is organized into four phases, three of which had ship-side work that landed in the same session:
+
+| Phase | Lane | Status | Notes |
+|---|---|---|---|
+| A | Chain-id constants + MAINNET_LAUNCH.md playbook | ✅ `fa426c72` | Typed constants at `evaporchain_types::chain_ids` (MAINNET/TESTNET/DEVNET) replace scattered string literals. New operator-facing playbook walks through `--mainnet` strict-mode boot + 11 pre-flight checks + governance-flag defaults. |
+| B | Per-chain governance-flag defaults | 🟡 **OPEN — needs 4 operator calls** | The four flags requiring explicit launch-time decisions: `block_source_mode` (fifo / antichain), `parent_acceptance_mode` (linear / mcc), `crooks_mev_settlement_mode` (observe / enforce), `lambda_fold_mode` (hash_chain / nova). Surfaced inline in `docs/PARAMETERS.md` §8.5 + `docs/MAINNET_LAUNCH.md` §5. Per-chain dispatcher (`governance_defaults_for_chain(chain_id)`) NOT yet implemented; the chain ships universal defaults across mainnet/testnet/devnet. |
+| C | Audit-prep + docs polish + infra polish | ✅ — 10 docs refreshed + production block explorer | The 10 docs an external operator or auditor encounters first (README + SPEC + AUDIT_SCOPE + THREAT_MODEL + RUN_A_NODE + architecture + CRYPTO_SPEC + GENESIS_CEREMONY + VALIDATOR_ONBOARDING + PARAMETERS) all refreshed against HEAD, all cross-linked to each other. Block explorer upgraded with chain-id badge + network-health panel + search-by-height. |
+| D | ETH bridge + paymaster production config | 🔴 Operator-blocked | Awaits MULTI_TOKEN_GAS_OPTIONS.md ratification + ETHEREUM_BRIDGE_PLAN.md production-policy selection. |
+
+**Companion catalogue sprint (2026-05-31 / 2026-06-01 same arc):** 6 catalogue promotions in one day — DEADMAN_SWITCH, SUBSCRIPTION_SERVICE, MORTAL_NFT_GENERAL, MORTAL_MESSAGE_PILOT, OPEN_BOUNTY, MULTISIG_PROPOSAL. Catalogue 24 → 30 templates. Chain-as-keeper escrow triplet (DEADMAN_SWITCH + SUBSCRIPTION_SERVICE + OPEN_BOUNTY) fully represented at every layer (`.es` contract + cargo pilot + typed client + formal catalogue + visceral simulator UI for the first two).
+
+**Remaining sprint blockers — all operator-decision:**
+- T0.12 external audit (auditor selection)
+- Phase B governance-flag mainnet defaults (4 flag calls)
+- `MAINNET_COORDINATOR_PK_BYTES` bake-in (ceremony output)
+- `docs/BUG_BOUNTY.md` go-live (§10 triage queue + escrow + payment rails)
+- Tokenomics ceremony (28 Q's in `docs/TOKENOMICS.md`)
+
+**Per-commit detail:** see `SESSION_PROGRESS.md` 2026-06-01 entries (12 ship commits + 10 session-progress entries = 22 commits).
+
+---
+
 ## 1. Status legend
 
 | Symbol | Meaning |
@@ -127,9 +151,9 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T1.14 | Phase 2 round-trip test (proposer-stamp == validator-apply) | ✅ DONE (9191e87) — 3 tests appended end-of-file; build verification deferred | CONSENSUS |
 | T1.15 | Paymaster Finding 1 — per-key in-flight locking | ✅ DONE (1f8c50a2) — inflight_locks per-key Mutex serialises concurrent retries; concurrent_same_key_retries_dont_double_allocate passes | PAYMASTER |
 | T1.16 | Internal audit findings reconciliation sweep | ✅ DONE (7f36b46) — `AUDIT_RECONCILIATION_2026-05-09.md` + opcode-count drift fix | AUDIT-SWEEP |
-| T1.17 | BLS key rotation under live cluster conditions | 🟡 OPEN — T3.1 ✅; cluster live; runbook exists at `validator-onboarding.md`; live rotation ready to execute | OPS-RUNBOOK |
-| T1.18 | Validator-key passphrase migration on live nodes | 🟡 OPEN — T3.1 ✅; runbook at `docs/runbooks/validator-passphrase-migration.md`; operator to run on each node | OPS-RUNBOOK |
-| T1.19 | EVPL plaintext key migration on live nodes | 🟡 OPEN — T3.1 ✅; migration procedure documented; operator to run `evaporchain-cli key-migrate` on each node | OPS-RUNBOOK |
+| T1.17 | BLS key rotation under live cluster conditions | 🟡 OPEN — runbook at `docs/VALIDATOR_ONBOARDING.md`; **T3.1 status REGRESSED per 2026-05-18 verification (see lane spec below); live rotation gated on cluster re-bring-up** | OPS-RUNBOOK |
+| T1.18 | Validator-key passphrase migration on live nodes | 🟡 OPEN — runbook at `docs/runbooks/validator-passphrase-migration.md`; **same T3.1 regression caveat as T1.17** | OPS-RUNBOOK |
+| T1.19 | EVPL plaintext key migration on live nodes | 🟡 OPEN — `evaporchain-cli key-migrate` procedure documented; **same T3.1 regression caveat as T1.17** | OPS-RUNBOOK |
 | T1.20 | Coverage push to ≥90% (currently ~73%) | ✅ **DONE** — 87.22% line / 88.54% function workspace-wide; 93.28% excl. wallet CLI binary (structural ceiling). All target-crate goals achieved. done-as-of: 2026-05-13 | STATE-DB |
 | T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | ✅ DONE — false-positive from audit reconciliation; both EVR docs already carry detailed implementation-status tables ahead of the spec body | docs |
 | T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | ✅ DONE — `docs/runbooks/monitoring.md` + `scripts/prometheus-scrape-config.example.yml` + `scripts/grafana-dashboards/evaporchain-chain.json` (cherry-picked `a1646a7f` 2026-05-14) | OPS-RUNBOOK |
