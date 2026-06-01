@@ -6,6 +6,40 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (morning) — Open Bounty catalogue promotion (29th template)
+
+**Focus:** promote `bounty.es` to the 29th formal catalogue template — completes the chain-as-keeper escrow triplet (DeadMan Switch + Subscription + OpenBounty) at the catalogue layer.
+**Commits shipped:** 1 on main (`7852fa1a`).
+**Catalogue is now 29 templates.** Marketplace lane up to 9 entries (was 8). The chain-as-keeper escrow doctrine is now represented across three distinct surfaces (secret release / recurring payment / task escrow).
+**What landed:**
+| Crate | Change |
+|---|---|
+| `evaporchain-app-templates::class` | New `pub const OPEN_BOUNTY: TemplateClass(0x0001_010A)` in the Marketplace lane (after SUBSCRIPTION_SERVICE at 0x0001_0109). Distinct from SHLM_BOUNTY (Skill Half-Life Bounty at 0x0001_0103) — the naming makes the difference structural. |
+| `evaporchain-app-templates::catalogue` | New TemplateDescriptor with default `{initial_energy: 1000, half_life: 100, default_reward: 500}`. Count test bumped 28 → 29. |
+| `evaporchain-app-templates-engine::init_open_bounty` (new) | Typed init: `{initial_energy, half_life, default_reward}`. Runtime args (task spec, recipient address, solution string) belong to set_bounty/submit/accept — not deploy. |
+| `evaporchain-app-templates-engine::dispatch` | New `TypedInit::OpenBounty` variant + dispatch arm. |
+| `evaporchain-app-templates-fees::oracle` | New `TypedInit::OpenBounty(_) => SURCHARGE_MARKETPLACE` arm. |
+| `evaporchain-app-templates-bind::bind` | New invariant arm: `initial_energy, half_life, default_reward all > 0`. The .es contract enforces `reward > 0` at `set_bounty()` runtime; pre-flight rejection saves a confusing tx round-trip. |
+| `evaporchain-app-templates-deploy::required_keys` | New row listing the 3 required keys. |
+| `dapps/catalogue-browser/index.html` | New CATALOGUE JS entry in class-id order; "28 templates" → "29 templates", "all 28" → "all 29", "28 shown" → "29 shown". |
+| `dapps/index.html` | Landing-page catalogue-count 28 → 29. |
+**Empirical results on Mini-1 worktree (`7852fa1a`):** 220+ tests pass across 5 template crates, 0 failures. The `every_catalogue_default_binds` test continues green for all 29 templates. Worktree cleaned up.
+**Decisions made:**
+- **`OPEN_BOUNTY` naming, not `BOUNTY_TASK` or `OPEN_CALL_BOUNTY`.** The existing SHLM_BOUNTY is structurally a different primitive (skill-credential decay market, not task escrow). Calling this OPEN_BOUNTY emphasises the *open-call* dynamic (anyone may submit) which is what distinguishes it from SHLM and from closed/sealed-bid escrows.
+- **`default_reward` in the typed init**, not pure-runtime. The wallet form needs a sensible default to pre-populate; the actual on-chain reward is locked at runtime via `set_bounty(task, reward)`. Same pattern as Subscription's `period_amount` default.
+- **Atomic commit including browser sync.** Continuing the pattern set by Mortal Message — sync the catalogue-browser and landing page in the same commit rather than a follow-up.
+**Today's totals (incl. overnight roll):** 16 commits on main. Reference contracts 12 → 17, catalogue 24 → 29 (five promotions in one session), landing-page lenses 4 → 6. Every surface (Rust registry, catalogue-browser, landing page) agrees at 29.
+**Five catalogue promotions this session:**
+1. DeadMan Switch — Marketplace · chain-as-keeper secret release
+2. Subscription — Marketplace · chain-as-keeper recurring payment
+3. Mortal NFT — NFT · the headline decaying-NFT claim
+4. Mortal Message — Consumer · the canonical EvaporScript pilot
+5. Open Bounty — Marketplace · chain-as-keeper task escrow
+**What's next:** the promotion cadence is well-rehearsed. Remaining natural picks: more typed clients for the 18 remaining unclient'd .es files; a new from-scratch contract arc; a `bounty-vista` simulator UI for the 5th lens (would be the 7th landing-page lens); or wallet deploy-form integration to render the 29 catalogue entries as deploy options.
+**Cross-references:** commit `7852fa1a`. Files: class.rs / catalogue.rs / init_open_bounty.rs (new) / dispatch.rs / oracle.rs / bind.rs / required_keys.rs / catalogue-browser.html / dapps/index.html. Source contract: contracts/evaporscript/bounty.es. Pre-existing cargo pilot: crates/evaporchain-script/tests/bounty_pilot.rs. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-01 (dawn) — Mortal Message catalogue promotion (28th template, canonical pilot)
 
 **Focus:** promote the canonical EvaporScript pilot. `mortal_message.es` is referenced in the project CLAUDE.md as the reference pilot every other .es contract is shaped from; the 24-entry registry historically excluded it because it was framed as a stdlib pilot rather than a deployable consumer primitive. This entry surfaces it as a first-class catalogue slot.
