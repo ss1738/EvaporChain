@@ -6,6 +6,48 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-02 (deep night, grind) — MAINNET_LAUNCH §5 + root CLAUDE.md closure
+
+**Focus:** close two loops opened by today's earlier sprint work — MAINNET_LAUNCH.md §5 (referenced governance defaults as inline constants pre-`8731ff36`; now references the dispatcher seam) + root CLAUDE.md (last edited 2026-05-29, before today's sprint).
+**Commits shipped:** 2 on main (`52d640a1`, `095c6d33`).
+
+### Ship 1 — `docs/MAINNET_LAUNCH.md` §5 refresh (`52d640a1`)
+
+§5 still framed the defaults as inline constants in `governance_flags_snapshot`; Phase B infrastructure (`8731ff36`) made them a dispatcher.
+
+**What landed:**
+- §5 header references `governance_defaults_for_chain` as the resolver.
+- §5 table refreshed to cover all 8 current defaults (`cartel_alarm_mode`, `cross_epoch_churn_mode`, `post_state_verify_mode` previously hand-waved as "defaults from CHSH/script track" — replaced with actual values + rationales).
+- **New §5.1 "How to land a mainnet-specific default (Phase B)"** — shows the exact match-arm edit pattern with a worked example (`parent_acceptance_mode` → `mcc`, `block_source_mode` → `antichain`, `lambda_fold_mode` → `nova`) annotated. Cross-links the 5 pinning tests + the `mainnet_matches_universal_today` intentional-fail.
+- **New §5.2 "Post-launch flag flips"** — separates initial (dispatcher) from runtime (governance_params override) so operators don't conflate them.
+
+### Ship 2 — root `CLAUDE.md` refresh (`095c6d33`)
+
+Future Claude sessions read this doc first. Was 3-4 days stale across four touch points.
+
+**What landed:**
+- **§Before starting any session**: renumbered from 5 docs to 6 — added `docs/MAINNET_LAUNCH.md` as item 5. MAINNET_READINESS.md entry references §0 sprint-header. AUDIT_2026_05_17 entry cross-links AUDIT_SCOPE.md §6.2/§6.3.
+- **§Workspace structure**: 159 → 163 crate directories; 140 → 141 active workspace members. Test counts expanded with TS + Coq + TLA+.
+- **§Core stack table**: `evaporchain-types` row now mentions `chain_ids`; `evaporchain-contracts` row reframed (8 → coexists with 30-template formal catalogue); `evaporchain-script` → "V2" with operator list.
+- **§Governance flags**: new paragraph documenting the `governance_defaults_for_chain` seam + cross-link to MAINNET_LAUNCH.md §5.1 + the 5 pinning tests.
+
+### Cumulative state
+
+**Today's mainnet sprint commit total: 17 ship commits + 14 session entries = 31 commits.**
+
+The shippable-by-me-solo lanes are now fully converged:
+- Mainnet Phase A ✅ (chain-id + MAINNET_LAUNCH playbook)
+- Mainnet Phase B infra ✅ (dispatcher seam; 4 flag values 🟡 OPEN — operator)
+- Mainnet Phase C ✅ (10 docs refreshed + block explorer + lane-board hygiene)
+- Catalogue 24 → 30 ✅ (6 promotions, chain-as-keeper escrow triplet)
+- EvaporScript V2 + docs ✅
+- Per-chain governance defaults seam ✅
+- Root CLAUDE.md + project-level docs all HEAD-true and cross-linked
+
+**Cross-references:** commits `52d640a1`, `095c6d33`. Files: `docs/MAINNET_LAUNCH.md`, `CLAUDE.md`. Cross-links: governance_defaults_for_chain, governance_defaults_per_chain_tests, chain_ids constants, EVAPORSCRIPT.md V2 section.
+
+---
+
 ## 2026-06-02 (late post-midnight) — EVAPORSCRIPT.md V2 operators documented
 
 **Focus:** the language reference was verified 2026-05-17 against vm.rs but the V2 operators shipped 2026-05-31 during the catalogue sprint (SAP V2 + MnemoChain V2 rewrites). Exactly one cycle stale.
