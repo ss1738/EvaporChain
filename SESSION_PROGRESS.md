@@ -6,6 +6,45 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-02 (keep grinding) — Time Lock full atomic arc (31st template)
+
+**Focus:** pivot from docs back to code. Ship another atomic catalogue arc using the proven 14-file pattern from the multisig commit (`8296c321`). Time-lock fits the chain-as-keeper escrow doctrine — the fourth Marketplace primitive in the family.
+**Commits shipped:** 1 on main (`c602af6c`) — **14 files, 553 insertions**.
+**Catalogue is now 31 templates.** Marketplace lane up to 10 entries (was 9 after Open Bounty).
+**Doctrine claim:** locks `amount` for `beneficiary` until `unlock_epoch`. Grantor's clawback window closes the moment unlock arrives (no post-unlock rug-pull). On-evaporate without a claim flips `forfeit_signaled` with `unclaimed_at_evaporate` recorded so the off-chain coordinator returns the locked amount to the grantor. The runtime is the deadline enforcer — same chain-as-keeper claim as DeadMan Switch + Subscription + Open Bounty, applied to time-locked vault escrow.
+**Atomic-commit shape (14 files in one ship):**
+| Layer | Change |
+|---|---|
+| dApp client | `dapps/time-lock/` — 3 mutators + 5 views + auth-injected Tx wrappers. **9/9 TS tests pass** with 3 pinned-invariant tests (set_terms rejects unlock <= current epoch; revoke() blocks at or after unlock; on_evaporate flips forfeit ONLY on `!claimed && !revoked`). |
+| Class registry | New `TIME_LOCK: TemplateClass(0x0001_010B)` in Marketplace lane. |
+| Catalogue | Count test 30 → 31. |
+| Engine init module | `init_time_lock.rs` (new) with `{initial_energy, half_life, default_amount, default_lock_window}`. |
+| Engine dispatch | New `TypedInit::TimeLock` variant + dispatch arm. |
+| Fees oracle | `SURCHARGE_MARKETPLACE`. |
+| Bind invariants | All 4 fields > 0; rationale notes the runtime guards each constraint defends against. |
+| Required keys | New 4-key row. |
+| Catalogue-browser | New entry in class-id order; display strings 30 → 31. |
+| Landing page | Catalogue-count 30 → 31. |
+**Empirical results on Mini-1 worktree (`c602af6c`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 31 templates. Worktree cleaned up.
+**Decisions made:**
+- **Marketplace lane, 0x0001_010B**: continues the marketplace chain-as-keeper escrow run (108/109/10A/10B). Lane is now 10 entries — densest of any.
+- **Two compound runtime constraints** documented in the bind comment: `default_lock_window == 0` would force `unlock_epoch == current_epoch` at the wallet's set_terms call, failing the .es contract's `unlock > epoch` runtime guard.
+
+**Chain-as-keeper Marketplace escrow quadruplet now complete:**
+
+| Class id | Template | Surface |
+|---|---|---|
+| `0x0001_0108` | DeadMan Switch | secret release |
+| `0x0001_0109` | Subscription | recurring payment |
+| `0x0001_010A` | Open Bounty | task escrow |
+| `0x0001_010B` | Time Lock | time-locked vault |
+
+**Today's mainnet sprint commit total: 21 ship commits + 17 session entries = 38 commits.**
+
+**Cross-references:** commit `c602af6c`. Files: 14 changed. Source contract: `contracts/evaporscript/time_lock.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/time_lock_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-02 (still grinding) — DOCTRINE_PUNCH_LIST.md 2026-06-01 addendum
 
 **Focus:** the doctrine punch list is one of the 6 docs new Claude sessions read on startup (per root CLAUDE.md). Its status snapshot stops at 2026-05-08; Layers 0-7 are still ✅ DONE but the surface beneath them expanded materially across 3 sprints between 2026-05-08 and today.
