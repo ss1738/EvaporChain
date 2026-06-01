@@ -6,6 +6,49 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (afternoon) — Mainnet sprint, phase C continues: RUN_A_NODE + THREAT_MODEL refresh
+
+**Focus:** continue Phase C audit-prep + docs polish. Two ships in this entry, parallel to the AUDIT_SCOPE.md refresh.
+**Commits shipped:** 2 on main (`f54880a0`, `8f899eda`).
+
+### Ship 1 — `docs/RUN_A_NODE.md` cross-link MAINNET_LAUNCH.md (`f54880a0`)
+
+The doc's `--mainnet` flag row was inaccurate ("Bootstrap from `genesis-mainnet.json`" implied a hard-coded filename; actual flag requires any path via `--genesis-config`). No `--chain-id` row at all despite being a real arg the binary accepts. No cross-link to the new MAINNET_LAUNCH.md playbook.
+
+**What landed:**
+- Rewrote the `--mainnet` flag row to describe actual behavior (strict-mode pre-flight + signed genesis-config + EVPL passphrase) + cross-link MAINNET_LAUNCH.md.
+- Added `--chain-id` row referencing the typed constants at `evaporchain_types::chain_ids`.
+- New "Mainnet Launch" section between "Single Node" and "Tendermint BFT Node": cross-link to the playbook + minimum-shape launch command + summary of the 7-item strict-mode refusal surface.
+
+### Ship 2 — `docs/THREAT_MODEL.md` refresh against AUDIT_2026_05_17 + #469 (`8f899eda`)
+
+The doc was last edited 2026-05-07. The §6.1 "Known Gaps" table claimed several Open items that have since closed and was entirely missing the major AUDIT_2026_05_17 closures.
+
+**§6.1 changes:**
+- Header note cross-linking AUDIT_SCOPE.md §6.2 + §6.3 for the per-finding trail (avoids duplicating 30+ rows in two docs).
+- **13 new Closed rows** added: slash redistribute (ECON-001), shielded-tx v1-gating (PRIV-001/002), DA-cert forgery class (DA-001 / Q1-Q3 / Q8), Tendermint quorum strictness (Q4), DA sampler binding (Q6), Verkle DST drift (CR-1/2/3), address-derivation DST (H-2), VRF chain-id-scoping (H-1), MMR structural validation (H-3), Nova IVC running-total decay (L0-A), DecayingToken refresh integer-safety (VM-001), wallet master key dev-default in production (API-001), BLS rogue-key at non-validator verify sites (H-4).
+- BLS rogue-key (validator) split from BLS rogue-key (non-validator) — distinct closures, distinct severity.
+- **New Open rows**: GHOST-A (Critical paper-drift, resurrection MMR nullifier), CONS-A (conservation gate ChainLambda governance read-path). Both explicit operator-decision items, not closed.
+- "No formal verification of circuits" updated to "Partial" — Coq proves 5 theorems zero-Admitted; R1CS-level verification still pending external auditor.
+
+**§8 cross-links** AUDIT_SCOPE.md (comprehensive scope + closure trail) and MAINNET_LAUNCH.md (operator-facing strict-mode launch path). Keeps THREAT_MODEL.md focused on threat-model abstraction rather than per-finding bookkeeping.
+
+### Phase C progress so far (today)
+
+| Item | Status | Commit |
+|---|---|---|
+| AUDIT_SCOPE.md refresh | ✅ | `3537c32e` |
+| RUN_A_NODE.md cross-links | ✅ | `f54880a0` |
+| THREAT_MODEL.md refresh | ✅ | `8f899eda` |
+| BUG_BOUNTY.md go-live | Operator decision (§10 of that doc) |  |
+| Production block explorer | Open |  |
+| validator-analytics mainnet polish | Open |  |
+| docs/SPEC.md final pass | Open |  |
+
+**Cross-references:** commits `f54880a0`, `8f899eda`. Files: `docs/RUN_A_NODE.md`, `docs/THREAT_MODEL.md`. Cross-links: AUDIT_SCOPE.md, MAINNET_LAUNCH.md, CHANGELOG.md, AUDIT_2026_05_17.md.
+
+---
+
 ## 2026-06-01 (noon) — Mainnet sprint, phase C kickoff: AUDIT_SCOPE.md refresh
 
 **Focus:** with operator-decision items still pending (Phase B governance-flag defaults), drive the parallelisable Phase C — audit-prep artefacts that external auditors read first. Refresh AUDIT_SCOPE.md against HEAD so the doc accurately describes the workspace an auditor would actually engage with.
