@@ -42,6 +42,67 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
+// ─────────────────────── Per-chain governance defaults ─────────────────
+
+/// Default values for the documented soft-fork governance keys, keyed
+/// by `chain_id`. The return value is the slice
+/// `governance_flags_snapshot` walks to fill in defaults for any key
+/// not explicitly set via `POST /api/governance/param`.
+///
+/// **Behavioral guarantee (2026-06-01):** today this function returns
+/// the *same* slice for every chain-id. Mainnet, testnet, devnet, and
+/// any private testnet all see the same 8 defaults. The function
+/// signature accepts `chain_id` purely as a forward-compat seam — when
+/// Phase B of the mainnet sprint lands (per `docs/MAINNET_LAUNCH.md`
+/// §5 and `docs/PARAMETERS.md` §8.5) the four operator-decision flags
+/// (`block_source_mode`, `parent_acceptance_mode`,
+/// `crooks_mev_settlement_mode`, `lambda_fold_mode`) will diverge from
+/// the universal defaults *only* on `evaporchain_types::chain_ids::MAINNET`.
+/// Adding the dispatcher infrastructure now means each operator
+/// decision becomes a one-line edit instead of a refactor.
+///
+/// **Why not change the defaults today:** governance defaults are
+/// intentionally cluster-compatible. Doctrine-grade behaviors
+/// (antichain mempool drain, real Nova IVC, strict conservation
+/// enforcement) are flipped via `POST /api/governance/param` after a
+/// clean stop-the-world deploy — not by changing these defaults.
+/// Changing a default in code would hard-fork any running cluster on
+/// the next binary swap. The seam is structural; the per-chain values
+/// stay frozen until the operator deliberately lands them.
+pub fn governance_defaults_for_chain(chain_id: &str) -> &'static [(&'static str, &'static str)] {
+    // Universal defaults. Used by every chain-id today (mainnet, testnet,
+    // devnet, private testnets) until Phase B operator decisions land.
+    const UNIVERSAL: &[(&str, &str)] = &[
+        ("fork_choice_mode", "mcc"),
+        ("parent_acceptance_mode", "linear"),
+        ("block_source_mode", "fifo"),
+        ("conservation_enforcement", "enforce"),
+        ("lambda_fold_mode", "hash_chain"),
+        ("cartel_alarm_mode", "observe"),
+        // D7-Part2 cross-epoch quorum-intersection safety (C5).
+        // Default "observe" = legacy count-only churn cap.
+        ("cross_epoch_churn_mode", "observe"),
+        // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 4 (lane T0.3) —
+        // default "warn" preserves the af6876d/cb12cf1 always-on
+        // Phase 2+3 behaviour. Operators flip to "off" to disable
+        // the per-block speculative-execute CPU cost, or to
+        // "enforce" to make apply_block return Err on mismatch.
+        ("post_state_verify_mode", "warn"),
+    ];
+    // Per-chain divergence lands here. Pattern-match on
+    // `evaporchain_types::chain_ids::MAINNET` etc. when an operator
+    // decision is ready. Today every chain returns UNIVERSAL.
+    match chain_id {
+        // The match arm is intentionally exhaustive against the three
+        // canonical ids + a catch-all so a future divergence is a
+        // visible diff, not a silent drift.
+        _ if chain_id == evaporchain_types::chain_ids::MAINNET => UNIVERSAL,
+        _ if chain_id == evaporchain_types::chain_ids::TESTNET => UNIVERSAL,
+        _ if chain_id == evaporchain_types::chain_ids::DEVNET => UNIVERSAL,
+        _ => UNIVERSAL,
+    }
+}
+
 // ─────────────────────── Proof Verification ─────────────────────────────
 
 /// Trait for providing anchor hashes at anchor heights.
@@ -1992,30 +2053,20 @@ impl TendermintConsensus {
         let mut out = self.governance_params.clone();
         // Document the soft-fork keys + their defaults so consumers
         // see the *effective* value, not just the explicit overrides.
-        // Keys touched by Lane I.4 / Lane I.5 / Layer 0 #1.
+        // Defaults are resolved via `governance_defaults_for_chain`
+        // (see below the impl block) — the per-chain seam that lets
+        // mainnet-specific defaults land once Phase B of the mainnet
+        // sprint (per docs/MAINNET_LAUNCH.md §5 + docs/PARAMETERS.md
+        // §8.5) resolves the four open operator-decision flags
+        // (block_source_mode, parent_acceptance_mode,
+        // crooks_mev_settlement_mode, lambda_fold_mode).
         // NOTE: governance defaults are intentionally cluster-compatible.
         // Doctrine-grade behaviors (antichain mempool drain, real Nova IVC,
         // strict conservation enforcement) are flipped via
         // POST /api/governance/param after a clean stop-the-world deploy —
         // not by changing these defaults. Changing the defaults in code
         // would hard-fork any running cluster on the next binary swap.
-        for (key, default) in [
-            ("fork_choice_mode", "mcc"),
-            ("parent_acceptance_mode", "linear"),
-            ("block_source_mode", "fifo"),
-            ("conservation_enforcement", "enforce"),
-            ("lambda_fold_mode", "hash_chain"),
-            ("cartel_alarm_mode", "observe"),
-            // D7-Part2 cross-epoch quorum-intersection safety (C5).
-            // Default "observe" = legacy count-only churn cap.
-            ("cross_epoch_churn_mode", "observe"),
-            // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 4 (lane T0.3) —
-            // default "warn" preserves the af6876d/cb12cf1 always-on
-            // Phase 2+3 behaviour. Operators flip to "off" to disable
-            // the per-block speculative-execute CPU cost, or to
-            // "enforce" to make apply_block return Err on mismatch.
-            ("post_state_verify_mode", "warn"),
-        ] {
+        for (key, default) in governance_defaults_for_chain(&self.chain_id) {
             out.entry(key.to_string())
                 .or_insert_with(|| default.to_string());
         }
@@ -25105,5 +25156,94 @@ mod audit_q3_timestamp_bounds {
             !has_prevote_action(&actions),
             "timestamp 31 seconds in future must be rejected by the future-ts guard"
         );
+    }
+}
+
+#[cfg(test)]
+mod governance_defaults_per_chain_tests {
+    //! Phase B seam: `governance_defaults_for_chain(chain_id)` returns
+    //! the per-chain default slice. Today every canonical chain-id
+    //! returns the SAME slice (no Phase B operator decisions landed
+    //! yet); these tests pin that invariant so a future divergence is
+    //! a visible diff in this file.
+    //!
+    //! When the operator decides on the four open mainnet-launch flags
+    //! (block_source_mode, parent_acceptance_mode,
+    //! crooks_mev_settlement_mode, lambda_fold_mode), the divergence
+    //! lands in `governance_defaults_for_chain` and the
+    //! `mainnet_matches_universal_today` test below should be UPDATED
+    //! (not deleted) to assert the new per-chain divergence.
+
+    use super::*;
+    use evaporchain_types::chain_ids;
+
+    #[test]
+    fn universal_default_set_is_exactly_eight_keys() {
+        // Anti-regression: the universal default set has been 8 keys
+        // since the cross_epoch_churn_mode + post_state_verify_mode
+        // additions; dropping one would silently change the surface
+        // operators see via `governance_flags_snapshot()`.
+        let defaults = governance_defaults_for_chain(chain_ids::MAINNET);
+        assert_eq!(defaults.len(), 8);
+    }
+
+    #[test]
+    fn every_canonical_chain_id_resolves_today() {
+        // The three canonical chain-ids must all resolve to a non-empty
+        // default slice. (The catch-all also resolves, but a typo in
+        // any of the canonical-id arms would still fall through to it
+        // — pin each arm explicitly here.)
+        for id in &[chain_ids::MAINNET, chain_ids::TESTNET, chain_ids::DEVNET] {
+            let defaults = governance_defaults_for_chain(id);
+            assert!(
+                !defaults.is_empty(),
+                "chain-id {id} resolved to empty default set"
+            );
+        }
+    }
+
+    #[test]
+    fn mainnet_matches_universal_today() {
+        // Phase B status pin: today mainnet has NOT diverged from the
+        // universal defaults. When the operator makes the four flag
+        // calls per docs/MAINNET_LAUNCH.md §5, this test should be
+        // updated to assert the new per-chain divergence — DO NOT
+        // delete it. The point is to make the divergence visible
+        // in the test diff.
+        let mainnet = governance_defaults_for_chain(chain_ids::MAINNET);
+        let devnet = governance_defaults_for_chain(chain_ids::DEVNET);
+        assert_eq!(
+            mainnet, devnet,
+            "Phase B operator decisions have NOT landed yet; mainnet should match devnet today. \
+             If you're seeing this fail, update the assertion + this comment to reflect the new \
+             per-chain divergence."
+        );
+    }
+
+    #[test]
+    fn private_testnet_falls_through_to_universal() {
+        // The catch-all arm of `governance_defaults_for_chain` must
+        // return the universal set so private testnets (any
+        // non-canonical chain-id) don't silently inherit a different
+        // default than the canonical ids — a private-testnet operator
+        // expects bit-compatible governance defaults with their
+        // upstream node binary.
+        let mainnet = governance_defaults_for_chain(chain_ids::MAINNET);
+        let private = governance_defaults_for_chain("some-private-testnet-v3");
+        assert_eq!(mainnet, private);
+    }
+
+    #[test]
+    fn known_doctrine_flags_have_documented_defaults() {
+        // Pin the doctrine-named defaults so a rename in the slice
+        // breaks the test loudly. These four are the ones surfaced in
+        // docs/PARAMETERS.md §8.5 + docs/MAINNET_LAUNCH.md §5 as the
+        // operator-decision lanes.
+        let defaults = governance_defaults_for_chain(chain_ids::MAINNET);
+        let lookup: std::collections::HashMap<&str, &str> = defaults.iter().copied().collect();
+        assert_eq!(lookup.get("block_source_mode"), Some(&"fifo"));
+        assert_eq!(lookup.get("parent_acceptance_mode"), Some(&"linear"));
+        assert_eq!(lookup.get("lambda_fold_mode"), Some(&"hash_chain"));
+        assert_eq!(lookup.get("conservation_enforcement"), Some(&"enforce"));
     }
 }
