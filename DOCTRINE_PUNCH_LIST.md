@@ -6,6 +6,35 @@
 
 This file is the layered build plan to make the doctrine claims actually true. Every item below is a delta between what's shipped and what `INVENTION_STACK.md` says is shipped.
 
+## Addendum 2026-06-01 — three sprints since the 2026-05-08 status snapshot
+
+Doctrine Layers 0-7 + the Causal-CHSH frontier + Tokenomics engineering all
+remained ✅ DONE through 2026-05-08. Three additional arcs landed
+2026-05-17 → 2026-06-02 that don't change Layer 0-7 status but materially
+expand the surface beneath them. Per-commit detail in `SESSION_PROGRESS.md`;
+the 30-second summary:
+
+1. **AUDIT_2026_05_17 closure marathon (2026-05-24/25) + #469 P0 pack (2026-05-28)** — 9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW findings closed across the 2026-05-24/25 14-PR marathon and the #469 launch-blocker pack. Headline closures: CR-1/2/3 Verkle DST drift, H-1 VRF chain-id-scoping, H-2 address-derivation DST, H-3 MMR structural validation, H-4 BLS PoP at non-validator verify sites, Q1-Q8 DA-cert + Tendermint strict-quorum + DA sampler binding + state-proof DST, GHOST-A and CONS-A explicitly tracked as Open paper-drift / governance items; PRIV-001/002 shielded-tx v1-gating, DA-001 `verify_signatures_bound`, VM-001 DecayingToken `refresh_balance` checked_add, API-001 wallet master-key fail-closed, ECON-001 slash-redistribute conservation. Per-finding closure trail in `docs/AUDIT_SCOPE.md` §6.2/§6.3 (refreshed 2026-06-01).
+
+2. **Catalogue sprint (2026-05-31 → 2026-06-01)** — 6 catalogue promotions in one day; registry grew **24 → 30 templates**:
+   - `MORTAL_NFT_GENERAL` (NFT lane, 0x0001_0006) — headline decaying-NFT claim
+   - `DEADMAN_SWITCH` (Marketplace, 0x0001_0108) — chain-as-keeper secret release
+   - `SUBSCRIPTION_SERVICE` (Marketplace, 0x0001_0109) — chain-as-keeper recurring payment
+   - `OPEN_BOUNTY` (Marketplace, 0x0001_010A) — chain-as-keeper task escrow
+   - `MULTISIG_PROPOSAL` (Wallet UX, 0x0001_0204) — one-decision-per-contract doctrine inversion of Gnosis-Safe proposal-maps
+   - `MORTAL_MESSAGE_PILOT` (Consumer, 0x0001_0304) — the canonical EvaporScript pilot promoted to first-class
+
+   The **chain-as-keeper escrow triplet** (DeadMan + Subscription + OpenBounty) is fully represented at every layer: `.es` contract + cargo pilot + typed dApp client + formal catalogue + visceral simulator UI (DeadMan + Subscription only on the UI). Sibling latent gaps closed: DECAY_ACCESS_PASS + BELL_ORACLE + MORTAL_DAO had no engine-side `TypedInit` variants (commit `a831bd29`); required_keys table had matching gaps (commit `831846d3`). Anti-regression gate `every_catalogue_default_binds` now green for all 30.
+
+3. **Mainnet sprint (2026-06-01 → 2026-06-02)** — Phases A + C complete, B infrastructure shipped:
+   - **Phase A**: typed `chain_ids` constants (`MAINNET`/`TESTNET`/`DEVNET`) at `evaporchain_types::chain_ids`, replacing scattered string literals across genesis + CLI + node binaries. New operator-facing `docs/MAINNET_LAUNCH.md` walks the `--mainnet` strict-mode boot path (11 pre-flight checks).
+   - **Phase B infrastructure** (`8731ff36`): `governance_defaults_for_chain(chain_id)` dispatcher in `tendermint.rs`. Bit-identical behaviour today; mainnet-specific divergence becomes one-line edits when the 4 operator-decision flags (`block_source_mode`, `parent_acceptance_mode`, `crooks_mev_settlement_mode`, `lambda_fold_mode`) land. 5 pinning tests including `mainnet_matches_universal_today` (intentionally fails the moment divergence lands so the diff is visible).
+   - **Phase C**: 10 auditor+operator docs refreshed end-to-end (README, SPEC, AUDIT_SCOPE, THREAT_MODEL, RUN_A_NODE, architecture, CRYPTO_SPEC, GENESIS_CEREMONY, VALIDATOR_ONBOARDING, PARAMETERS) + EVAPORSCRIPT.md V2 operators + production block explorer with chain-id awareness + lane-board hygiene + root CLAUDE.md. All cross-linked, all dated 2026-06-01.
+
+**31 commits over 2026-06-01 → 2026-06-02.** Remaining work is genuinely operator-decision: T0.12 auditor selection, the 4 Phase B flag values, `MAINNET_COORDINATOR_PK_BYTES` bake-in, BUG_BOUNTY.md go-live, tokenomics ceremony 28 Q's, T0.6 multi-validator soak. None block further code-side work.
+
+---
+
 ## Status snapshot (2026-05-03 evening + Causal-CHSH addendum 2026-05-04 + Tokenomics arc 2026-05-07 + Refactors A+B 2026-05-08)
 
 | Layer | Items | Status | Commits |
