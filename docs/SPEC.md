@@ -55,12 +55,12 @@ Differentiator vs other L1s: most chains assume state is permanent unless delete
 | API | Axum HTTP + JSON-RPC + WebSocket events + dashboard |
 | Wallets | TypeScript SDK, mobile (React Native), browser extension |
 
-## Status (last refresh 2026-05-11)
+## Status (last refresh 2026-06-01)
 
-- **What works:** 25,435+ native tests passing across 147 workspace crates (16 core + 131 substrate / supporting), zero `unsafe`, 3-Mini Tailscale cluster verified end-to-end including real Nova IVC `--prove` chain proofs, snapshot + fast-sync, integrity_hash reproducibility, async fold off the consensus thread, and lockstep finality.
-- **Hardening since 2026-04-27:** oracle authentication closed (HybridVerifier against validator-set lookup), governance closed (stake-weighted vote, quorum, param-range validation, timelock), contract upgrade closed (`governance_approved` gate), DA encoder wired (`build_block_da_inputs(txs)` → identical proposal-time and serve-time `data_root`), BLS rogue-key closed (PoP enforced at `add_validator()` and at genesis), encrypted mempool integrated, BLS key-at-rest encrypted (Argon2id + XChaCha20-Poly1305 EVPL format), gossip size unified at 4 MB, Nova `state_root_to_u64` truncation fixed, nova_proof attaches at checkpoint boundaries, finality-records pollution closed (6 layered guards in `FinalityTracker::on_block_finalized_with_active`), persistence-write panic-propagation closed (`fatal_persistence_error` graceful-exit pattern across all RocksDB write sites).
-- **What's still open:** weak-subjectivity checkpoints, Block-STM contention path under high write conflict, empty-block `data_root` handling, formal verification of Nova R1CS. See `audit/end_to_end_audit_2026_04_27.md` and `docs/THREAT_MODEL.md` (the 2026-04-27 supplement was folded into the base on 2026-05-07).
-- **Distance to mainnet:** code-side hardening near-complete; remaining work is operational (weak-subjectivity, Block-STM polish) plus external validation.
+- **What works:** 25,435+ native tests passing across 163 crate directories (141 active workspace members + 2 excluded WASM crates), zero `unsafe` outside the documented WASM bridge, 3-Mini Tailscale cluster verified end-to-end including real Nova IVC `--prove` chain proofs, snapshot + fast-sync, integrity_hash reproducibility, async fold off the consensus thread, and lockstep finality. 30 catalogue templates wired through typed-init → bind → dispatch → fees → required-keys (anti-regression gate: `every_catalogue_default_binds`). Coq + TLA+ zero-Admitted under their pinned toolchains.
+- **Pre-mainnet hardening (cumulative through 2026-05-28):** the 2026-04-27 → 2026-05-07 base layer (oracle auth, governance, contract upgrade, DA encoder, BLS rogue-key validator path, encrypted mempool, BLS key-at-rest EVPL, gossip size, Nova `state_root_to_u64`, nova_proof checkpoint attach, finality-records pollution, persistence-write panic-propagation) **plus** the AUDIT_2026_05_17 closure trail (9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW — Verkle DST CR-1/2/3, VRF chain-id-scoping H-1, address-derivation DST H-2, MMR structural validation H-3, non-validator BLS PoP H-4, DA-cert forgery class Q1-Q3/Q8, Tendermint strict-quorum Q4, antichain stake-weight Q5, DA sampler binding Q6, StateProof sorted-Merkle DST Q7, Nova IVC running-total decay L0-A) **plus** the #469 P0 launch-blocker pack (PRIV-001/002 shielded-tx v1-gating, DA-001 verify_signatures_bound, VM-001 DecayingToken refresh-balance, API-001 wallet master-key fail-closed, ECON-001 slash-redistribute conservation). Per-finding trail at [`AUDIT_SCOPE.md`](AUDIT_SCOPE.md) §6.2 and §6.3.
+- **What's still open:** weak-subjectivity checkpoints (V1.1 / post-launch governance flag), formal verification of Nova R1CS (engagement-pending; Coq covers state-decay + LLSA invariant preservation but not the R1CS circuit), GHOST-A paper-drift (resurrection MMR nullifier consume — Paper 1 §3.4 Inv-4), CONS-A conservation gate ChainLambda governance read-path. See [`THREAT_MODEL.md`](THREAT_MODEL.md) §6.1.
+- **Distance to mainnet:** code-side is essentially complete; remaining lanes are external (audit T0.12 + auditor selection), operational (multi-validator soak T0.6, `EVAPORCHAIN_COORDINATOR_PK_BYTES` bake-in, tokenomics ceremony 28 Q's), and ship-side polish (mainnet config sprint — see [`MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md) for the operator-facing strict-mode launch path).
 
 ## Where to go next
 
@@ -72,11 +72,17 @@ Differentiator vs other L1s: most chains assume state is permanent unless delete
 | Cryptographic primitives | `docs/CRYPTO_SPEC.md` |
 | Decay & ghost concepts | `docs/concepts/decay.md`, `docs/concepts/ghosts.md` |
 | Operational parameters | `docs/PARAMETERS.md` |
-| Trust model + adversary | `docs/THREAT_MODEL.md` |
-| Run a node | `docs/RUN_A_NODE.md` |
+| Trust model + adversary | [`docs/THREAT_MODEL.md`](THREAT_MODEL.md) |
+| Run a node | [`docs/RUN_A_NODE.md`](RUN_A_NODE.md) |
+| **Mainnet launch path (operator-facing)** | [`docs/MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md) |
+| **Audit scope + closure trail (auditor-facing)** | [`docs/AUDIT_SCOPE.md`](AUDIT_SCOPE.md) |
+| Bug bounty (scoping draft) | `docs/BUG_BOUNTY.md` |
+| Tokenomics ceremony Q's (28 open) | `docs/TOKENOMICS.md` |
+| Genesis ceremony (protocol-level) | `docs/GENESIS_CEREMONY.md` |
+| Validator onboarding (post-launch) | `docs/VALIDATOR_ONBOARDING.md` |
 | Operational runbooks | `docs/runbooks/*.md` |
 | Whitepaper | `research/` (1.2 MB corpus, 188 KB whitepaper, 70 citations) |
-| Current audit state | `audit/end_to_end_audit_2026_04_27.md` |
+| Most recent point-in-time audit snapshot | `AUDIT_2026_05_17.md` (preserved as point-in-time; closure trail in CHANGELOG.md + SESSION_PROGRESS.md) |
 
 ---
 
