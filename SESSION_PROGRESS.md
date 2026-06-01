@@ -6,6 +6,41 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (night, ongoing) — Phase C: CRYPTO_SPEC.md refresh — H-2/H-3/H-4/CR-1/2/3/Q7 closures surfaced
+
+**Focus:** auditor priority 1 doc per AUDIT_SCOPE.md §3, last edited 2026-05-03. Five crypto-relevant closures from AUDIT_2026_05_17 landed in source between 2026-05-17 and 2026-05-28; **none were reflected in this spec**. An external auditor reading the spec was getting a wrong picture of the trie + MMR + BLS + state-proof shapes vs. what's actually deployed.
+**Commits shipped:** 1 on main (`6ac28e9c`) — 73 insertions, 3 deletions.
+**What landed:**
+- **§2.2 BLS12-381** — new "Rogue-key precondition (H-4, closed 2026-05-28 via PR #414)" paragraph documenting the portable backend's per-key PoP precondition at non-validator verify sites.
+- **§3.1 Verkle Trie** — §Node Hashing rewritten to include `VERKLE_LEAF_DST` + `VERKLE_INTERNAL_DST` (CR-1/CR-3 closure). §Audit Notes adds CR-2 path-indices binding (verify now rejects `path_indices[level] != key[level]` at every level, closing the non-existence-proof forgery via empty-slot routing).
+- **§3.2 MMR** — new paragraph documenting H-3 structural validation (leaf_count derivation, leaf_index bound, popcount peak count, height-based sibling count, all before any hash work).
+- **§3.3 (new) Address Derivation** — documents `ADDRESS_DST = "evaporchain:address:v1\0"` and the H-2 closure rationale (pre-mainnet hard fork). Explicitly notes the constant is canonical and not configurable.
+- **§3.4 (new) State-Proof DST** — documents the Q7 sorted-Merkle DST + leaf-index + tree-size bound closure parallel to SUB-N1.
+- **§9 (new) Audit closure cross-link** — bridges to AUDIT_SCOPE.md §6.2 + THREAT_MODEL.md §6.1.
+
+**Decisions made:**
+- **Surgical patches, not rewrite.** The spec's section structure is sound (Hash → Signature → Commitment → ZK → Encryption → DA → Dep audit → Custom code). Insertions are targeted where the audit closure actually changed the shape of the primitive — without disrupting the unchanged sections.
+- **DST constants quoted verbatim** so an auditor can grep source for the exact string. Saves them a hop to the crypto crate when validating.
+- **Cross-links to AUDIT_SCOPE.md + THREAT_MODEL.md** in the new §9 — keeps the per-finding bookkeeping in the auditor-engagement doc, not duplicated here.
+
+### Phase C doc-refresh now covers the full auditor-onboarding septet
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| `README.md` (repo root) | Status + checklist + dev-net live + docs split | `6abce250` |
+| `docs/SPEC.md` (one-pager) | Status + Hardening + What's-open + Where-to-go-next | `f87554e9` |
+| `docs/AUDIT_SCOPE.md` (engagement) | header/§2/§6/§7/§10 | `3537c32e` |
+| `docs/THREAT_MODEL.md` (risk surface) | §6.1 closures + §8 cross-links | `8f899eda` |
+| `docs/RUN_A_NODE.md` (operator) | --mainnet section + cross-links | `f54880a0` |
+| `docs/architecture.md` (system design) | crate descriptions + new entries + substrate count | `453d4dde` |
+| `docs/CRYPTO_SPEC.md` (auditor P1) | §2.2/§3.1/§3.2 closures + §3.3/§3.4/§9 new | `6ac28e9c` |
+
+**Today's mainnet sprint commit total: 9 ship commits + 7 session entries = 16 commits.**
+
+**Cross-references:** commit `6ac28e9c`. Files: `docs/CRYPTO_SPEC.md`. Cross-links: AUDIT_SCOPE.md §6.2, THREAT_MODEL.md §6.1.
+
+---
+
 ## 2026-06-01 (late evening) — Phase C: ARCHITECTURE.md surgical refresh
 
 **Focus:** the system-design overview referenced by SPEC.md and README.md. Surgical fixes against HEAD; no structural rewrite — the lane-grouped substrate section + how-decay/proofs/consensus-work sections still good.
