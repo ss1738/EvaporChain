@@ -52,7 +52,10 @@
 ## Crate Descriptions
 
 ### evaporchain-types
-Core domain types shared across all crates. Defines `StateObject`, `Account`, `Block`, `Transaction` (including all 7 transaction types), `GhostRecord`, `DualCommitment`, and the energy decay formula. The canonical type definitions live here — no business logic, just data structures and serialization.
+Core domain types shared across all crates. Defines `StateObject`, `Account`, `Block`, `Transaction` (25 tx variants), `GhostRecord`, `DualCommitment`, the energy decay formula, and the typed `chain_ids` constants (`MAINNET` / `TESTNET` / `DEVNET`) bound into BLS signing message + VRF leader input + paymaster sponsorship payload + gossipsub topic namespace. The canonical type definitions live here — no business logic, just data structures and serialization.
+
+### evaporchain-consensus-types
+Consensus-types extracted from `evaporchain-consensus` so the browser-side light-client SDK can depend on them without transitively pulling in RocksDB. Made the WASM light client viable.
 
 ### evaporchain-crypto
 Cryptographic primitives: BLAKE3 hashing, ML-DSA post-quantum digital signatures (key generation, signing, verification), Verkle trie implementation for state commitments, and Merkle Mountain Range (MMR) for nullifier accumulation. Provides the `Signer`/`Verifier` traits used by the execution layer.
@@ -61,10 +64,13 @@ Cryptographic primitives: BLAKE3 hashing, ML-DSA post-quantum digital signatures
 State management layer. Contains the `StateDB` trait (with `InMemoryStateDB` implementation), the **Evaporation Engine** (processes energy decay each epoch, transitions objects through Active → Grace → Ghost lifecycle), and the **Refresh Engine** (handles energy deposits and ghost resurrection). This is where thermodynamic decay is enforced.
 
 ### evaporchain-contracts
-Template-based smart contract system. Provides 8 pre-built contract templates (DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, DecayingDAO, TemporalContract) with a rule engine for custom behavior (triggers, conditions, actions). Each contract instance has its own energy and half-life — contracts themselves evaporate when unused.
+Template-based smart contract system. The original 8 hard-coded templates (DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, DecayingDAO, TemporalContract) coexist with the **30 first-class catalogue templates** registered via `evaporchain-app-templates` (see below). The rule engine drives custom behavior (triggers, conditions, actions). Each contract instance has its own energy and half-life — contracts themselves evaporate when unused.
+
+### evaporchain-app-templates + app-templates-{materialise, engine, fees, bind, receipt, eventlog, deploy}
+The catalogue pipeline. `evaporchain-app-templates` is the registry: stable u32 class IDs in `0x0001_0000..=0x0001_FFFF`, one `TemplateDescriptor` per registered primitive (currently 30: NFT lane × 6, Marketplace × 9, Wallet UX × 4, Consumer × 4, Cultural × 1, Paradigm × 4, Governance × 1, including the chain-as-keeper triplet — DEADMAN_SWITCH + SUBSCRIPTION_SERVICE + OPEN_BOUNTY). The `-materialise` crate parses `init_calldata` JSON into a `TypedInit` envelope; `-engine` dispatches that envelope to per-template `init_*.rs` modules (one per registered template); `-fees` computes the deploy-fee oracle quote; `-bind` enforces pre-deploy invariants (e.g. Bell-Oracle `threshold_milli >= 2000`); `-deploy` declares the required-keys table per class; `-receipt` and `-eventlog` close the deploy round-trip. Anti-regression: `every_catalogue_default_binds` walks the full catalogue at test-time and asserts every descriptor's default params bind cleanly.
 
 ### evaporchain-script
-The EvaporScript scripting language. A non-Turing-complete language with three components: **Parser** (lexer + recursive descent parser → AST), **Compiler** (AST → stack-based bytecode with method table), and **VM** (executes bytecode with gas metering, built-in functions, state management). Includes the `ScriptEngine` for deploying and managing script contracts with full lifecycle hook support.
+The EvaporScript scripting language (V2). A non-Turing-complete language with three components: **Parser** (lexer + recursive descent parser → AST; V2 added `<<`, `>>`, `*=`, `/=`, and paren-wrapped LHS in `if` conditions), **Compiler** (AST → stack-based bytecode with method table, 44 opcodes incl. `Op::Shl` / `Op::Shr`), and **VM** (executes bytecode with gas metering, built-in functions, state management; shift opcodes are mul-tier `GAS_SHIFT = 5`). Includes the `ScriptEngine` for deploying and managing script contracts with full lifecycle hook support (`on_grace` / `on_refresh` / `on_evaporate`).
 
 ### evaporchain-execution
 Transaction execution engine. The `SimpleExecutor` processes blocks sequentially: verifies signatures (ML-DSA), estimates gas, dispatches to the appropriate handler (transfer, create object, refresh, deploy/call contract, deploy/call script), runs evaporation at block end, and computes fees via a PID controller. Orchestrates both the template `ContractEngine` and the `ScriptEngine`.
@@ -97,9 +103,15 @@ Model Context Protocol server. Surfaces a node's RPC, block explorer, faucet, an
 Standalone PID fee controller crate. Tracks recent block gas utilization, adjusts `base_fee_floor` and `base_fee_ceiling` against a configurable `target_gas_utilization`, and feeds the result back into `execute_transfer` / script-call paths.
 
 ### evaporchain-da
-Data availability layer. 2D Reed-Solomon erasure coding over BLS12-381 field, namespaced Merkle tree (NMT, namespace 0 reserved), light-client sampling, BLS supermajority DA certificates. Block-production path now uses `build_block_da_inputs(txs)` so the `data_root` produced at proposal time matches the one served at verify time. Empty-block path tracked in audit backlog.
+Data availability layer. 2D Reed-Solomon erasure coding over BLS12-381 field, namespaced Merkle tree (NMT, namespace 0 reserved), light-client sampling, BLS supermajority DA certificates. Block-production path uses `build_block_da_inputs(txs)` so the `data_root` produced at proposal time matches the one served at verify time. DA-cert forgery class (Q1-Q3/Q8) closed via `verify_signatures_bound(registered)` — dedup by `validator_id`, bind `att.public_key == registered_key`, count registered stake (not attacker-supplied), strict `> 2T/3`. The empty-block `data_root` edge case from earlier audit backlog is now closed (see `docs/THREAT_MODEL.md` §6.1).
 
-## Substrate crates (60+ crates implementing the Tier-1 invention stack and launch-dApp lanes)
+### evaporchain-eth-bridge / evaporchain-nova-bridge / evaporchain-paymaster
+Ethereum bridge (state-proof bridging both ways), the T0.10 Path A Nova IVC → Groth16-on-BN254 verifier for L1 settlement, and the UserOp paymaster (multi-token-gas Option B) that lets users pay fees in any chain token while validators receive native EVAP under the hood.
+
+### evaporchain-light-client-wasm / evaporchain-crypto-wasm
+Browser-side WASM bindings. The light-client WASM (310 KB post-`wasm-pack`) verifies BFT BLS aggregate signatures + Verkle Pasta-curve Pedersen state proofs entirely in-browser via the pure-Rust `bls12_381` backend (10 cross-backend interop tests vs. native `blst`). The crypto WASM exposes BLAKE3 / ML-DSA / Verkle / MMR to JavaScript callers.
+
+## Substrate crates (~120 crates implementing the Tier-1 invention stack and launch-dApp lanes)
 
 These crates extend the core node with the protocol's novel primitives. They
 are independent crates that compose against the core types/state/consensus
