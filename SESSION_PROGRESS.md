@@ -6,6 +6,48 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-02 (post-midnight) — Phase B infrastructure: governance_defaults_for_chain seam
+
+**Focus:** even though Phase B needs operator decisions on 4 flags, the **infrastructure** for per-chain governance defaults can be shipped now. Bit-identical behaviour today; each operator decision becomes a one-line edit instead of a refactor.
+**Commits shipped:** 1 on main (`8731ff36`) — 158 insertions, 18 deletions.
+**What landed:**
+- **New free function `governance_defaults_for_chain(chain_id: &str) -> &'static [(&'static str, &'static str)]`** in `crates/evaporchain-consensus/src/tendermint.rs`. Extracts the 8-key default list (previously inline in `governance_flags_snapshot`) into a per-chain dispatcher.
+- **Dispatcher arms** for `chain_ids::MAINNET`, `TESTNET`, `DEVNET`, and a catch-all — all return the same `UNIVERSAL` slice today. The match arm structure is the seam where future divergences land (each operator decision becomes editing one return path inside one arm).
+- **`governance_flags_snapshot()` refactored** to call the new helper threading `&self.chain_id`. Bit-identical HashMap output today.
+- **5 new unit tests** in `governance_defaults_per_chain_tests`:
+  - `universal_default_set_is_exactly_eight_keys` — slice-length anti-regression
+  - `every_canonical_chain_id_resolves_today` — pin each canonical-id arm
+  - `mainnet_matches_universal_today` — **Phase B status pin** with inline comments instructing future operator to UPDATE the assertion (not delete) when divergence lands, so the diff makes the divergence visible
+  - `private_testnet_falls_through_to_universal` — catch-all arm pin (private testnets expect bit-compat with canonical chains)
+  - `known_doctrine_flags_have_documented_defaults` — pins the four operator-decision flags' current values against rename / re-typing
+**Empirical results on Mini-1 worktree (8731ff36):**
+- 5/5 new tests green
+- **997/997 existing consensus lib tests pass** (2 pre-existing ignored)
+- No regression — the refactor is byte-identical for every chain-id
+**Decisions made:**
+- **Free function, not method.** `governance_defaults_for_chain` is pure and easy to test in isolation. Methods on `TendermintConsensus` require constructing the full state struct.
+- **`&'static [(&'static str, &'static str)]` return type.** No allocation per call; the slices live in the binary's read-only segment. Critical since `governance_flags_snapshot` is called every snapshot query.
+- **Catch-all arm returns `UNIVERSAL`** rather than rejecting unknown chain-ids. Private testnets need governance defaults too; failing closed here would brick any non-canonical chain.
+- **Explicit `chain_ids::MAINNET`/TESTNET/DEVNET pattern arms even though they all return `UNIVERSAL` today**. A typo in any arm during a future divergence would fall through to the catch-all silently; explicit arms make the intent visible at the match site.
+
+### Phase B status (updated)
+
+| Phase B sub-item | Status |
+|---|---|
+| **Infrastructure seam** | ✅ `8731ff36` — `governance_defaults_for_chain` ready to fork per chain-id |
+| `block_source_mode` mainnet decision | 🟡 OPEN (fifo / antichain) |
+| `parent_acceptance_mode` mainnet decision | 🟡 OPEN (linear / mcc) |
+| `crooks_mev_settlement_mode` mainnet decision | 🟡 OPEN (observe / enforce) |
+| `lambda_fold_mode` mainnet decision | 🟡 OPEN (hash_chain / nova) |
+
+Each operator-decision item is now a one-line edit inside one match arm of `governance_defaults_for_chain`. Phase B is unblocked at the code-side; awaits operator calls.
+
+**Today's mainnet sprint commit total: 14 ship commits + 12 session entries = 26 commits.**
+
+**Cross-references:** commit `8731ff36`. Files: `crates/evaporchain-consensus/src/tendermint.rs`. Cross-links: MAINNET_LAUNCH.md §5, PARAMETERS.md §8.5. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-01 (final) — MAINNET_READINESS.md sprint header + T1.17/18/19 stale-status fix
 
 **Focus:** bring the lane board (last touched 2026-05-19) in sync with today's reality without restructuring its 60+ entries. Two updates: top-of-file sprint header + correction of three lanes that claimed "T3.1 ✅" against the same doc's later "T3.1 REGRESSED" note.
