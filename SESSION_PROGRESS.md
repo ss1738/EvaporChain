@@ -6,6 +6,55 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (evening) — Phase C: repo-root README refresh
+
+**Focus:** repo-root README is the first thing any GitHub visitor sees. Was last refreshed 2026-05-12 (PR #38 test/crate count drift sweep), 3 weeks before the audit-PR marathon + #469 P0 pack + the catalogue 24 → 30 sprint + the mainnet sprint kick-off. Visitors form their first impression of project maturity + momentum from this doc; staleness misrepresents both.
+**Commits shipped:** 1 on main (`6abce250`) — **50 insertions, 19 deletions**.
+**What landed:**
+- **§Status header reframed**: "Status: Testnet" → "Status: Mainnet Sprint In Flight · Public Devnet Live", with the live devnet URL (`http://89.167.52.40:8099`) called out as a discoverable artefact + cross-link to MAINNET_LAUNCH.md.
+- **§Status checklist**: crate count 147 → 163 directories (141 active workspace members). "8 templates" → "30 first-class catalogue templates + 46 .es reference contracts". "EvaporScript" → "EvaporScript V2". Three new top-level bullets: AUDIT_2026_05_17 closure trail summary + cross-link, #469 P0 launch-blocker pack, chain-as-keeper escrow triplet. Open item "Public testnet deployment" → "Mainnet launch" with the three operator-decision lanes explicitly listed.
+- **§Connect-to-Public-Devnet** replaces §Connect-to-Public-Testnet: "Coming soon" (contradicted by live devnet) → 4 curl examples against the live endpoint.
+- **§Documentation** split into "Read-this-first" (5 entries with explicit audience tags — SPEC/MAINNET_LAUNCH/AUDIT_SCOPE/THREAT_MODEL/RUN_A_NODE) and "Reference" (with 4 new entries: CRYPTO_SPEC, TOKENOMICS, GENESIS_CEREMONY, VALIDATOR_ONBOARDING, BUG_BOUNTY).
+- **§Technical Stack** smart-contracts row: 8 → 30 catalogue + 46 .es.
+- **§Crate Map** intro + inline comment refreshed.
+- **§Test Coverage**: 147 → 141 active; added Coq + TLA+ + 300+ TS counts; mentioned the every_catalogue_default_binds anti-regression gate.
+
+No technical claims changed; every line is HEAD-true as of 2026-06-01.
+
+### Phase C doc-refresh quintet now complete
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| `README.md` (repo root) | Status + checklist + dev-net live + docs split | `6abce250` |
+| `docs/SPEC.md` (one-pager) | Status + Hardening + What's-open + Where-to-go-next | `f87554e9` |
+| `docs/AUDIT_SCOPE.md` (engagement) | header/§2/§6/§7/§10 | `3537c32e` |
+| `docs/THREAT_MODEL.md` (risk surface) | §6.1 closures + §8 cross-links | `8f899eda` |
+| `docs/RUN_A_NODE.md` (operator) | --mainnet section + cross-links | `f54880a0` |
+
+**An external visitor's reading path is now coherent end-to-end:** README → SPEC → (by audience) AUDIT_SCOPE / THREAT_MODEL / MAINNET_LAUNCH / RUN_A_NODE. Every transition is a clickable cross-link; every doc accurately describes HEAD; every refresh dated 2026-06-01.
+
+### Mainnet sprint state (end of 2026-06-01 evening)
+
+| Phase | Item | Status | Commit |
+|---|---|---|---|
+| A | chain-id constants + MAINNET_LAUNCH playbook | ✅ | `fa426c72` |
+| C | AUDIT_SCOPE.md refresh | ✅ | `3537c32e` |
+| C | RUN_A_NODE.md cross-links | ✅ | `f54880a0` |
+| C | THREAT_MODEL.md refresh | ✅ | `8f899eda` |
+| C | SPEC.md refresh | ✅ | `f87554e9` |
+| C | Production block explorer | ✅ | `2d29caa8` |
+| C | README.md refresh | ✅ | `6abce250` |
+| C | BUG_BOUNTY.md go-live | Operator decision (§10 of that doc) |  |
+| C | validator-analytics mainnet polish | Deferred (premature — no validators on devnet until T0.6) |  |
+| B | governance-flag mainnet defaults | Open — needs 4 operator calls |  |
+| D | ETH bridge + paymaster production config | Operator-blocked |  |
+
+**Today's mainnet sprint commit total: 7 ship commits + 5 session-progress entries = 12 commits**.
+
+**Cross-references:** commit `6abce250`. Files: `README.md`. Cross-links: SPEC.md, MAINNET_LAUNCH.md, AUDIT_SCOPE.md, THREAT_MODEL.md, RUN_A_NODE.md, TOKENOMICS.md, GENESIS_CEREMONY.md, VALIDATOR_ONBOARDING.md, BUG_BOUNTY.md.
+
+---
+
 ## 2026-06-01 (early evening) — Phase C: block-explorer production upgrade
 
 **Focus:** the public-facing block-explorer dApp was a 232-LOC live block stream. For mainnet readiness it needed chain-id awareness, a network-health panel, and search-by-height. Ship those three as a tight focused upgrade (~140 LOC addition), no scope creep into a separate explorer.
