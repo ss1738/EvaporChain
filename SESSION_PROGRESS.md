@@ -6,6 +6,49 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (late afternoon) — Phase C continues: SPEC.md one-pager refresh
+
+**Focus:** complete the audit-prep doc refresh quartet. SPEC.md is the skim-readable summary external readers hit first; was last refreshed 2026-05-11 and 3 weeks stale on crate counts + closure list.
+**Commits shipped:** 1 on main (`f87554e9`).
+**What landed (kept tight — doc is intentionally one-page):**
+- Last-refresh date 2026-05-11 → 2026-06-01.
+- Crate count "147 (16 core + 131 substrate)" → "163 directories (141 active workspace members + 2 excluded WASM crates)".
+- Added: 30 catalogue templates + `every_catalogue_default_binds` anti-regression gate + Coq/TLA+ status.
+- Hardening paragraph expanded to cover the AUDIT_2026_05_17 trail (Verkle DST CR-1/2/3, VRF chain-id-scoping H-1, address-derivation DST H-2, MMR validation H-3, non-validator BLS PoP H-4, DA-cert forgery Q1-Q3/Q8, strict-quorum Q4, antichain stake-weight Q5, DA sampler binding Q6, StateProof DST Q7, Nova IVC decay L0-A) + #469 P0 pack (PRIV-001/002, DA-001, VM-001, API-001, ECON-001), with cross-link to AUDIT_SCOPE.md §6.2/6.3 for per-finding detail.
+- "What's still open" refreshed: Block-STM contention path removed (closed), empty-block data_root removed (closed), GHOST-A + CONS-A added as the remaining paper-drift / governance items per THREAT_MODEL §6.1.
+- "Distance to mainnet" reframed around the three lanes (external audit T0.12, operational soak + ceremony, ship-side polish) with cross-link to MAINNET_LAUNCH.md.
+- "Where to go next" cross-links converted to clickable form; 5 new rows added (MAINNET_LAUNCH.md, AUDIT_SCOPE.md, BUG_BOUNTY.md, TOKENOMICS.md, GENESIS_CEREMONY.md, VALIDATOR_ONBOARDING.md); stale `audit/end_to_end_audit_2026_04_27.md` reference replaced with AUDIT_2026_05_17.md + note that the running closure trail lives in CHANGELOG.md + SESSION_PROGRESS.md.
+
+### Phase C audit-prep doc quartet now complete
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| AUDIT_SCOPE.md | header/structure/§6/§7/§10 | `3537c32e` |
+| RUN_A_NODE.md | --mainnet description + Mainnet Launch section | `f54880a0` |
+| THREAT_MODEL.md | §6.1 closures + §8 cross-links | `8f899eda` |
+| SPEC.md | Status + Hardening + What's-open + Where-to-go-next | `f87554e9` |
+
+The four audit-prep docs an auditor reads first all reference each other and accurately describe HEAD. **Auditor-onboarding doc loop is closed.**
+
+### Mainnet sprint state
+
+| Phase | Item | Status |
+|---|---|---|
+| A | chain-id constants + MAINNET_LAUNCH playbook | ✅ `fa426c72` |
+| C | AUDIT_SCOPE.md refresh | ✅ `3537c32e` |
+| C | RUN_A_NODE.md cross-links | ✅ `f54880a0` |
+| C | THREAT_MODEL.md refresh | ✅ `8f899eda` |
+| C | SPEC.md refresh | ✅ `f87554e9` |
+| C | BUG_BOUNTY.md go-live | Operator decision (§10 of that doc) |
+| C | Production block explorer | Open |
+| C | validator-analytics mainnet polish | Open |
+| B | governance-flag mainnet defaults | Open — needs 4 operator calls |
+| D | ETH bridge + paymaster production config | Operator-blocked |
+
+**Cross-references:** commit `f87554e9`. Files: `docs/SPEC.md`. Cross-links: MAINNET_LAUNCH.md, AUDIT_SCOPE.md, THREAT_MODEL.md, BUG_BOUNTY.md, TOKENOMICS.md, GENESIS_CEREMONY.md, VALIDATOR_ONBOARDING.md, AUDIT_2026_05_17.md.
+
+---
+
 ## 2026-06-01 (afternoon) — Mainnet sprint, phase C continues: RUN_A_NODE + THREAT_MODEL refresh
 
 **Focus:** continue Phase C audit-prep + docs polish. Two ships in this entry, parallel to the AUDIT_SCOPE.md refresh.
