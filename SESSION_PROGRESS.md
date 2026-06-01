@@ -6,6 +6,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-02 (late post-midnight) — EVAPORSCRIPT.md V2 operators documented
+
+**Focus:** the language reference was verified 2026-05-17 against vm.rs but the V2 operators shipped 2026-05-31 during the catalogue sprint (SAP V2 + MnemoChain V2 rewrites). Exactly one cycle stale.
+**Commits shipped:** 1 on main (`0f57281f`) — 41 insertions, 24 deletions.
+**What landed:**
+- **Top-of-section V1/V2 versioning paragraph**: V2 is a strict superset; explains the SAP/MnemoChain motivation (integer-truncated halving in-language).
+- **New §Bitwise / Shift (V2)**: documents `<<` and `>>` with runtime `shift < 64` guard + `GAS_SHIFT = 5` mul-tier cost. Doctrine note that `>>` is the integer-truncation halving operator matching `energy_at_epoch` semantics exactly. Cross-links sap.es + mnemochain.es reference contracts with cargo pilots verifying VM behaviour.
+- **§Comparison V2 parser note**: paren-LHS in `if` conditions now parses (V1 required rewrite). References deadman_switch.es.
+- **§Assignment: new `*=` and `/=` rows** with V2 version tag. Note that V2 compound-assign for shifts (`<<=`, `>>=`) is NOT supported; use explicit form. Cross-links mnemochain.es.
+- All V1 entries unchanged; new "Version" column makes back-compat explicit (a V1 contract still compiles + runs on the V2 VM).
+
+**Why this matters:** developers reading EVAPORSCRIPT.md to write new contracts would have hit a wall on three V2 features (shifts, compound-assigns, paren-LHS). The doc now matches what the parser/compiler/VM actually accept.
+
+**Today's mainnet sprint commit total: 15 ship commits + 13 session entries = 28 commits.**
+
+**Cross-references:** commit `0f57281f`. Files: `docs/EVAPORSCRIPT.md`. Cross-links to reference contracts: sap.es, mnemochain.es, deadman_switch.es. Cargo pilots: subscription_pilot.rs, mortal_message_pilot.rs, mortal_nft_pilot.rs, bounty_pilot.rs, deadman_switch_pilot.rs.
+
+---
+
 ## 2026-06-02 (post-midnight) — Phase B infrastructure: governance_defaults_for_chain seam
 
 **Focus:** even though Phase B needs operator decisions on 4 flags, the **infrastructure** for per-chain governance defaults can be shipped now. Bit-identical behaviour today; each operator decision becomes a one-line edit instead of a refactor.
