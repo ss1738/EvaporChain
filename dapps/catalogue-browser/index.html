@@ -22,11 +22,11 @@
     <div class="max-w-6xl mx-auto px-6 py-5 flex items-baseline gap-4">
       <h1 class="text-xl font-semibold tracking-tight">Template Catalogue</h1>
       <span class="text-xs text-slate-500">
-        29 templates · 7 lanes · 100% backed by reference .es contracts
+        30 templates · 7 lanes · 100% backed by reference .es contracts
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 29</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 30</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,7 +35,7 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">29 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">30 shown</span>
     </div>
   </header>
 
@@ -144,6 +144,9 @@
       { id: '0x0001_0203', name: 'Singh-Lineage (Inheritance Policy)', lane: 'Wallet UX', icon: '🌳',
         crate: 'evaporchain-singh-lineage', src: 'singh_lineage.es', dapp: null,
         desc: "Crypto solves inheritance — graduated dormancy thresholds (90d → 25%, 180d → 50%, 365d → 100%)." },
+      { id: '0x0001_0204', name: 'Multisig (One-Decision-Per-Contract)', lane: 'Wallet UX', icon: '🔏',
+        crate: 'evaporchain-multisig', src: 'multisig.es', dapp: 'multisig',
+        desc: "One contract = one decision. EvaporChain inverts Gnosis-Safe-style proposal maps: the contract IS the proposal. Owner adds signers + sets threshold pre-propose, seals with propose(action); signers each sign once; anyone may execute() once threshold reached. Unexecuted at evaporation = expired (decision lapsed, no resurrection)." },
 
       { id: '0x0001_0301', name: 'ChildKey (Singh Letter)', lane: 'Consumer', icon: '✉',
         crate: 'evaporchain-childkey', src: 'childkey.es', dapp: 'childkey',

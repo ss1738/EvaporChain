@@ -1,0 +1,10 @@
+{
+  "name": "multisig",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Multisig typed client — chain client for contracts/evaporscript/multisig.es. One contract = one decision. EvaporChain inverts the Gnosis-Safe-style proposal-map architecture: the contract IS the proposal; multiple decisions = multiple contracts.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

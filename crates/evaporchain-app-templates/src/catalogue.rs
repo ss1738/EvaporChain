@@ -204,6 +204,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-singh-lineage",
         )
         .expect("Lineage descriptor is constant"),
+        TemplateDescriptor::new(
+            MULTISIG_PROPOSAL,
+            "Multisig (One-Decision-Per-Contract)",
+            "Wallet UX",
+            json!({"initial_energy": 1000, "half_life": 200, "default_threshold": 2}),
+            "One contract = one decision. EvaporChain inverts the Gnosis-Safe-style proposal-map architecture: the contract IS the proposal; multiple decisions = multiple contracts deployed independently and evaporating independently. Owner adds signers + sets threshold pre-propose, seals with propose(action). Signers each sign once. Anyone may execute() once signature_count >= threshold. Unexecuted at evaporation = expired (the decision lapsed; no follow-up vote resurrects it). Reference contract: contracts/evaporscript/multisig.es; cargo pilot at crates/evaporchain-script/tests/multisig_pilot.rs.",
+            "evaporchain-multisig",
+        )
+        .expect("Multisig descriptor is constant"),
         // ── Consumer launch lane ───────────────────────────────────
         TemplateDescriptor::new(
             CHILDKEY_LETTER,
@@ -383,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_29_templates() {
+    fn catalogue_lists_30_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -397,10 +406,12 @@ mod tests {
         // EvaporScript pilot — into the Consumer lane (2026-06-01);
         // 29 promoted Open Bounty into the Marketplace lane (the third
         // chain-as-keeper escrow primitive, alongside DeadMan Switch
-        // and Subscription). (Mayfly + Singh-Posthuma were ALREADY in
-        // the catalogue under different framings.)
+        // and Subscription); 30 promoted Multisig into the Wallet UX
+        // lane (one-decision-per-contract doctrine inversion of
+        // Gnosis-Safe-style proposal maps). (Mayfly + Singh-Posthuma
+        // were ALREADY in the catalogue under different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 29);
+        assert_eq!(cat.len(), 30);
     }
 
     #[test]

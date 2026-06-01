@@ -116,6 +116,17 @@ pub const OPEN_BOUNTY: TemplateClass = TemplateClass(0x0001_010A);
 pub const SINGH_TRIAGE_CONTRACT: TemplateClass = TemplateClass(0x0001_0201);
 pub const SINGH_HEARTBEAT_PULSE: TemplateClass = TemplateClass(0x0001_0202);
 pub const SINGH_LINEAGE_POLICY: TemplateClass = TemplateClass(0x0001_0203);
+/// Multisig proposal — one contract, one decision. Doctrine inversion
+/// of Gnosis-Safe-style proposal-map architectures: the contract IS
+/// the proposal, multiple decisions = multiple contracts evaporating
+/// independently. Owner registers signers + threshold pre-propose,
+/// seals with `propose(action)`; signers sign once each; anyone may
+/// `execute()` once `signature_count >= threshold`. Unexecuted at
+/// evaporation = `expired = true` (the decision lapsed; no follow-up
+/// vote resurrects it). Reference contract:
+/// `contracts/evaporscript/multisig.es`. Verified cargo pilot:
+/// `crates/evaporchain-script/tests/multisig_pilot.rs`.
+pub const MULTISIG_PROPOSAL: TemplateClass = TemplateClass(0x0001_0204);
 
 // Consumer launch lane
 pub const CHILDKEY_LETTER: TemplateClass = TemplateClass(0x0001_0301);
@@ -190,6 +201,7 @@ mod tests {
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
+            MULTISIG_PROPOSAL,
             CHILDKEY_LETTER,
             MNEMOCHAIN_CARD,
             WITNESSFIT_STREAK,
@@ -227,6 +239,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&OPEN_BOUNTY.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
+        assert!((0x0001_0200..=0x0001_02FF).contains(&MULTISIG_PROPOSAL.0));
         // Consumer: 0x0001_0300..
         assert!((0x0001_0300..=0x0001_03FF).contains(&CHILDKEY_LETTER.0));
         assert!((0x0001_0300..=0x0001_03FF).contains(&MORTAL_MESSAGE_PILOT.0));

@@ -111,6 +111,11 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // marketplace tier. Open submission map is the cost driver
         // but its growth is gas-paid per submit() at the call layer.
         TypedInit::OpenBounty(_) => SURCHARGE_MARKETPLACE,
+        // Multisig — Wallet UX-lane peer of SinghTriage / SinghHeartbeat
+        // / SinghLineage. Modest state (two presence maps + counters +
+        // proposal-action string + lifecycle flags); the wallet-attached
+        // tier captures the per-decision footprint.
+        TypedInit::Multisig(_) => SURCHARGE_WALLET_UX,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

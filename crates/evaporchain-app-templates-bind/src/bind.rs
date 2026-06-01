@@ -485,6 +485,22 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("OpenBounty", "default_reward must be > 0"));
             }
         }
+        // Multisig — energy, half_life, default_threshold all > 0.
+        // Zero default_threshold means the wallet pre-populates 0 (the
+        // .es contract's set_threshold rejects t==0 at runtime). The
+        // contract also rejects t > signer_count, but that check needs
+        // the runtime signer set so it can't be pre-flighted here.
+        TypedInit::Multisig(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("Multisig", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("Multisig", "half_life must be > 0"));
+            }
+            if c.default_threshold == 0 {
+                return Err(invariant("Multisig", "default_threshold must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))
