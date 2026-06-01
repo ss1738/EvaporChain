@@ -20,7 +20,7 @@ use evaporchain_app_templates::{
         OPEN_BOUNTY, REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION,
         SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY,
         SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT,
-        SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE, WITNESSFIT_STREAK,
+        SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE, TIME_LOCK, WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -76,6 +76,12 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
             "period_length",
         ],
         c if c == OPEN_BOUNTY => &["initial_energy", "half_life", "default_reward"],
+        c if c == TIME_LOCK => &[
+            "initial_energy",
+            "half_life",
+            "default_amount",
+            "default_lock_window",
+        ],
         // ── Wallet UX lane ────────────────────────────────────────
         c if c == SINGH_TRIAGE_CONTRACT => &["horizon_today", "horizon_tomorrow", "horizon_week"],
         c if c == SINGH_HEARTBEAT_PULSE => &[

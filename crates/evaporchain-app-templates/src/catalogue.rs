@@ -150,6 +150,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("OpenBounty descriptor is constant"),
         TemplateDescriptor::new(
+            TIME_LOCK,
+            "Time Lock (Chain-Keeper Vault)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "half_life": 100, "default_amount": 1000, "default_lock_window": 1000}),
+            "Time-locked vault: grantor locks `amount` for `beneficiary` until `unlock_epoch`. Grantor may revoke pre-unlock; beneficiary may claim post-unlock; once unlock_epoch passes, the grantor's clawback is closed (no rug-pull on the now-open claim window). If the contract evaporates with the lock still active (never claimed, never revoked), on_evaporate flips forfeit_signaled=true and records unclaimed_at_evaporate so the off-chain coordinator returns the amount to the grantor. The runtime is the deadline enforcer — no off-chain reaper polls the unlock epoch. Doctrinally the fourth chain-as-keeper Marketplace primitive alongside DeadMan Switch + Subscription + Open Bounty; surface is time-locked vault (escrow over an epoch boundary). Reference contract: contracts/evaporscript/time_lock.es.",
+            "evaporchain-time-lock",
+        )
+        .expect("TimeLock descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -392,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_30_templates() {
+    fn catalogue_lists_31_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -408,10 +417,13 @@ mod tests {
         // chain-as-keeper escrow primitive, alongside DeadMan Switch
         // and Subscription); 30 promoted Multisig into the Wallet UX
         // lane (one-decision-per-contract doctrine inversion of
-        // Gnosis-Safe-style proposal maps). (Mayfly + Singh-Posthuma
-        // were ALREADY in the catalogue under different framings.)
+        // Gnosis-Safe-style proposal maps); 31 promoted Time Lock into
+        // the Marketplace lane as the fourth chain-as-keeper escrow
+        // primitive (escrow over an epoch boundary, 2026-06-02).
+        // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
+        // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 30);
+        assert_eq!(cat.len(), 31);
     }
 
     #[test]

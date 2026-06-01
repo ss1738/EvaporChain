@@ -1,0 +1,10 @@
+{
+  "name": "time-lock",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "TimeLock typed client — chain client for contracts/evaporscript/time_lock.es. Locks `amount` for `beneficiary` until `unlock_epoch`; grantor may revoke pre-unlock; beneficiary may claim once unlock reached; on_evaporate flips forfeit_signaled if never claimed. The runtime is the deadline enforcer; no off-chain reaper needed.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

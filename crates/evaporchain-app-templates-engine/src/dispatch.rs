@@ -33,7 +33,7 @@ use crate::{
     init_multisig, init_open_bounty, init_refresh_market, init_sap, init_sbav, init_scl, init_sddc,
     init_sfsv, init_sgb, init_shlm, init_singh_heartbeat, init_singh_lineage, init_singh_migrant,
     init_singh_posthuma, init_singh_resonance, init_singh_sabi, init_singh_triage, init_ssm,
-    init_subscription, init_witnessfit,
+    init_subscription, init_time_lock, init_witnessfit,
 };
 
 /// Typed init configs — one variant per registered template. The
@@ -71,6 +71,7 @@ pub enum TypedInit {
     MortalMessage(init_mortal_message::InitConfig),
     OpenBounty(init_open_bounty::InitConfig),
     Multisig(init_multisig::InitConfig),
+    TimeLock(init_time_lock::InitConfig),
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -173,6 +174,8 @@ pub fn materialise(instr: &MaterialiseInstruction) -> Result<TypedInit, EngineEr
         TypedInit::OpenBounty(init_open_bounty::parse(cd).map_err(parse_err)?)
     } else if cls == MULTISIG_PROPOSAL {
         TypedInit::Multisig(init_multisig::parse(cd).map_err(parse_err)?)
+    } else if cls == TIME_LOCK {
+        TypedInit::TimeLock(init_time_lock::parse(cd).map_err(parse_err)?)
     } else {
         return Err(EngineError::UnknownTemplate(cls.0));
     };

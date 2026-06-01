@@ -110,6 +110,18 @@ pub const SUBSCRIPTION_SERVICE: TemplateClass = TemplateClass(0x0001_0109);
 /// contract: `contracts/evaporscript/bounty.es`. Verified cargo
 /// pilot: `crates/evaporchain-script/tests/bounty_pilot.rs`.
 pub const OPEN_BOUNTY: TemplateClass = TemplateClass(0x0001_010A);
+/// Time Lock — locks `amount` for `beneficiary` until `unlock_epoch`;
+/// grantor may revoke before unlock; beneficiary may claim once
+/// unlock reached; on_evaporate flips `forfeit_signaled = true` if
+/// never claimed and never revoked, so the off-chain coordinator
+/// returns the locked amount to the grantor. The runtime is the
+/// deadline enforcer — no off-chain reaper polls the unlock epoch.
+/// Doctrinally the fourth chain-as-keeper Marketplace primitive
+/// alongside DeadMan Switch + Subscription + Open Bounty; surface is
+/// time-locked vault (escrow over an epoch boundary). Reference
+/// contract: `contracts/evaporscript/time_lock.es`. Verified cargo
+/// pilot: `crates/evaporchain-script/tests/time_lock_pilot.rs`.
+pub const TIME_LOCK: TemplateClass = TemplateClass(0x0001_010B);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -198,6 +210,7 @@ mod tests {
             DEADMAN_SWITCH,
             SUBSCRIPTION_SERVICE,
             OPEN_BOUNTY,
+            TIME_LOCK,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -237,6 +250,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&DEADMAN_SWITCH.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&SUBSCRIPTION_SERVICE.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&OPEN_BOUNTY.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&TIME_LOCK.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         assert!((0x0001_0200..=0x0001_02FF).contains(&MULTISIG_PROPOSAL.0));

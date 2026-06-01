@@ -116,6 +116,13 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // proposal-action string + lifecycle flags); the wallet-attached
         // tier captures the per-decision footprint.
         TypedInit::Multisig(_) => SURCHARGE_WALLET_UX,
+        // Time Lock — Marketplace-lane chain-as-keeper vault (escrow
+        // over an epoch boundary). Same surcharge as its lane peers
+        // (Sddc / Sfsv / Shlm / Scl / Sap / Deadman / Subscription /
+        // OpenBounty); the state shape (grantor + beneficiary + amount
+        // + unlock_epoch + lifecycle flags + forfeit accumulator) sits
+        // squarely in the marketplace tier.
+        TypedInit::TimeLock(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

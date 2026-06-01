@@ -501,6 +501,28 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("Multisig", "default_threshold must be > 0"));
             }
         }
+        // Time Lock — initial_energy + half_life + default_amount +
+        // default_lock_window all > 0. Zero default_amount means the
+        // wallet pre-populates a lock of nothing (the .es contract
+        // rejects amount==0 at set_terms runtime); zero default_lock_
+        // window means the wallet would compute unlock_epoch == current,
+        // failing the contract's `unlock > epoch` guard at runtime.
+        // Pre-flight rejection here saves operators a confusing tx
+        // round-trip on the typical wallet-form happy path.
+        TypedInit::TimeLock(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("TimeLock", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("TimeLock", "half_life must be > 0"));
+            }
+            if c.default_amount == 0 {
+                return Err(invariant("TimeLock", "default_amount must be > 0"));
+            }
+            if c.default_lock_window == 0 {
+                return Err(invariant("TimeLock", "default_lock_window must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))
