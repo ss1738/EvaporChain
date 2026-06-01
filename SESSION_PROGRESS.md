@@ -6,6 +6,43 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (mid-morning) — Multisig full atomic arc (30th template, heaviest single ship)
+
+**Focus:** ship the multisig primitive across every layer in a single atomic commit — typed dApp client + catalogue promotion + browser sync + bind/fees/required-keys + landing-page count. Heaviest single-commit ship of the session; demonstrates the established cadence can absorb multi-layer work atomically.
+**Commits shipped:** 1 on main (`8296c321`) — **14 files, 661 insertions**.
+**Catalogue is now 30 templates.** Wallet UX lane up to 4 entries.
+**Doctrine claim:** one contract = one decision. EvaporChain inverts the Gnosis-Safe-style proposal-map architecture: the contract IS the proposal. Multiple decisions = multiple contracts, deployed independently and evaporating independently. An unexecuted multisig at evaporation flips `expired = true` — the decision lapsed; no follow-up resurrects it.
+**What landed in one commit:**
+| Layer | Change |
+|---|---|
+| dApp client | `dapps/multisig/{package.json, src/contract.ts, src/client.ts, test/}` — 6 mutators + 8 views + auth-injected Tx wrappers. **12/12 TS tests pass** locally including 3 pinned-invariant tests (set_threshold rejects t > signer_count; sign() requires registered-signer + no double-sign; on_evaporate flips expired only if not executed). |
+| Class registry | New `MULTISIG_PROPOSAL: TemplateClass(0x0001_0204)` in Wallet UX lane. |
+| Catalogue | New TemplateDescriptor `{initial_energy: 1000, half_life: 200, default_threshold: 2}`. Count test 29 → 30. |
+| Engine init module | `init_multisig.rs` (new) with `{initial_energy, half_life, default_threshold}`. |
+| Engine dispatch | New `TypedInit::Multisig` variant + dispatch arm. |
+| Fees oracle | New `TypedInit::Multisig(_) => SURCHARGE_WALLET_UX` arm. |
+| Bind invariants | New arm: `initial_energy / half_life / default_threshold all > 0`. The .es contract enforces `t > 0 + t <= signer_count` at runtime; the signer-count check needs runtime state so it can't pre-flight. |
+| Required keys | New row listing the 3 required keys. |
+| Catalogue-browser | New entry in class-id order; display strings 29 → 30. |
+| Landing page | Catalogue-count 29 → 30. |
+**Empirical results on Mini-1 worktree (`8296c321`):** 220+ tests pass across 5 template crates, 0 failures. The `every_catalogue_default_binds` test continues green for all 30 templates. Worktree cleaned up.
+**Decisions made:**
+- **Single atomic commit for the full arc.** Previous typed-client + catalogue-promotion work was done in separate commits across sessions; this commit demonstrates the workflow scales to one atomic ship per primitive once the pattern is well-rehearsed. Removes the "intermediate states" where the catalogue references a typed client that doesn't exist yet.
+- **Wallet UX lane**, not Marketplace or Governance. The doctrine framing ("the contract IS the proposal") makes multisig a wallet-attached primitive — the dApp's wallet manages signer keys and the per-decision lifecycle. Putting it in Marketplace (with Sddc / Sfsv) would obscure the wallet-as-vehicle relationship; Governance is for parameter votes, not per-tx authorisation.
+- **`default_threshold` in init**, not pure-runtime. Same justification as Subscription's `period_amount` and OpenBounty's `default_reward`: wallet form needs a sensible default; actual on-chain value is locked at set_threshold() runtime call.
+**Today's totals (overnight roll continues):** 18 commits on main. Reference contracts 17 → 18, catalogue 24 → 30 (6 promotions this session), landing-page lenses 4 → 6. Every surface — Rust registry, catalogue-browser, landing page — agrees at 30.
+**Six catalogue promotions this session:**
+1. DeadMan Switch — Marketplace · chain-as-keeper secret release
+2. Subscription — Marketplace · chain-as-keeper recurring payment
+3. Mortal NFT — NFT · the headline decaying-NFT claim
+4. Mortal Message — Consumer · the canonical EvaporScript pilot
+5. Open Bounty — Marketplace · chain-as-keeper task escrow
+6. **Multisig — Wallet UX · one-decision-per-contract**
+**What's next:** the atomic-arc workflow is proven. Remaining natural picks: more atomic arcs (`time_lock`, `vesting_schedule`, `payment_split`, `oracle_feed`, `sealed_bid_auction`, `lottery` are all candidates); a new from-scratch contract; another simulator UI; or wallet deploy-form integration.
+**Cross-references:** commit `8296c321`. Files: 14 changed (4 new dApp files, 7 modified Rust crates, 2 modified browser/landing files, 1 new init module). Source: contracts/evaporscript/multisig.es. Cargo pilot: crates/evaporchain-script/tests/multisig_pilot.rs (pre-existing). Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-01 (morning) — Open Bounty catalogue promotion (29th template)
 
 **Focus:** promote `bounty.es` to the 29th formal catalogue template — completes the chain-as-keeper escrow triplet (DeadMan Switch + Subscription + OpenBounty) at the catalogue layer.
