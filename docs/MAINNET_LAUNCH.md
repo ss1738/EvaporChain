@@ -132,7 +132,9 @@ The node binary
 
 ## 5. Governance-flag defaults at launch
 
-The chain ships with these flag defaults (per `tendermint.rs::governance_flags_snapshot`):
+The chain ships with these flag defaults (resolved through
+`tendermint.rs::governance_defaults_for_chain(chain_id)`, called by
+`governance_flags_snapshot`):
 
 | Flag | Default | Mainnet decision needed before launch? |
 |---|---|---|
@@ -142,12 +144,52 @@ The chain ships with these flag defaults (per `tendermint.rs::governance_flags_s
 | `crooks_mev_settlement_mode` | `observe` | **Yes.** `enforce` settles MEV refunds on-chain. Observe-mode keeps the chain bit-compatible with pre-flag history but means no actual MEV refunds. Operator call before launch. |
 | `light_cone_state_branches_enabled` | `false` | No — keep `false` at launch; flip later via governance once soak data is in. |
 | `lambda_fold_mode` | `hash_chain` | **Yes.** `nova` switches to real Nova IVC accumulator. Operationally heavier; the conservative launch is `hash_chain`. Operator call. |
-| `cartel_alarm_mode` | (defaults from CHSH track) | Operator confirms with the doctrine team. |
-| `script_vm_mode` | (defaults from script track) | Operator confirms. |
+| `cartel_alarm_mode` | `observe` | Operator confirms with the doctrine team. |
+| `cross_epoch_churn_mode` | `observe` | Legacy count-only churn cap; flip later via governance once D7-Part2 lifecycle stabilises. |
+| `post_state_verify_mode` | `warn` | Per `POST_EXEC_STATE_VERIFICATION_PLAN.md` Phase 4 (lane T0.3). Flip to `enforce` post-soak. |
 
-These defaults can be flipped post-launch via the governance surface
+### 5.1 How to land a mainnet-specific default (Phase B)
+
+The dispatcher infrastructure is in place as of `8731ff36`. To diverge a
+flag's default for mainnet — without touching testnet/devnet defaults —
+edit one match arm:
+
+```rust
+// crates/evaporchain-consensus/src/tendermint.rs
+pub fn governance_defaults_for_chain(chain_id: &str) -> &'static [(&'static str, &'static str)] {
+    const UNIVERSAL: &[(&str, &str)] = &[ /* current 8 defaults */ ];
+
+    // After Phase B operator decisions land, the mainnet arm forks:
+    const MAINNET_DEFAULTS: &[(&str, &str)] = &[
+        ("fork_choice_mode", "mcc"),
+        ("parent_acceptance_mode", "linear"),     // ← change to "mcc" if decided
+        ("block_source_mode", "fifo"),            // ← change to "antichain" if decided
+        ("conservation_enforcement", "enforce"),
+        ("lambda_fold_mode", "hash_chain"),       // ← change to "nova" if decided
+        // ...
+    ];
+
+    match chain_id {
+        _ if chain_id == evaporchain_types::chain_ids::MAINNET => MAINNET_DEFAULTS,
+        _ => UNIVERSAL,
+    }
+}
+```
+
+The five tests in `governance_defaults_per_chain_tests` (same file) pin
+the current state. The `mainnet_matches_universal_today` test
+intentionally fails the moment mainnet diverges — its inline comments
+instruct the operator to UPDATE the assertion rather than delete the
+test, so the divergence is visible in the diff.
+
+### 5.2 Post-launch flag flips
+
+Defaults can be flipped post-launch via the governance surface
 (`POST /api/governance/param` + the doctrine's stake-quorum amendment
 process — see `docs/PARAMETERS.md` and the Mortal-DAO catalogue entry).
+The dispatcher above provides the *initial* state; governance overrides
+take precedence at runtime via the `governance_params` map carried in
+state.
 
 ## 6. What this playbook does NOT cover
 
