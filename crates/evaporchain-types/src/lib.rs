@@ -1,3 +1,4 @@
+pub mod chain_ids;
 pub mod emission;
 pub mod genesis;
 

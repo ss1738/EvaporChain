@@ -332,7 +332,7 @@ pub enum SnapshotAction {
 
         /// Chain id baked into the snapshot file. Verifiers reject
         /// snapshots whose chain_id doesn't match their own.
-        #[arg(long, default_value = "evaporchain-mainnet-1")]
+        #[arg(long, default_value = evaporchain_types::chain_ids::MAINNET)]
         chain_id: String,
     },
 
@@ -388,7 +388,7 @@ pub enum GenesisAction {
         output: String,
 
         /// Chain ID
-        #[arg(long, default_value = "evaporchain-testnet-1")]
+        #[arg(long, default_value = evaporchain_types::chain_ids::TESTNET)]
         chain_id: String,
 
         /// Total token supply
@@ -638,7 +638,7 @@ pub enum TestnetAction {
         #[arg(long, default_value = "4")]
         validators: u32,
         /// Chain id baked into the genesis config.
-        #[arg(long, default_value = "evaporchain-testnet-1")]
+        #[arg(long, default_value = evaporchain_types::chain_ids::TESTNET)]
         chain_id: String,
         /// Initial total supply (split equally among validators + faucet).
         #[arg(long, default_value = "1000000000")]

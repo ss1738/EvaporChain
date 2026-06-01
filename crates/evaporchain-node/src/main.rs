@@ -1300,7 +1300,7 @@ fn parse_args() -> NodeArgs {
         .position(|a| a == "--chain-id")
         .and_then(|i| args.get(i + 1))
         .cloned()
-        .unwrap_or_else(|| "evaporchain-testnet-1".to_string());
+        .unwrap_or_else(|| evaporchain_types::chain_ids::TESTNET.to_string());
 
     let allowed_peers: Vec<String> = args
         .iter()

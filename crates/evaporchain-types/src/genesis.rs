@@ -5,7 +5,7 @@
 //! and consensus settings. The genesis config is serializable to/from JSON for
 //! easy distribution.
 
-use crate::{AccountAddress, Energy, Epoch, HalfLife, ObjectId};
+use crate::{chain_ids, AccountAddress, Energy, Epoch, HalfLife, ObjectId};
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────── Chain Parameters ────────────────────────────────────
@@ -43,7 +43,7 @@ pub struct ChainParams {
 impl Default for ChainParams {
     fn default() -> Self {
         Self {
-            chain_id: "evaporchain-mainnet-1".to_string(),
+            chain_id: chain_ids::MAINNET.to_string(),
             block_interval_ms: 2000,
             grace_period: 5,
             block_gas_limit: 500_000,
@@ -59,7 +59,7 @@ impl ChainParams {
     /// Testnet configuration with lower requirements.
     pub fn testnet() -> Self {
         Self {
-            chain_id: "evaporchain-testnet-1".to_string(),
+            chain_id: chain_ids::TESTNET.to_string(),
             block_interval_ms: 1000,
             grace_period: 5,
             block_gas_limit: 500_000,
