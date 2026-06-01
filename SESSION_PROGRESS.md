@@ -6,6 +6,43 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (early evening) — Phase C: block-explorer production upgrade
+
+**Focus:** the public-facing block-explorer dApp was a 232-LOC live block stream. For mainnet readiness it needed chain-id awareness, a network-health panel, and search-by-height. Ship those three as a tight focused upgrade (~140 LOC addition), no scope creep into a separate explorer.
+**Commits shipped:** 1 on main (`2d29caa8`).
+**What landed:**
+1. **Chain-id badge** at top right, fetched from `/api/chain`. Doctrine-coded colours: MAINNET = bright rose ("you are on production"), TESTNET = amber, DEVNET = slate, unrecognised = yellow with warning ring (so operators notice a private testnet by colour, not by reading the name). Pill text shows `<lane> · <chain-id>`.
+2. **Network-health panel** — 6 cards under the existing status bar: peers, finalised height, finality lag (colour-coded once > 100 blocks), active objects, ghost count, validator count. Pulled from `/api/network/health` alongside the existing chain epoch + last-block-age. Same poll cycle, no extra request.
+3. **Search-by-height** input with find + clear buttons. Resolves height → block via `/api/block/<n>`; pauses the live poll while showing the result; inline "resume live" link to return to the stream. Handles 404 with a useful message ("not in current history — this node prunes; try a recent height").
+
+Updated companion-dApp footer references: 30 templates (was 24), added deadman-vista + subscription-vista cross-links.
+
+**Empirical results:** smoke-tested locally on port 3030 (3000 still grabbed by another dev server per the existing CORS banner): served 200 OK, 19KB, 27 of the new structural markers present, JS parse-clean via `node:vm.Script`. Verified against live public devnet — chain-id pill shows `TESTNET · evaporchain-testnet-1`, health panel pulls real values, search-by-height 404s gracefully on pruned history.
+
+**Decisions made:**
+- **Chain-id colour-coding is doctrinally load-bearing.** MAINNET = rose is non-negotiable: an operator about to deploy or sign should see at a glance whether they're on production. Amber for testnet (still cautious), slate for devnet (relaxed), yellow-warning for unknown (private testnet — explicit).
+- **Search uses `/api/block/<n>` not `/api/blocks?height=`** — the latter silently ignores the parameter (this node only accepts `limit`). Single-block endpoint already exists and returns 404 cleanly.
+- **No scope creep into account-lookup / validator-list / tx-detail panels.** The existing dApp shape (single-page live stream with expandable block rows) is right for the public-facing surface; deeper investigation belongs in a separate ops dashboard (validator-analytics, which is the next Phase C item).
+
+### Phase C progress so far (today)
+
+| Item | Status | Commit |
+|---|---|---|
+| AUDIT_SCOPE.md refresh | ✅ | `3537c32e` |
+| RUN_A_NODE.md cross-links | ✅ | `f54880a0` |
+| THREAT_MODEL.md refresh | ✅ | `8f899eda` |
+| SPEC.md refresh | ✅ | `f87554e9` |
+| Production block explorer | ✅ | `2d29caa8` |
+| BUG_BOUNTY.md go-live | Operator decision (§10 of that doc) |  |
+| validator-analytics mainnet polish | Open |  |
+| docs/SPEC.md final pass | ✅ (rolled into f87554e9) |  |
+
+**Mainnet sprint commit total (today): 8 commits** (`fa426c72`, `3537c32e`, `f54880a0`, `8f899eda`, `f87554e9`, `2d29caa8` + 2 SESSION_PROGRESS entries).
+
+**Cross-references:** commit `2d29caa8`. Files: `dapps/block-explorer/index.html`. New endpoints exercised: `/api/chain` (added to poll loop), `/api/block/:number` (already wired chain-side, new client use).
+
+---
+
 ## 2026-06-01 (late afternoon) — Phase C continues: SPEC.md one-pager refresh
 
 **Focus:** complete the audit-prep doc refresh quartet. SPEC.md is the skim-readable summary external readers hit first; was last refreshed 2026-05-11 and 3 weeks stale on crate counts + closure list.
