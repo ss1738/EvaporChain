@@ -212,21 +212,41 @@ User → [ML-DSA Sign] → Transaction → [Gossip Network] → Validator Pool
 
 ### 6.1 Known Gaps (Pre-Mainnet)
 
+This table tracks the threat-model-level risks. The full per-finding audit
+closure trail (every CR-* / H-* / Q-* / GHOST-A / L0-A / CONS-A from
+AUDIT_2026_05_17 + the #469 P0 launch-blocker pack) lives at
+[`AUDIT_SCOPE.md`](AUDIT_SCOPE.md) §6.2 and §6.3.
+
 | Risk | Severity | Status |
 |------|----------|--------|
 | Slashing implementation | High | **Closed** — 10% equivocation slash + downtime jailing live in `evaporchain-consensus`; signed evidence path tested |
-| BLS rogue-key attack | Medium | **Closed** — proof-of-possession enforced at `add_validator()` and verified at genesis registration (`pop_verified=true`); see `validator_set::verify_pop` |
+| Slash redistribute conservation | High | **Closed** (#469 ECON-001) — slashed stake no longer over-credits the proposer due to integer-truncation rounding loss |
+| BLS rogue-key (validator path) | Medium | **Closed** — proof-of-possession enforced at `add_validator()` and verified at genesis registration (`pop_verified=true`); see `validator_set::verify_pop` |
+| BLS rogue-key (non-validator verify sites) | High | **Closed** (#414 / H-4) — `bls_portable::aggregate_verify` now requires per-key PoP precondition at every verify site (browser dApps, light clients, indexers) |
 | Encrypted mempool in production | Medium | **Closed** — AES-256-GCM commit-reveal mempool integrated end-to-end |
+| Shielded-tx privacy surface at v1 | High | **Closed** (#469 PRIV-001/002) — gated off at v1 via `SHIELDED_TX_DISABLED_V1` at mempool admission + all three executors. v1 ships without privacy txs; re-enabling is a future governance flag once the privacy stack has its own audit. |
 | DA-2D wiring drift | Medium | **Closed** — `data_root` derived from `build_block_da_inputs(txs)`, identical at proposal-time and serve-time |
+| DA-cert forgery class | Critical | **Closed** (#469 DA-001) — collapsed three DA-cert verifiers into `verify_signatures_bound(registered)`. Dedup by `validator_id`; bind `att.public_key == registered_key`; count registered stake (not attacker-supplied); strict `> 2T/3`. Closes AUDIT_2026_05_17 Q1-Q3 + Q8 in one helper. |
+| Tendermint quorum strictness | High | **Closed** (Q4) — strict `> 2T/3` now enforced at all hot-path call sites; previous `>= 2T/3` was a model/runtime asymmetry. |
+| DA sampler binding | High | **Closed** (Q6) — H7 Stage A `data_root` binding now live on consensus DA-sampling hot path via canonical `DASampler::build_da_sample_seed_v1`. |
+| Verkle DST drift (CR-1/2/3) | Critical | **Closed** — `EnergyNode::hash` + `EnergyVerkleTrie::verify` + `verify_multi` now share `VERKLE_LEAF_DST` / `VERKLE_INTERNAL_DST`. Non-existence-proof forgery via path-index drift closed by explicit `path_indices[level] != key[level]` check. |
+| Address-derivation DST | High | **Closed** (#413 / H-2) — `ADDRESS_DST = "evaporchain:address:v1\0"` applied at every site deriving `AccountAddress` from a public key. Pre-mainnet hard-fork. |
+| VRF chain-id-scoping | High | **Closed** (#407 / H-1) — `leader_vrf_input(height, round, chain_id)` binds chain_id; closes the same-key cross-chain leader-claim replay surface. |
+| MMR proof structural validation | High | **Closed** (H-3) — `MMRProof.mmr_size` structurally validated (leaf_count derivation, leaf_index bound, popcount peak count, height-based sibling count) before any hash work. |
+| Nova IVC running-total decay | High | **Closed** (L0-A) — `nova_path.rs` now reads `ChainLambda` for the half-life, matching `fold.rs`. Previous code used the first object's half_life or hard-coded fallback. |
+| DecayingToken refresh integer-safety | High | **Closed** (#469 VM-001) — `DecayingToken::refresh_balance` owner-gated + `checked_add`. |
+| Wallet master key dev-default in production | High | **Closed** (#469 API-001) — startup refuses to boot in `--mainnet` mode with `EVAPORCHAIN_KEY_MASTER` unset, < 16 chars, or set to the dev default. |
 | BLS key-at-rest plaintext | Medium | **Closed** — Encrypted-Validator-Private-Key-Layout (EVPL): Argon2id + XChaCha20-Poly1305; magic-byte auto-detection for plaintext-format migration |
-| Coordinator pubkey size validation | Low | **Closed** — `MAINNET_COORDINATOR_PK` length-checked at startup; `Option<&[u8]>` API with explicit None default |
+| Coordinator pubkey size validation | Low | **Closed** — `MAINNET_COORDINATOR_PK_BYTES` length-checked at startup; `Option<&[u8]>` API with explicit None default until ceremony output baked in |
 | Oracle authentication | Critical | **Closed** — `oracle/consensus.rs` invokes `HybridVerifier::verify` against the validator pubkey looked up by `vote.validator_id`; empty-signature short-circuit removed |
 | Governance whale-pass | Critical | **Closed** — stake-weighted voting (`min(balance, stake)`), quorum threshold, parameter range validation, timelock between pass and apply |
 | Contract upgrade authorization | High | **Closed** — `Transaction::UpgradeContract` handler reads `governance_approved` and refuses without an executed governance proposal of matching scope |
 | Finality records pollution | High | **Closed** — 6 layered guards in `FinalityTracker::on_block_finalized_with_active` (active-signer, duplicate-finalization, superseded-floor watermark, seen-proposals, empty-signer rejection, 2/3 stake quorum) |
 | Persistence panic on write failure | High | **Closed** — every persistence write site uses `fatal_persistence_error` helper (structured tracing + graceful `exit(2)` rather than mid-block panic); remaining `.expect()` calls are on programmer-invariant non-I/O paths |
-| No weak subjectivity checkpoints | Medium | Open — pre-mainnet implementation |
-| No formal verification of circuits | Medium | Open — engage audit firm for R1CS review |
+| No weak subjectivity checkpoints | Medium | Open — pre-mainnet implementation; tracked for V1.1 / post-launch governance flag |
+| Resurrection MMR nullifier (GHOST-A) | Critical (paper drift) | Open — `state/refresh.rs` removes ghost record but never marks the MMR nullifier consumed. Paper 1 §3.4 Inv-4 not yet enforced. Pending operator scope decision: paper amendment or MMR-consume implementation. |
+| Conservation gate ChainLambda governance read-path (CONS-A) | High | Open — all 7 conservation gate sites hard-code `ChainLambda::default_genesis()`; governance-readable λ rotation pending. Tracked for V1.1. |
+| Formal verification of Nova R1CS circuit | Medium | Partial — Coq proves state-decay monotonicity + LLSA invariant preservation (5 proofs zero-Admitted under Rocq 9.1.1); R1CS-level circuit verification still pending external auditor (covered by AUDIT_SCOPE.md §3) |
 | Block-STM O(N²) under high contention | Medium | **Closed** — `BLOCK_ABORT_CEILING_MULTIPLIER = 2` in `evaporchain-execution/src/block_stm.rs:1265`; once cumulative aborts exceed `2 × num_txs` the wave loop drains every remaining unconverged tx through the serial path, capping total re-execution at `O(N × 2)`. Determinism preserved by test (parallel-with-drain final state == pure-serial state). |
 | Poseidon field mismatch (Pallas vs BN254) | Low | By design — Pallas Fp inside Nova step circuit, BN254 for HyperKZG; documented in `CRYPTO_SPEC.md` §1.2 |
 
@@ -253,6 +273,14 @@ These properties must hold at all times:
    (under computational assumptions)
 
 ## 8. Recommendations for External Auditors
+
+This section is the high-level orientation. For the comprehensive
+audit-scope document (priority tiers, per-crate review checklists,
+the full closure trail for AUDIT_2026_05_17 + the #469 P0 launch-blocker
+pack, the test-suite shape, recommended firms, and the timeline) see
+[`docs/AUDIT_SCOPE.md`](AUDIT_SCOPE.md). For the operator-facing mainnet
+launch path (the `--mainnet` strict-mode pre-flight that closes the
+post-audit deployment gap) see [`docs/MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md).
 
 Priority areas for review:
 
