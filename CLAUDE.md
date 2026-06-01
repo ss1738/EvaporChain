@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Before starting any session
 
-Read exactly these five state-of-chain docs in order. Stop after the top 2-3 entries of journal files (`SESSION_PROGRESS.md`, `CHANGELOG.md`) — full read is not needed.
+Read exactly these state-of-chain docs in order. Stop after the top 2-3 entries of journal files (`SESSION_PROGRESS.md`, `CHANGELOG.md`) — full read is not needed.
 
 1. **`SESSION_PROGRESS.md`** — most recent operational state. Newest entry at top. Read FIRST to know where the build is.
-2. **`MAINNET_READINESS.md`** — lane-claim board (🟡 OPEN / 🟢 CLAIMED / ✅ DONE). Pick the lane you'll drive in this session here.
+2. **`MAINNET_READINESS.md`** — lane-claim board (🟡 OPEN / 🟢 CLAIMED / ✅ DONE). Pick the lane you'll drive in this session here. §0 captures the in-flight Mainnet Sprint 2026-06-01.
 3. **`DOCTRINE_PUNCH_LIST.md`** — layered build plan (Layers 0–7), what's already shipped at the doctrine level.
-4. **`AUDIT_2026_05_17.md`** — most recent findings (all 9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW closed as of 2026-05-28 — #461 + #469 were the last two; the file carries a point-in-time-snapshot annotation, so consult SESSION_PROGRESS.md / CHANGELOG.md for the live closure trail). Older audits live in `docs/archive/obsolete-audits/`.
-5. **`CHANGELOG.md`** — grep for your area; do not read top-to-bottom.
+4. **`AUDIT_2026_05_17.md`** — most recent findings (all 9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW closed as of 2026-05-28 — #461 + #469 were the last two; the file carries a point-in-time-snapshot annotation, so consult SESSION_PROGRESS.md / CHANGELOG.md for the live closure trail). Older audits live in `docs/archive/obsolete-audits/`. The per-finding closure trail in operator-facing form lives at `docs/AUDIT_SCOPE.md` §6.2/§6.3 (refreshed 2026-06-01).
+5. **`docs/MAINNET_LAUNCH.md`** — operator-facing `--mainnet` strict-mode launch playbook (added 2026-06-01). Skim §5 for the current governance-flag default surface, including the Phase B operator-decision flags.
+6. **`CHANGELOG.md`** — grep for your area; do not read top-to-bottom.
 
 Completed plan docs (CROOKS_MEV, LAMBDA_FOLD, LIGHT_CONE, MCC_FULL, POST_EXEC, MAINNET_SPRINT_2026_05_11) live in `docs/archive/completed-plans/`. Older audits in `docs/archive/obsolete-audits/`. Deprecated punch-lists in `docs/archive/deprecated/`. Treat as read-only history.
 
@@ -76,17 +77,17 @@ contracts/evaporscript/mortal_message.es   # reference pilot contract
 
 ## Workspace structure
 
-159 crate directories (140 active workspace members + 2 excluded WASM crates: `evaporchain-crypto-wasm`, `evaporchain-light-client-wasm`), ~1.09M LOC, 25,435+ tests. Two tiers:
+163 crate directories (141 active workspace members + 2 excluded WASM crates: `evaporchain-crypto-wasm`, `evaporchain-light-client-wasm`), ~1.09M LOC, 25,435+ Rust tests + 300+ TypeScript tests for dApp typed clients + 5 Coq proofs + 5 TLA+ specs. Two tiers:
 
 **Core stack (20 crates)** — the chain's production hot path:
 
 | Crate | Role |
 |---|---|
-| `evaporchain-types` | All domain types (`Block`, `Transaction`, `StateObject`, `Account`, `GhostRecord`, 25 tx variants). Energy decay formula lives here. |
+| `evaporchain-types` | All domain types (`Block`, `Transaction`, `StateObject`, `Account`, `GhostRecord`, 25 tx variants). Energy decay formula + typed `chain_ids` constants (`MAINNET`/`TESTNET`/`DEVNET`, 2026-06-01) live here. |
 | `evaporchain-crypto` | BLAKE3, ML-DSA (Dilithium3 post-quantum), BLS12-381 aggregation, VRF, Verkle trie, Energy-Verkle trie, MMR nullifiers |
 | `evaporchain-state` | `StateDB` trait + RocksDB impl; Evaporation Engine (Active→Grace→Ghost); Refresh Engine; WAL crash recovery |
-| `evaporchain-contracts` | 8 template contracts + rule engine (triggers/conditions/actions) |
-| `evaporchain-script` | EvaporScript: parser → compiler (constant-fold + DCE) → 44-opcode VM with gas metering |
+| `evaporchain-contracts` | Template contracts + rule engine. Coexists with the 30-template formal catalogue (`evaporchain-app-templates` pipeline; see substrate groups below) |
+| `evaporchain-script` | EvaporScript V2: parser → compiler (constant-fold + DCE) → 44-opcode VM with gas metering. V2 added `<<` / `>>` / `*=` / `/=` / paren-LHS in `if` conditions (2026-05-31). See `docs/EVAPORSCRIPT.md` |
 | `evaporchain-execution` | `SimpleExecutor` (sequential) + `BlockStmExecutor` (parallel OCC); PID fee controller; conservation audit gate |
 | `evaporchain-consensus` | Tendermint BFT (Propose→Prevote→Precommit→Commit); BLS aggregation; encrypted mempool; epoch manager; Light-Cone DAG substrate; MCC fork-choice; Crooks-MEV pipeline |
 | `evaporchain-proving` | Nova IVC recursive proofs (`nova-snark 0.68`); `RealBlockCircuit` arity-8 with energy-fold; Lambda-Fold |
@@ -135,7 +136,7 @@ Doctrine-grade behaviors are gated behind governance flags so the cluster stays 
 | `light_cone_state_branches_enabled` | `false` | `true` enables per-fork state materialization |
 | `lambda_fold_mode` | `"hash_chain"` | `"nova"` switches to real Nova IVC accumulator |
 
-Flags are set via `POST /api/governance/param` and read via `GET /api/governance/flags`.
+Flags are set via `POST /api/governance/param` and read via `GET /api/governance/flags`. The per-chain default seam landed 2026-06-02 at `crates/evaporchain-consensus/src/tendermint.rs::governance_defaults_for_chain(chain_id)` — every chain returns the same `UNIVERSAL` slice today; the four Phase B operator-decision flags (`block_source_mode`, `parent_acceptance_mode`, `crooks_mev_settlement_mode`, `lambda_fold_mode`) will land as one-line edits inside the `MAINNET` match arm. See `docs/MAINNET_LAUNCH.md` §5.1 for the worked example + the 5 pinning tests in `governance_defaults_per_chain_tests` that make a future divergence visible in the diff.
 
 ## Formal verification
 
