@@ -6,6 +6,45 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (deep night) — Phase C: GENESIS_CEREMONY.md refresh — operationally critical
+
+**Focus:** the operational launch ritual. Last edited 2026-04-27 — 5+ weeks stale on a doc that's normative for mainnet launch. An operator running this ceremony today would have used a non-existent flag (`--tendermint-mode`, instead of `--mainnet`) and skipped the entire `--mainnet` strict-mode pre-flight.
+**Commits shipped:** 1 on main (`7d312481`) — 54 insertions, 17 deletions.
+**What landed:**
+- **§Status**: stale `audit/end_to_end_audit_2026_04_27.md` reference replaced by AUDIT_2026_05_17 + #469 P0 pack (both closed 2026-05-28) with cross-link to AUDIT_SCOPE.md §6.2/6.3. New paragraph cross-linking MAINNET_LAUNCH.md as the operator-facing companion.
+- **§Pre-ceremony checklist** restructured into Code-side gates (6 items now closed with audit-finding refs) and Operator-side gates (10 items still needing decisions). **New explicit item: `MAINNET_COORDINATOR_PK_BYTES` bake-in** — the gate that connects ceremony output to running cluster.
+- **§Step 1 Parameter freeze**: new frozen item **chain_id** (documenting the four binding surfaces a typo would silently partition: BLS signing, VRF leader input, paymaster, gossipsub topic). New frozen item **governance flag mainnet defaults** — per MAINNET_LAUNCH.md §5, four flags need explicit operator calls (block_source_mode, parent_acceptance_mode, crooks_mev_settlement_mode, lambda_fold_mode).
+- **§Step 7 Cluster start** completely rewritten: replaced `--tendermint-mode` (not a real flag) with the actual `--mainnet` strict-mode launch command + env vars. New 7-point pre-flight summary mirroring MAINNET_LAUNCH.md §3 (compile-time coordinator bake-in, signature verify, attestation match, master-key hygiene, BLS passphrase, no plaintext keys on disk, no mock flags). Notes that the node aborts at boot with one aggregated error listing every violated check.
+- **§What the file does NOT include**: cross-links to TOKENOMICS.md, VALIDATOR_ONBOARDING.md, MAINNET_LAUNCH.md. Notes that the 30 catalogue templates deploy post-launch.
+
+**Decisions made:**
+- **Pre-ceremony checklist split into code-side ✅ vs operator-side ⬜** — makes the doc honest about what's already done vs. what still needs operator action. Previous flat checklist with 15 unchecked items implied "nothing has happened yet," which 3 weeks of audit closures contradict.
+- **chain_id explicitly frozen at Step 1**, not Step 5 (final assembly). It's the doctrinally load-bearing identifier; freezing it later would put parameter negotiation at risk of typo divergence.
+- **Step 7 launch command pinned to MAINNET_LAUNCH.md §3** so future updates to the strict-mode pre-flight only need editing one canonical doc, not two.
+
+### Phase C auditor-onboarding septet → octet (with operator docs)
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| `README.md` (repo root) | Status + checklist + dev-net live + docs split | `6abce250` |
+| `docs/SPEC.md` (one-pager) | Status + Hardening + Where-to-go-next | `f87554e9` |
+| `docs/AUDIT_SCOPE.md` (engagement) | header/§2/§6/§7/§10 | `3537c32e` |
+| `docs/THREAT_MODEL.md` (risk surface) | §6.1 closures + §8 cross-links | `8f899eda` |
+| `docs/RUN_A_NODE.md` (operator) | --mainnet section + cross-links | `f54880a0` |
+| `docs/architecture.md` (system design) | crate descriptions + new entries | `453d4dde` |
+| `docs/CRYPTO_SPEC.md` (auditor P1) | §2.2/§3.1/§3.2 + new §3.3/§3.4/§9 | `6ac28e9c` |
+| `docs/GENESIS_CEREMONY.md` (launch ritual) | §Status + §Pre-ceremony split + Step 1/Step 7 | `7d312481` |
+
+Eight docs an operator + auditor encounter first all reference each other coherently and accurately describe HEAD.
+
+**Today's mainnet sprint commit total: 10 ship commits + 8 session entries = 18 commits.**
+
+**Remaining Phase C solo-shippable:** `docs/VALIDATOR_ONBOARDING.md` (post-launch joining), `docs/PARAMETERS.md` (operational tuning).
+
+**Cross-references:** commit `7d312481`. Files: `docs/GENESIS_CEREMONY.md`. Cross-links: AUDIT_SCOPE.md §6.2/6.3, MAINNET_LAUNCH.md, TOKENOMICS.md, VALIDATOR_ONBOARDING.md.
+
+---
+
 ## 2026-06-01 (night, ongoing) — Phase C: CRYPTO_SPEC.md refresh — H-2/H-3/H-4/CR-1/2/3/Q7 closures surfaced
 
 **Focus:** auditor priority 1 doc per AUDIT_SCOPE.md §3, last edited 2026-05-03. Five crypto-relevant closures from AUDIT_2026_05_17 landed in source between 2026-05-17 and 2026-05-28; **none were reflected in this spec**. An external auditor reading the spec was getting a wrong picture of the trie + MMR + BLS + state-proof shapes vs. what's actually deployed.
