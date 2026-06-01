@@ -9,6 +9,15 @@ The model: **one** coordinator produces **one** signed
 via `--genesis-config <path>`. The node verifies the signature on startup
 and refuses to bootstrap against a tampered or unsigned config.
 
+**See also**:
+- [`docs/MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md) — the `--mainnet` strict-mode
+  boot path; the 11 pre-flight checks the binary refuses to skip and how
+  to satisfy each one.
+- [`docs/GENESIS_CEREMONY.md`](GENESIS_CEREMONY.md) — the once-per-launch
+  ceremony that produces the signed `genesis-config.json` this runbook
+  consumes. Post-genesis validator joining (this runbook) is a different
+  shape than launch-time validator participation (covered there).
+
 ## Roles
 
 - **Coordinator** — runs the genesis ceremony. Holds the ML-DSA-65 secret
@@ -102,6 +111,14 @@ evaporchain onboarding build-genesis \
   --min-stake 100000
 ```
 
+The `--chain-id` argument's canonical values live at
+`evaporchain_types::chain_ids` — `MAINNET = "evaporchain-mainnet-1"`,
+`TESTNET = "evaporchain-testnet-1"`, `DEVNET = "evaporchain-devnet-1"`.
+Chain-id is bound into the BLS signing message, the VRF leader-selection
+input, the paymaster sponsorship payload, and the gossipsub topic
+namespace — a one-character typo silently creates a partition, so prefer
+the constants over typing the literal string.
+
 The coordinator-sk is read from disk; its paired `coordinator-pk.hex`
 must sit in the same directory. The command:
 
@@ -135,6 +152,11 @@ if it fails — never patch a broken file by hand.
 ## 6. Operator launches the node
 
 ```bash
+# --mainnet strict mode requires both env vars set, non-empty,
+# non-dev-default. The binary refuses to boot otherwise.
+export EVAPORCHAIN_KEY_MASTER="<32+ hex chars from /dev/urandom>"
+export EVAPORCHAIN_BLS_PASSPHRASE="<this validator's own EVPL passphrase>"
+
 evaporchain-node \
   --mainnet \
   --network --tendermint --tls \
@@ -149,9 +171,15 @@ evaporchain-node \
 ```
 
 The node re-runs the same coordinator-signature check on startup. In
-`--mainnet` strict mode it additionally requires `coordinator_pk` in the
-genesis to match the binary’s baked-in `MAINNET_COORDINATOR_PK`
-constant, so a forked binary cannot accept a different coordinator.
+`--mainnet` strict mode it additionally requires `coordinator_pk` in
+the genesis to match the binary's baked-in `MAINNET_COORDINATOR_PK_BYTES`
+constant (at `crates/evaporchain-node/src/main.rs:1418`), so a forked
+binary cannot accept a different coordinator.
+
+The full set of pre-flight checks the binary refuses to skip in
+`--mainnet` mode is documented in [`MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md)
+§3 — 11 checks aggregated into a single boot-time error message if any
+violate.
 
 For a non-mainnet (testnet/staging) cluster, drop the `--mainnet` flag.
 The node still verifies the signature, but accepts whatever
@@ -169,10 +197,23 @@ curl http://localhost:8080/api/status | jq .
 
 - **`signature did not verify`** at `onboarding verify` or node startup
   → the file was edited after signing. Re-fetch from the coordinator.
-- **`coordinator_pk in genesis does not match baked-in MAINNET_COORDINATOR_PK`**
+- **`coordinator_pk in genesis does not match baked-in MAINNET_COORDINATOR_PK_BYTES`**
   → either you're running a binary that hasn't been updated for this
   network, or the genesis was signed by the wrong coordinator. Stop and
   contact the coordinator before doing anything else.
+- **`EVAPORCHAIN_KEY_MASTER must be set in --mainnet mode`** or
+  **`EVAPORCHAIN_KEY_MASTER is set to the dev default`** or
+  **`EVAPORCHAIN_KEY_MASTER must be at least 16 chars`**
+  → the master key env var failed `--mainnet` strict-mode pre-flight.
+  Generate a fresh random value: `head -c 32 /dev/urandom | xxd -p -c 0`,
+  then `export EVAPORCHAIN_KEY_MASTER=<value>` and retry. Never re-use
+  across operators (each validator's master key is independent).
+- **`EVAPORCHAIN_VALIDATOR_KEY_PASS must be set (non-empty) so the
+  validator BLS key can be encrypted at rest`**
+  → the EVPL key-encryption passphrase isn't set. Generate via a
+  similar random source and `export EVAPORCHAIN_BLS_PASSPHRASE=<value>`.
+  The full set of `--mainnet` strict-mode pre-flight errors is
+  documented in [`MAINNET_LAUNCH.md`](MAINNET_LAUNCH.md) §3.
 - **`validator-id N not in genesis validator set`** → coordinator forgot
   to include your entry, or you're using the wrong `--validator-id`.
   Check `jq '.validators[].id' genesis-config.json`.
