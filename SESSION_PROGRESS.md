@@ -6,6 +6,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-01 (noon) — Mainnet sprint, phase C kickoff: AUDIT_SCOPE.md refresh
+
+**Focus:** with operator-decision items still pending (Phase B governance-flag defaults), drive the parallelisable Phase C — audit-prep artefacts that external auditors read first. Refresh AUDIT_SCOPE.md against HEAD so the doc accurately describes the workspace an auditor would actually engage with.
+**Commits shipped:** 1 on main (`3537c32e`) — **118 insertions, 36 deletions**.
+**Why this matters:** the doc was dated April 2026 / last refresh 2026-05-11. Three weeks of meaningful change since (the 14-PR audit closure marathon, #469 P0 launch-blocker remediation, the 6 catalogue promotions, the chain-ids consolidation, MAINNET_LAUNCH.md). Auditors form their first impression of workspace maturity from this doc; staleness misrepresents what the chain actually is.
+**Refresh shape:**
+- **Header**: crate count 147 → 163 directories (141 active workspace members). Last-refresh bumped to 2026-06-01. New "Recent closures (since 2026-05-11)" paragraph cross-linking AUDIT_2026_05_17 trail + #469 P0 pack + MAINNET_LAUNCH.md + 30-template catalogue surface.
+- **§2 Repository Structure**: tree updated with 11 crates added since the last refresh (consensus-types, nova-bridge, paymaster, app-templates-{engine,fees,bind}, light-client-wasm, causal-chsh, lambda-fold, llsa). Priority annotations tightened. Ceremony + mainnet docs cross-linked. `research/{coq,tla}/` surfaces called out (5 proofs each).
+- **§6 Known Issues** restructured into three sub-sections:
+  - §6.1 retains pre-2026-05 long-standing hardening items.
+  - §6.2 (new) — AUDIT_2026_05_17 closures: every CRITICAL + HIGH from that audit gets a one-line resolution note (CR-1/2/3 Verkle DST, H-1/2/3/4 replay + DST + MMR + BLS PoP, Q1-Q8 DA-cert forgery + Tendermint strict-quorum + sampler binding, GHOST-A, L0-A, CONS-A).
+  - §6.3 (new) — #469 P0 launch-blocker pack: PRIV-001/002, DA-001, VM-001, API-001, ECON-001.
+- **§7 Test Suite**: crate 147 → 141 active. TS count 162 → 300+. Coq + TLA+ status lines. Anti-regression gate (`every_catalogue_default_binds`) documented — flagged that it caught the latent DECAY_ACCESS_PASS / BELL_ORACLE / MORTAL_DAO gaps during the 2026-05-31 sprint.
+- **§10 Timeline**: Q2 2026 (= today) → Q3-Q4 2026; mainnet launch Q4 2026 / Q1 2027 conditional on audit-tokenomics-soak triad. New "Pre-launch checklist before audit kickoff" with 5 done + 3 open operator decisions.
+**Decisions made:**
+- **No technical claims changed**, only descriptive accuracy. Every line of the refresh is HEAD-true rather than three-weeks-stale.
+- **Closures listed individually**, not in aggregate. An auditor reading "30 catalogue templates" or "P0 pack closed" loses the per-finding resolution detail; the new §6 surfaces every CRITICAL with its specific resolution sentence.
+- **Pre-launch checklist with explicit operator decisions called out** at the bottom of §10. Three open items (BUG_BOUNTY.md go-live, `MAINNET_COORDINATOR_PK_BYTES` bake-in, tokenomics ceremony) — anyone reading the doc sees both what's done and what remains, mapped to the operator-vs-code-side split.
+**Today's totals (mainnet sprint so far):** 2 commits (phase A `fa426c72`, phase C `3537c32e`). Both ship-side, no operator gates touched.
+**What's next in Phase C:**
+- `docs/BUG_BOUNTY.md` go-live (operator decision in §10 of that doc; not shippable from this side until the triage queue + escrow + payment rails are in place)
+- Production block explorer (replace dev one with mainnet-config-aware version)
+- `validator-analytics` polish — the legacy Vite/Next.js dApp that defaults to localhost; refresh to mainnet-config
+- `docs/THREAT_MODEL.md` + `docs/SPEC.md` final passes
+- `docs/RUN_A_NODE.md` update to cross-link MAINNET_LAUNCH.md
+**Cross-references:** commit `3537c32e`. Files: `docs/AUDIT_SCOPE.md`. Cross-links: AUDIT_2026_05_17.md, CHANGELOG.md, MAINNET_LAUNCH.md, TOKENOMICS.md, GENESIS_CEREMONY.md.
+
+---
+
 ## 2026-06-01 (late morning) — Mainnet sprint, phase A: chain-id constants + launch playbook
 
 **Focus:** kick off the mainnet-launch sprint. Code-side prep is the lane I can drive solo while the operator handles the long-pole strategic items (external audit T0.12, tokenomics ceremony 28 open Q's, Foundation entity, multi-validator soak).
