@@ -38,41 +38,58 @@ A contract has three sections:
 
 ## Operators
 
+EvaporScript runs in two language versions. **V1** is the original surface (released 2026-04). **V2** added shift and compound-assign operators on 2026-05-31 to support the SAP V2 (exact-exponential AQ) + MnemoChain V2 (FSRS-canonical retrievability) rewrites that needed integer-truncated halving in-language. Both versions remain valid; V2 is a strict superset.
+
 ### Arithmetic
 
-| Operator | Description |
-|----------|-------------|
-| `+` | Addition |
-| `-` | Subtraction |
-| `*` | Multiplication |
-| `/` | Division |
+| Operator | Description | Version |
+|----------|-------------|---------|
+| `+` | Addition | V1+ |
+| `-` | Subtraction | V1+ |
+| `*` | Multiplication | V1+ |
+| `/` | Division | V1+ |
+
+### Bitwise / Shift (V2)
+
+| Operator | Description | Notes |
+|----------|-------------|-------|
+| `<<` | Left shift | Multiply by 2^k. Runtime check: shift count < 64 (else revert). Gas tier: `GAS_SHIFT = 5` (mul-tier). |
+| `>>` | Right shift | Integer-truncated divide by 2^k. The doctrine-canonical halving operator for in-language energy decay. Same shift<64 guard + GAS_SHIFT cost. |
+
+The `>>` operator is the doctrine-recommended way to implement halving in `.es` source — it matches `evaporchain_types::energy_at_epoch`'s integer-truncation semantics exactly. Reference contracts using it: `contracts/evaporscript/sap.es` (`initial_value >> halvings`) + `contracts/evaporscript/mnemochain.es` (`10000 >> retrievability_shift`). Both have cargo pilots verifying the byte-level VM behaviour.
 
 ### Comparison
 
-| Operator | Description |
-|----------|-------------|
-| `==` | Equal |
-| `!=` | Not equal |
-| `>` | Greater than |
-| `<` | Less than |
-| `>=` | Greater or equal |
-| `<=` | Less or equal |
+| Operator | Description | Version |
+|----------|-------------|---------|
+| `==` | Equal | V1+ |
+| `!=` | Not equal | V1+ |
+| `>` | Greater than | V1+ |
+| `<` | Less than | V1+ |
+| `>=` | Greater or equal | V1+ |
+| `<=` | Less or equal | V1+ |
+
+**V2 parser change (2026-05-31):** the `if` parser no longer greedily consumes a leading `(` as an `if` body opener. Expressions like `if (epoch - last) > window { ... }` parse correctly; V1 required a rewrite to `if epoch - last > window { ... }` or `if epoch > last + window { ... }`. Reference contract using this: `contracts/evaporscript/deadman_switch.es`.
 
 ### Logical
 
-| Operator | Description |
-|----------|-------------|
-| `&&` | Logical AND |
-| `\|\|` | Logical OR |
-| `!` | Logical NOT |
+| Operator | Description | Version |
+|----------|-------------|---------|
+| `&&` | Logical AND | V1+ |
+| `\|\|` | Logical OR | V1+ |
+| `!` | Logical NOT | V1+ |
 
 ### Assignment
 
-| Operator | Description |
-|----------|-------------|
-| `=` | Assign |
-| `+=` | Add-assign |
-| `-=` | Subtract-assign |
+| Operator | Description | Version |
+|----------|-------------|---------|
+| `=` | Assign | V1+ |
+| `+=` | Add-assign | V1+ |
+| `-=` | Subtract-assign | V1+ |
+| `*=` | Multiply-assign (V2) | V2 |
+| `/=` | Divide-assign (V2) | V2 |
+
+V2 compound-assign for shifts (`<<=`, `>>=`) is **not** in V2; use the explicit form (`self.x = self.x >> 1`). Reference contracts using `*=`: `mnemochain.es` (`stability *= 2` on Good rating).
 
 ## Statements
 
