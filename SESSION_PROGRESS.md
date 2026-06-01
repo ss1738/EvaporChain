@@ -6,6 +6,37 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-02 (still grinding) — DOCTRINE_PUNCH_LIST.md 2026-06-01 addendum
+
+**Focus:** the doctrine punch list is one of the 6 docs new Claude sessions read on startup (per root CLAUDE.md). Its status snapshot stops at 2026-05-08; Layers 0-7 are still ✅ DONE but the surface beneath them expanded materially across 3 sprints between 2026-05-08 and today.
+**Commits shipped:** 1 on main (`93524059`) — 29 insertions.
+**What landed:**
+- **New top-of-file addendum** above the existing §Status snapshot (no overwrite of the layer-by-layer doctrine status table — those are still accurate). 30-second summary of the 3 arcs since 2026-05-08:
+  - **AUDIT_2026_05_17 closure marathon + #469 P0 pack** — 9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW. Headline closures listed (CR-1/2/3, H-1/2/3/4, Q1-Q8, GHOST-A, CONS-A, PRIV-001/002, DA-001, VM-001, API-001, ECON-001). Cross-link to AUDIT_SCOPE.md §6.2/§6.3.
+  - **Catalogue sprint** — 24 → 30 templates. All 6 promotions listed with class IDs + lanes. Chain-as-keeper escrow triplet representation called out. Latent-gap closures (DECAY_ACCESS_PASS + BELL_ORACLE + MORTAL_DAO engine wiring + required_keys) noted. `every_catalogue_default_binds` anti-regression gate green for all 30.
+  - **Mainnet sprint** — Phases A + C done, B infra shipped. `governance_defaults_for_chain` dispatcher + 5 pinning tests called out.
+- **Remaining work explicitly listed as operator-decision** (6 items) — auditor selection, 4 Phase B flag values, `MAINNET_COORDINATOR_PK_BYTES` bake-in, BUG_BOUNTY go-live, tokenomics ceremony 28 Q's, T0.6 soak. None block further code-side work.
+
+The existing §Status snapshot table + Layer 0-7 detail is untouched — layer status didn't change, only the surface expanded.
+
+### Cumulative state — 5 state-of-chain docs all current
+
+| Doc | Refresh | Commit |
+|---|---|---|
+| `SESSION_PROGRESS.md` (running log) | continuously appended | every commit |
+| `MAINNET_READINESS.md` (lane board) | §0 sprint-header added | `ccb2883d` |
+| `DOCTRINE_PUNCH_LIST.md` (Layer 0-7 status) | 2026-06-01 addendum | `93524059` |
+| `AUDIT_2026_05_17.md` (point-in-time snapshot) | point-in-time annotation already in file | (n/a) |
+| `CLAUDE.md` (root project guidance) | refreshed | `095c6d33` |
+
+Every new Claude session lands on a coherent picture of where the chain is, how it got there, and exactly which one-line operator edits unblock the remaining lanes.
+
+**Today's mainnet sprint commit total: 19 ship commits + 15 session entries = 34 commits.**
+
+**Cross-references:** commit `93524059`. Files: `DOCTRINE_PUNCH_LIST.md`. Cross-links: AUDIT_SCOPE.md §6.2/§6.3, SESSION_PROGRESS.md.
+
+---
+
 ## 2026-06-02 (deep night, grind) — MAINNET_LAUNCH §5 + root CLAUDE.md closure
 
 **Focus:** close two loops opened by today's earlier sprint work — MAINNET_LAUNCH.md §5 (referenced governance defaults as inline constants pre-`8731ff36`; now references the dispatcher seam) + root CLAUDE.md (last edited 2026-05-29, before today's sprint).
