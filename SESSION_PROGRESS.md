@@ -6,6 +6,49 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-03 (still grinding) — Oracle Feed full atomic arc (36th template)
+
+**Focus:** 12th catalogue promotion of this sprint arc. **First non-Marketplace ship of the day** — broke the lane-saturation pattern by promoting into the Paradigm lane (now 5 entries: SGB, SBAV, SSM, Bell-Oracle, OracleFeed). Generic decaying data oracle, companion to Bell-Oracle.
+**Commits shipped:** 1 on main (`cc4b3c49`) — **13 files, 458 insertions**.
+**Catalogue is now 36 templates.**
+**Doctrine inversion:** standard oracles publish `(value, timestamp)` and force every consumer to remember to check staleness; OracleFeed makes "no value" and "value past max_age" structurally `!fresh`, so the only way to consume a stale or unset feed is to explicitly ignore `is_fresh()` — much harder to do silently than ignoring a timestamp comparison.
+**5 pinned-invariant TS tests** (the most for any single ship in the sprint):
+- `set_feed()` is one-shot via sealed-flag gate — max_age can't be retroactively raised after a stale value lands
+- `latest()` reverts when `value_set == false` (no sentinel-on-read; consumers cannot silently consume an unset feed)
+- `is_fresh()` checks `value_set` BEFORE computing `age` — otherwise `epoch - 0` could read as fresh when max_age is huge (a critical hole)
+- `dispute()` is OPEN by design — no `caller ==` gate; the counter is a public signal, arbitration belongs in a paired governance contract
+- `update()` is owner-only — the operator vouches for the value
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| dApp client | `dapps/oracle-feed/` — 3 mutators (set_feed, update, dispute + deploy) + 7 views + auth-injected Tx wrappers. **12/12 TS tests pass** with **5 pinned-invariant tests**. |
+| Class registry | New `ORACLE_FEED: TemplateClass(0x0001_0505)` (next slot after Bell-Oracle `0x0001_0504`). |
+| Catalogue | Count test 35 → 36. |
+| Engine init module | `init_oracle_feed.rs` (new) — 3 u64 fields (initial_energy, half_life, default_max_age). Runtime args (actual label + actual max_age) belong to the one-shot `set_feed()` mutator. |
+| Engine dispatch | New `TypedInit::OracleFeed` variant + dispatch arm. |
+| Fees oracle | `SURCHARGE_PARADIGM` (same tier as Bell-Oracle — the off-chain consumer-binding contract that lets downstream contracts hold a typed reference). |
+| Bind invariants | All 3 numerics > 0. **default_max_age = 0 would mean every reading is stale the epoch it lands** (age >= 1 epoch after update() and is_fresh checks age <= max_age), making the catalogue default unusable. |
+| Required keys | New 3-key row. |
+| Catalogue-browser | New entry in class-id order; display strings 35 → 36. |
+| Landing page | Catalogue-count 35 → 36. |
+**Empirical results on Mini-1 worktree (`cc4b3c49`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 36 templates. Worktree cleaned up.
+
+**Paradigm lane is now 5 entries:**
+
+| 0x0001_05... | Template |
+|---|---|
+| `01` | SGB (Type System) |
+| `02` | SBAV (Reversible Compute) |
+| `03` | SSM (Game Semantics) |
+| `04` | Bell-Oracle (Quantum-Certified Beacon) |
+| `05` | **Oracle Feed (Generic Decaying Data Oracle)** |
+
+**Sprint cumulative: 29 ship commits + 25 session entries = 54 commits over the 2026-06-01 → 2026-06-03 arc.** Catalogue 24 → 36 (12 promotions in three calendar days).
+
+**Cross-references:** commit `cc4b3c49`. Files: 13 changed. Source contract: `contracts/evaporscript/oracle_feed.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/oracle_feed_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-03 (still grinding) — Lottery full atomic arc (35th template)
 
 **Focus:** 11th catalogue promotion of this sprint arc. Single-draw lottery with chain-VRF winner selection. The doctrine claim — operator influences WHEN to draw but NEVER WHO wins — comes from `random_range(self.entry_count)` deriving the winning index deterministically from the chain's VRF beacon, not from any operator argument. Off-chain randomness oracles cannot claim this influence asymmetry.
