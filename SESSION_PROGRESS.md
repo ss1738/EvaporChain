@@ -6,6 +6,52 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-03 (deeper grind) — Payment Split full atomic arc (33rd template)
+
+**Focus:** universal primitive for DAOs / dev-team treasuries / royalty splits. Pull-payment revenue splitter with basis-point shares (must sum to exactly 10_000 by seal-time). 9th catalogue promotion of this sprint arc; same 14-file pattern.
+**Commits shipped:** 1 on main (`756c4825`) — **14 files, 603 insertions**.
+**Catalogue is now 33 templates.** Marketplace lane now 12 entries.
+**Doctrine claim:** at evaporation, unclaimed pool residue forfeits to the deployer; `on_evaporate` stamps `unclaimed_at_evaporate` + flips `forfeit_signaled` so the coordinator returns the residue. The runtime is the closer — no off-chain recovery sweep needed.
+**SPLIT-1 hardening (audit 2026-05-17) surfaced in TS test pin:** all 3 entitlement-math sites (`claim`, `entitlement_of`, `pending_of`) use division-first arithmetic (`whole * bps + rem * bps / 10000`) to avoid u64 overflow at `total_deposited > u64::MAX/bps` (~1.8e15 at bps=10000). A regression to multiply-first form would silently overflow at large pools and brick all claims; the TS test asserts the pattern appears at exactly 3 sites.
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| dApp client | `dapps/payment-split/` — 4 mutators (add_recipient, seal, deposit, claim) + 5 views + auth-injected Tx wrappers. **11/11 TS tests pass** with 3 pinned-invariant tests: `seal()` requires `total_bps == 10000` exactly; SPLIT-1 division-first at exactly 3 sites; `on_evaporate` stamps unclaimed pool + flips forfeit. |
+| Class registry | New `PAYMENT_SPLIT_CLASS: TemplateClass(0x0001_010D)`. |
+| Catalogue | Count test 32 → 33. |
+| Engine init module | `init_payment_split.rs` (new) — 2 u64 fields (initial_energy + half_life). Recipient set + bps shares are variable-shape and set at runtime via `add_recipient` + `seal`. |
+| Engine dispatch | New `TypedInit::PaymentSplit` variant + dispatch arm. |
+| Fees oracle | `SURCHARGE_MARKETPLACE`. |
+| Bind invariants | energy + half_life > 0. Runtime guards (bps > 0, no duplicates, total_bps == 10000) live in the .es contract because the recipient set is variable-shape. |
+| Required keys | New 2-key row. |
+| Catalogue-browser | New entry; display strings 32 → 33. |
+| Landing page | Catalogue-count 32 → 33. |
+**Empirical results on Mini-1 worktree (`756c4825`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 33 templates. Worktree cleaned up.
+
+**Marketplace lane now 12 entries:**
+
+| 0x0001_01... | Template |
+|---|---|
+| `01` | SDDC |
+| `02` | SFSV |
+| `03` | SHLM |
+| `04` | SCL |
+| `05` | SAP |
+| `06` | Refresh-Market |
+| `07` | Decay Access Pass |
+| `08` | DeadMan Switch |
+| `09` | Subscription |
+| `0A` | Open Bounty |
+| `0B` | Time Lock |
+| `0C` | Vesting Schedule |
+| `0D` | **Payment Split** |
+
+**Sprint cumulative: 25 ship commits + 21 session entries = 46 commits over the 2026-06-01 → 2026-06-03 arc.** Catalogue 24 → 33 (9 promotions).
+
+**Cross-references:** commit `756c4825`. Files: 14 changed. Source contract: `contracts/evaporscript/payment_split.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/payment_split_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-03 (deep grind) — Vesting Schedule full atomic arc (32nd template)
 
 **Focus:** the classic financial primitive every VC-backed startup needs. Linear vest with cliff, promoted with the doctrine twist that the post-vest claim window is bounded by the contract's own energy. 8th catalogue promotion of this sprint arc; same 14-file pattern as multisig + time-lock.
