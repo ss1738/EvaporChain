@@ -6,6 +6,64 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-03 (heavy ship) — EvaporCashNote OPENS THE MONEY LANE (37th template)
+
+**Focus:** 13th catalogue promotion of the sprint arc, and the **first NEW lane opened since Governance (2026-05-30, MortalDAO)**. Native demurrage money: ONE note = ONE contract instance; the note's own `energy` builtin IS its spendable value, so a hoarded note loses value by chain physics (the evaporation engine) with no keeper bot, no in-contract decay formula, no off-chain timer. The Wörgl / Gesell "money rots if you hoard it" incentive, native.
+**Commits shipped:** 2 on main (`b5b749a9` cargo pilot, `4bfb5a5f` atomic arc) — pilot 353 LOC + atomic arc 14 files / 539 insertions.
+**Catalogue is now 37 templates. Lanes 7 → 8.**
+
+**Why a new Money lane:** Marketplace templates are bid/escrow/auction mechanics OVER existing value; Money templates ARE the circulating value itself, with the chain's energy substrate doing the demurrage/mint/settle work that elsewhere requires keeper bots. EvaporCashNote is the inaugural member at `0x0001_0701`.
+
+**Cargo pilot first (b5b749a9):** Wrote `evaporcash_note_pilot.rs` (7 tests, 353 LOC) and verified it on Mini-1 BEFORE the atomic arc. The pilot pins:
+- parses + compiles + all public methods + 3 lifecycle hooks present
+- `issue()` one-shot + owner-only + face > 0
+- `spend()` holder-only + once; transitions holder + flips spent
+- **`live_value()` reads the `energy` builtin (NOT a stored snapshot)** — pilot verifies by querying live_value at issue-time energy 10_000 and again at decayed energy 3_000; returns 10_000 then 3_000 respectively
+- `face_value()` returns the issue-time snapshot — separate from live_value (5000, regardless of current energy)
+- `on_evaporate` emits "value lost to hoarding" only when `spent == false`
+
+**4 pinned-invariant TS tests** (in `dapps/evapor-cash-note/test/`):
+- `live_value` returns the `energy` builtin — pin `return energy` and reject `return self.*` (single-line string pin)
+- `face_value` returns `self.face` — pin the stored-field return and reject `return energy`
+- `issue()` one-shot via sealed-flag gate (bearer-instrument premise depends on no post-seal rotation)
+- `on_evaporate` gates the hoarding-loss emit on `spent == false` (a spent note's evaporation must be silent — value was already preserved off-chain by coordinator reissue, so emitting would double-count)
+
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| Cargo pilot | NEW `evaporcash_note_pilot.rs` (353 LOC, 7 pinned tests) — committed and verified ahead of atomic arc |
+| dApp client | `dapps/evapor-cash-note/` — 2 mutators (issue, spend + deploy) + 5 views + auth-injected Tx wrappers. **10/10 TS tests pass** with **4 pinned-invariant tests**. |
+| Class registry | New `EVAPORCASH_NOTE: TemplateClass(0x0001_0701)` + new Money-lane comment block + lane test |
+| Catalogue | New "Money" lane entry; count test 36 → 37; lane test renamed `seven_lanes` → `eight_lanes` |
+| Engine init module | `init_evaporcash_note.rs` (new) — 3 u64 fields (initial_energy, half_life, default_face). Runtime args (bearer `to` + actual face snapshot) belong to the one-shot `issue()` mutator. |
+| Engine dispatch | New `TypedInit::EvaporCashNote` variant + dispatch arm |
+| Fees oracle | New `SURCHARGE_MONEY = 350` constant (between Consumer 250 and Marketplace 600 — thin contract state but real ecosystem integration via coordinator reissue + hoarding-loss settlement) |
+| Bind invariants | All 3 numerics > 0. `initial_energy = 0` would issue an instantly-evaporated note |
+| Required keys | New 3-key row under "Money lane" section heading |
+| Catalogue-browser | New "Money" lane button (8 lanes total) + new entry; display strings 36 → 37 |
+| Landing page | Catalogue-count 36 → 37 |
+
+**Empirical results on Mini-1 worktree (`4bfb5a5f`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 37 templates. `catalogue_covers_all_eight_lanes` green. Worktree cleaned up.
+
+**The 8 lanes now ship:**
+
+| Lane | Range | Count | Doctrine |
+|---|---|---|---|
+| NFT | `0x0001_00XX` | 6 | Non-fungible decaying tokens |
+| Marketplace | `0x0001_01XX` | 14 | Bid/escrow/auction mechanics OVER value |
+| Wallet UX | `0x0001_02XX` | 4 | Wallet-side primitives |
+| Consumer | `0x0001_03XX` | 4 | Consumer-facing apps |
+| Cultural | `0x0001_04XX` | 1 | Cultural-wedge primitives |
+| Paradigm | `0x0001_05XX` | 5 | Paradigm-grade type systems + oracles |
+| Governance | `0x0001_06XX` | 1 | On-chain coordination |
+| **Money** | `0x0001_07XX` | **1** (new) | **Circulating value itself; the chain IS the demurrage engine** |
+
+**Sprint cumulative: 30 ship commits + 26 session entries = 56 commits over the 2026-06-01 → 2026-06-03 arc.** Catalogue 24 → 37 (13 promotions in three calendar days). **Lane count 7 → 8.**
+
+**Cross-references:** commits `b5b749a9` (pilot) + `4bfb5a5f` (arc). Files: pilot 1 + atomic 14. Source contract: `contracts/evaporscript/evaporcash_note.es`. New pilot: `crates/evaporchain-script/tests/evaporcash_note_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-03 (still grinding) — Oracle Feed full atomic arc (36th template)
 
 **Focus:** 12th catalogue promotion of this sprint arc. **First non-Marketplace ship of the day** — broke the lane-saturation pattern by promoting into the Paradigm lane (now 5 entries: SGB, SBAV, SSM, Bell-Oracle, OracleFeed). Generic decaying data oracle, companion to Bell-Oracle.
