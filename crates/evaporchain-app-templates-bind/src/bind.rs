@@ -600,6 +600,24 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("Lottery", "default_stake must be > 0"));
             }
         }
+        // OracleFeed — energy + half_life + default_max_age all > 0.
+        // A 0 default_max_age would mean every reading is stale the
+        // epoch it lands (since `is_fresh()` checks `age <= max_age`
+        // and `age` is at minimum 1 epoch after `update()`), making
+        // the catalogue's pre-populated form useless. The actual
+        // `max_age` is locked at runtime via `set_feed()` — but the
+        // catalogue default must itself be a sane starting point.
+        TypedInit::OracleFeed(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("OracleFeed", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("OracleFeed", "half_life must be > 0"));
+            }
+            if c.default_max_age == 0 {
+                return Err(invariant("OracleFeed", "default_max_age must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

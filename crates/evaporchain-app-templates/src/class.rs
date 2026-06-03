@@ -231,6 +231,22 @@ pub const SSM_GAME_SEMANTICS: TemplateClass = TemplateClass(0x0001_0503);
 /// quantum-randomness-requiring actions on `is_certified_now()`.
 /// Reference contract: `contracts/evaporscript/bell_oracle.es`.
 pub const BELL_ORACLE: TemplateClass = TemplateClass(0x0001_0504);
+/// Oracle Feed — generic decaying oracle. Standard oracles publish
+/// `(value, timestamp)` and force every consumer to decide staleness
+/// themselves. OracleFeed inverts that: the feed IS a decaying
+/// contract, `max_age` is a hard ceiling on read-time freshness, and
+/// `is_fresh()` flips false structurally rather than by consumer
+/// convention. Operator (`caller == owner`) calls one-shot
+/// `set_feed(label, max_age)` to arm; only the operator may
+/// `update(value)`; anyone may `dispute()` (open by design — counter
+/// is a public signal, arbitration happens in a paired contract).
+/// `latest()` reverts when no value has been published — structural
+/// alternative to sentinel-on-read. on_evaporate ends the publication
+/// surface; consumers who depended on the feed must rebind to a fresh
+/// one. Reference contract: `contracts/evaporscript/oracle_feed.es`.
+/// Verified cargo pilot:
+/// `crates/evaporchain-script/tests/oracle_feed_pilot.rs`.
+pub const ORACLE_FEED: TemplateClass = TemplateClass(0x0001_0505);
 
 // Governance lane — on-chain coordination primitives that compose
 // the decay substrate (credential / rate-limit / reputation / quorum)
@@ -285,6 +301,7 @@ mod tests {
             SBAV_RUNTIME,
             SSM_GAME_SEMANTICS,
             BELL_ORACLE,
+            ORACLE_FEED,
             MORTAL_DAO,
         ] {
             assert!(c.is_in_app_range(), "{:#010x} not in app range", c.0);
@@ -327,6 +344,7 @@ mod tests {
         // Paradigm: 0x0001_0500..
         assert!((0x0001_0500..=0x0001_05FF).contains(&SGB_TYPE_SYSTEM.0));
         assert!((0x0001_0500..=0x0001_05FF).contains(&BELL_ORACLE.0));
+        assert!((0x0001_0500..=0x0001_05FF).contains(&ORACLE_FEED.0));
         // Governance: 0x0001_0600..
         assert!((0x0001_0600..=0x0001_06FF).contains(&MORTAL_DAO.0));
     }

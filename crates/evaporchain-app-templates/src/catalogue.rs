@@ -347,6 +347,19 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-bell-oracle",
         )
         .expect("BellOracle descriptor is constant"),
+        TemplateDescriptor::new(
+            ORACLE_FEED,
+            "Oracle Feed (Decaying Data Oracle)",
+            "Paradigm",
+            json!({
+                "initial_energy": 1000,
+                "half_life": 100,
+                "default_max_age": 10
+            }),
+            "Generic decaying oracle. Standard oracles publish `(value, timestamp)` and force every consumer to decide staleness themselves; OracleFeed inverts that — the feed IS a decaying contract, `max_age` is a hard ceiling on read-time freshness, and `is_fresh()` flips false structurally rather than by consumer convention. Operator (`caller == owner`) calls one-shot `set_feed(label, max_age)` to arm; only the operator may `update(value)`; anyone may `dispute()` (open by design — the counter is a public signal, arbitration belongs in a paired governance contract). `latest()` reverts when no value has been published (structural alternative to sentinel-on-read; consumers cannot silently consume an unset feed). on_evaporate ends the publication surface; consumers who depended on the feed must rebind to a fresh one — the doctrine claim is that stale data being removed from chain is a feature, not a bug. Reference contract: contracts/evaporscript/oracle_feed.es.",
+            "evaporchain-oracle-feed",
+        )
+        .expect("OracleFeed descriptor is constant"),
         // ── Governance lane ────────────────────────────────────────
         TemplateDescriptor::new(
             MORTAL_DAO,
@@ -437,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_35_templates() {
+    fn catalogue_lists_36_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -466,11 +479,15 @@ mod tests {
         // Auction (commit/reveal/settle with SBA-1 commit-hash binding
         // + decay-adjusted effective-bid comparator); 35 promoted
         // Lottery (single-draw chain-VRF selection, LOTTERY-1 operator
-        // can-influence-when-not-who, evaporation-void refund signal).
+        // can-influence-when-not-who, evaporation-void refund signal);
+        // 36 promoted Oracle Feed (generic decaying oracle in the
+        // Paradigm lane — companion to Bell-Oracle; freshness is a
+        // structural property of the read, not a consumer convention,
+        // and on_evaporate removing stale data from chain is a feature).
         // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
         // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 35);
+        assert_eq!(cat.len(), 36);
     }
 
     #[test]

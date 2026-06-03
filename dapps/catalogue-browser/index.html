@@ -26,7 +26,7 @@
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 35</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 36</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,7 +35,7 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">35 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">36 shown</span>
     </div>
   </header>
 
@@ -192,6 +192,9 @@
       { id: '0x0001_0504', name: 'Bell-Oracle (Quantum-Certified Beacon)', lane: 'Paradigm', icon: '🌀',
         crate: 'evaporchain-bell-oracle', src: 'bell_oracle.es', dapp: 'bell-oracle',
         desc: "On-chain consumer of EvaporChain's per-block CHSH S-value beacon. Structurally rejects readings ≤ local-realism floor (2000mb) so accepted state is certifiably quantum-derived." },
+      { id: '0x0001_0505', name: 'Oracle Feed (Decaying Data Oracle)', lane: 'Paradigm', icon: '📡',
+        crate: 'evaporchain-oracle-feed', src: 'oracle_feed.es', dapp: 'oracle-feed',
+        desc: "Generic decaying oracle. Standard oracles publish (value, timestamp) and force every consumer to decide staleness; OracleFeed inverts that — the feed IS a decaying contract, max_age is a hard freshness ceiling, is_fresh() flips structurally not by convention. Operator one-shot set_feed seals; only operator updates; anyone may dispute() (open public signal). latest() reverts when unset (structural alternative to sentinel-on-read). on_evaporate removes stale data from chain — a feature." },
 
       { id: '0x0001_0601', name: 'Mortal-DAO (Decay-Native Governance)', lane: 'Governance', icon: '🗳',
         crate: 'evaporchain-mortal-dao', src: 'mortal_dao.es', dapp: 'mortal-dao',

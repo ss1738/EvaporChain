@@ -1,0 +1,10 @@
+{
+  "name": "oracle-feed",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OracleFeed typed client — chain client for contracts/evaporscript/oracle_feed.es. Generic decaying oracle: the feed IS a decaying contract, max_age is a hard freshness ceiling, is_fresh() flips structurally rather than by consumer convention. on_evaporate removes stale data from chain — a feature.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

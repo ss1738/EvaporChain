@@ -149,6 +149,13 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // (chain-as-keeper escrow family); map growth at enter() is
         // gas-paid per call.
         TypedInit::Lottery(_) => SURCHARGE_MARKETPLACE,
+        // OracleFeed — generic decaying oracle (Paradigm lane).
+        // State carries the label string + the value + freshness
+        // accounting + dispute counter. Same tier as BellOracle (its
+        // Paradigm-lane companion): the off-chain consumer-binding
+        // contract that lets quantum-randomness/data-feed downstream
+        // contracts hold a typed reference.
+        TypedInit::OracleFeed(_) => SURCHARGE_PARADIGM,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }
