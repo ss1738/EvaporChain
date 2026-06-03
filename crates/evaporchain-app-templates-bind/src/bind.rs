@@ -576,6 +576,30 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("SealedBidAuction", "half_life must be > 0"));
             }
         }
+        // Lottery — energy + half_life > 0 + both defaults > 0.
+        // Unlike SealedBidAuction's reserve_price (which can be zero
+        // for "open auction" semantics), Lottery's `default_prize`
+        // and `default_stake` are intended to seed the wallet form
+        // with a runnable configuration. A 0 prize is incoherent
+        // (there'd be nothing to win); a 0 stake undermines the
+        // VRF-draw integrity claim (zero-cost entry = free Sybil
+        // wins). The actual prize + stake are still set at runtime
+        // via the one-shot `set_event(prize, stake)` mutator, but
+        // the catalogue defaults must themselves be sane.
+        TypedInit::Lottery(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("Lottery", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("Lottery", "half_life must be > 0"));
+            }
+            if c.default_prize == 0 {
+                return Err(invariant("Lottery", "default_prize must be > 0"));
+            }
+            if c.default_stake == 0 {
+                return Err(invariant("Lottery", "default_stake must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

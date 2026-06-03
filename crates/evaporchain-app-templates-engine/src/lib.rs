@@ -50,6 +50,7 @@ pub mod init_childkey;
 pub mod init_deadman;
 pub mod init_decay_access_pass;
 pub mod init_gallery_forgets;
+pub mod init_lottery;
 pub mod init_mayfly;
 pub mod init_mnemochain;
 pub mod init_mortal_dao;

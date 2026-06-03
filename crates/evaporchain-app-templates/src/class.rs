@@ -166,6 +166,19 @@ pub const PAYMENT_SPLIT_CLASS: TemplateClass = TemplateClass(0x0001_010D);
 /// Verified cargo pilot:
 /// `crates/evaporchain-script/tests/sealed_bid_auction_pilot.rs`.
 pub const SEALED_BID_AUCTION_CLASS: TemplateClass = TemplateClass(0x0001_010E);
+/// Lottery — single-draw lottery with chain-VRF selection. Operator
+/// configures `prize` + `stake` once (one-shot `set_event`), opens
+/// enrolment, anyone enters exactly once, then operator calls `draw()`.
+/// LOTTERY-1 (audit 2026-05-17): `random_range(entry_count)` derives
+/// the winning index from the chain's VRF beacon — the operator can
+/// only choose WHEN to draw, not WHO wins; influence asymmetry that
+/// off-chain randomness oracles can't claim. Winner pulls the prize
+/// once; unresolved at evaporation = `voided = true` so the coordinator
+/// refunds entries off-chain. Same chain-as-keeper pattern as the
+/// rest of the escrow family. Reference contract:
+/// `contracts/evaporscript/lottery.es`. Verified cargo pilot:
+/// `crates/evaporchain-script/tests/lottery_pilot.rs`.
+pub const LOTTERY_CLASS: TemplateClass = TemplateClass(0x0001_010F);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -258,6 +271,7 @@ mod tests {
             VESTING_SCHEDULE_CLASS,
             PAYMENT_SPLIT_CLASS,
             SEALED_BID_AUCTION_CLASS,
+            LOTTERY_CLASS,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -301,6 +315,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&VESTING_SCHEDULE_CLASS.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&PAYMENT_SPLIT_CLASS.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&SEALED_BID_AUCTION_CLASS.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&LOTTERY_CLASS.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         assert!((0x0001_0200..=0x0001_02FF).contains(&MULTISIG_PROPOSAL.0));

@@ -26,7 +26,7 @@
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 34</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 35</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,7 +35,7 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">34 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">35 shown</span>
     </div>
   </header>
 
@@ -146,6 +146,9 @@
       { id: '0x0001_010E', name: 'Sealed-Bid Auction (Commit/Reveal/Settle)', lane: 'Marketplace', icon: '🔨',
         crate: 'evaporchain-sealed-bid-auction', src: 'sealed_bid_auction.es', dapp: 'sealed-bid-auction',
         desc: "Classic commit/reveal/settle with a doctrine twist: effective (decay-adjusted) bid strength is the comparator, not nominal. Seller drives the phase machine (0 COMMIT → 1 REVEAL → 2 SETTLE → 3 CLOSED, strict monotone forward). SBA-1 binding (audit 2026-05-17): commit_hash stored on-chain + re-verified at reveal; the Rust NX4 substrate verifies the blake3 pre-image. on_evaporate without settlement = auction void; coordinator refunds bidders off-chain." },
+      { id: '0x0001_010F', name: 'Lottery (Single-Draw, Chain-VRF)', lane: 'Marketplace', icon: '🎰',
+        crate: 'evaporchain-lottery', src: 'lottery.es', dapp: 'lottery',
+        desc: "Single-draw lottery with chain-VRF winner selection. Operator one-shot set_event(prize, stake) seals configuration; any address enters exactly once; operator triggers draw(); random_range(entry_count) derives the winning index deterministically from the chain's VRF beacon. LOTTERY-1 (audit 2026-05-17): operator chooses WHEN to draw, never WHO wins — influence asymmetry that off-chain randomness oracles can't claim. Unresolved at evaporation = voided=true; coordinator refunds entries off-chain. Same chain-as-keeper pattern as the Marketplace escrow family." },
 
       { id: '0x0001_0201', name: 'Singh-Triage (Wallet Inbox)', lane: 'Wallet UX', icon: '📥',
         crate: 'evaporchain-singh-triage', src: 'singh_triage.es', dapp: null,

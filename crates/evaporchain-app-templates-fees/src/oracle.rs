@@ -143,6 +143,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // as lane peers; the map growth at commit + reveal is
         // gas-paid per call.
         TypedInit::SealedBidAuction(_) => SURCHARGE_MARKETPLACE,
+        // Lottery — single-draw, chain-VRF selection. State carries
+        // `entered` map + parallel `entry_by_index` map (per-entrant)
+        // plus phase / winner / claimed flags. Marketplace tier
+        // (chain-as-keeper escrow family); map growth at enter() is
+        // gas-paid per call.
+        TypedInit::Lottery(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

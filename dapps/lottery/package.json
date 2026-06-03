@@ -1,0 +1,10 @@
+{
+  "name": "lottery",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Lottery typed client — chain client for contracts/evaporscript/lottery.es. Single-draw lottery with chain-VRF winner selection (LOTTERY-1, operator controls WHEN not WHO). Unresolved at evaporation = voided = true; coordinator refunds entries off-chain.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

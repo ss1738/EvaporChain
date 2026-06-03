@@ -186,6 +186,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("SealedBidAuction descriptor is constant"),
         TemplateDescriptor::new(
+            LOTTERY_CLASS,
+            "Lottery (Single-Draw, Chain-VRF)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "half_life": 100, "default_prize": 1000, "default_stake": 100}),
+            "Single-draw lottery with chain-VRF winner selection. Operator deploys, calls one-shot `set_event(prize, stake)` to seal the configuration, then opens enrolment; any address may `enter()` exactly once (deduplicated by the `entered` map, parallel `entry_by_index` map preserves draw ordering since EvaporScript maps have no ordered iteration). Operator triggers `draw()`; LOTTERY-1 (audit 2026-05-17) — `random_range(entry_count)` derives the winning index deterministically from the chain's VRF beacon, so the operator can only influence WHEN the draw fires, never WHO wins. Winner pulls the prize once via `claim_prize()` (one-shot, address-gated, claimed-flag-gated). Doctrine claim: unresolved at evaporation = `voided = true`; the dApp coordinator reads the void flag and refunds stakes off-chain. Same chain-as-keeper pattern as the rest of the Marketplace escrow family — no off-chain reaper, no rescue contract, the runtime IS the deadline enforcer. Reference contract: contracts/evaporscript/lottery.es.",
+            "evaporchain-lottery",
+        )
+        .expect("Lottery descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -428,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_34_templates() {
+    fn catalogue_lists_35_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -455,11 +464,13 @@ mod tests {
         // with bps-shares-summing-to-10000 + SPLIT-1 division-first
         // overflow-safe entitlement math); 34 promoted Sealed-Bid
         // Auction (commit/reveal/settle with SBA-1 commit-hash binding
-        // + decay-adjusted effective-bid comparator). (Mayfly +
-        // Singh-Posthuma were ALREADY in the catalogue under different
-        // framings.)
+        // + decay-adjusted effective-bid comparator); 35 promoted
+        // Lottery (single-draw chain-VRF selection, LOTTERY-1 operator
+        // can-influence-when-not-who, evaporation-void refund signal).
+        // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
+        // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 34);
+        assert_eq!(cat.len(), 35);
     }
 
     #[test]
