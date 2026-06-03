@@ -248,6 +248,32 @@ pub const BELL_ORACLE: TemplateClass = TemplateClass(0x0001_0504);
 /// `crates/evaporchain-script/tests/oracle_feed_pilot.rs`.
 pub const ORACLE_FEED: TemplateClass = TemplateClass(0x0001_0505);
 
+// Money lane — primitives of circulating value itself. Distinct from
+// Marketplace (which is about bid/escrow/auction mechanics over
+// existing value): Money templates ARE the value, with the chain's
+// energy substrate doing the demurrage / mint / settle work that
+// elsewhere requires a keeper bot or off-chain timer.
+/// EvaporCashNote — bearer-note with native demurrage. ONE note =
+/// ONE contract instance; the note's own `energy` builtin IS its
+/// spendable value, so a hoarded note loses value by chain physics
+/// (the evaporation engine) with no keeper bot, no in-contract decay
+/// formula, and no off-chain timer. The Wörgl / Gesell "money rots
+/// if you hoard it" incentive, native. Deployer (`caller == owner`)
+/// calls one-shot `issue(to, face_value)` to bind the bearer; the
+/// current holder calls one-shot `spend(to)` to retire THIS note and
+/// emit the event the off-chain coordinator watches to reissue a
+/// fresh note carrying the live value (same shape as
+/// future_self_vault.es::try_payout). `live_value()` returns the
+/// chain's current `energy` builtin — NOT the issue-time `face`
+/// snapshot — so the two-value separation (face for accounting,
+/// energy for what you can spend) is structural, not by convention.
+/// `on_evaporate` emits "value lost to hoarding" iff `spent ==
+/// false`: the demurrage taken to its physical limit, the demo's
+/// whole punchline. Reference contract:
+/// `contracts/evaporscript/evaporcash_note.es`. Verified cargo pilot:
+/// `crates/evaporchain-script/tests/evaporcash_note_pilot.rs`.
+pub const EVAPORCASH_NOTE: TemplateClass = TemplateClass(0x0001_0701);
+
 // Governance lane — on-chain coordination primitives that compose
 // the decay substrate (credential / rate-limit / reputation / quorum)
 // into runnable contracts.
@@ -302,6 +328,7 @@ mod tests {
             SSM_GAME_SEMANTICS,
             BELL_ORACLE,
             ORACLE_FEED,
+            EVAPORCASH_NOTE,
             MORTAL_DAO,
         ] {
             assert!(c.is_in_app_range(), "{:#010x} not in app range", c.0);
@@ -347,6 +374,9 @@ mod tests {
         assert!((0x0001_0500..=0x0001_05FF).contains(&ORACLE_FEED.0));
         // Governance: 0x0001_0600..
         assert!((0x0001_0600..=0x0001_06FF).contains(&MORTAL_DAO.0));
+        // Money: 0x0001_0700.. — primitives of circulating value
+        // itself (distinct from Marketplace bid/escrow mechanics)
+        assert!((0x0001_0700..=0x0001_07FF).contains(&EVAPORCASH_NOTE.0));
     }
 
     #[test]

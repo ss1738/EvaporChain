@@ -1,0 +1,10 @@
+{
+  "name": "evapor-cash-note",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "EvaporCashNote typed client — chain client for contracts/evaporscript/evaporcash_note.es. Native demurrage bearer-note (Money lane): ONE note = ONE contract, the note's `energy` builtin IS its spendable value. The Wörgl/Gesell incentive native — hoarded notes lose value by chain physics, no keeper bot.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

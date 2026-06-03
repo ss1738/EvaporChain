@@ -30,6 +30,15 @@ const SURCHARGE_WALLET_UX: u64 = 300;
 const SURCHARGE_CONSUMER: u64 = 250;
 const SURCHARGE_CULTURAL: u64 = 250;
 const SURCHARGE_PARADIGM: u64 = 800;
+// Money lane — primitives of circulating value (EvaporCashNote-style
+// demurrage bearer-notes). State is minimal (one bearer + one face
+// snapshot + two flags); the doctrine "the note IS its energy" means
+// the chain runtime, not the contract, holds the spendable accounting.
+// Priced between Consumer and Marketplace: the contract surface is
+// thin but the off-chain coordinator wiring (reissue on spend,
+// hoarding-loss settlement on evaporate) makes it a real ecosystem
+// integration.
+const SURCHARGE_MONEY: u64 = 350;
 
 // ── Per-unit costs for variable-shape params.
 
@@ -156,6 +165,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // contract that lets quantum-randomness/data-feed downstream
         // contracts hold a typed reference.
         TypedInit::OracleFeed(_) => SURCHARGE_PARADIGM,
+        // EvaporCashNote — Money lane. State is minimal (one bearer
+        // address, one face snapshot, two flags); the doctrine "live
+        // value IS the chain's energy" means the runtime holds the
+        // spendable accounting, not the contract. Priced between
+        // Consumer and Marketplace.
+        TypedInit::EvaporCashNote(_) => SURCHARGE_MONEY,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

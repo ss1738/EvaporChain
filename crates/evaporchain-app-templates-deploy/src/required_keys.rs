@@ -20,9 +20,9 @@ use evaporchain_app_templates::{
         OPEN_BOUNTY, REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION,
         SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY,
         SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT,
-        LOTTERY_CLASS, ORACLE_FEED, PAYMENT_SPLIT_CLASS, SEALED_BID_AUCTION_CLASS,
-        SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE, TIME_LOCK, VESTING_SCHEDULE_CLASS,
-        WITNESSFIT_STREAK,
+        EVAPORCASH_NOTE, LOTTERY_CLASS, ORACLE_FEED, PAYMENT_SPLIT_CLASS,
+        SEALED_BID_AUCTION_CLASS, SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE, TIME_LOCK,
+        VESTING_SCHEDULE_CLASS, WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -124,6 +124,8 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
         c if c == BELL_ORACLE => &["energy", "half_life", "threshold_milli", "max_age_epochs"],
         c if c == ORACLE_FEED => &["initial_energy", "half_life", "default_max_age"],
         // ── Governance lane ───────────────────────────────────────
+        // ── Money lane ──────────────────────────────────────────
+        c if c == EVAPORCASH_NOTE => &["initial_energy", "half_life", "default_face"],
         c if c == MORTAL_DAO => &[
             "energy",
             "half_life",

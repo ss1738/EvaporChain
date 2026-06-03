@@ -376,6 +376,20 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-mortal-dao",
         )
         .expect("MortalDAO descriptor is constant"),
+        // ── Money lane ─────────────────────────────────────────────
+        TemplateDescriptor::new(
+            EVAPORCASH_NOTE,
+            "EvaporCash Note (Demurrage Bearer-Note)",
+            "Money",
+            json!({
+                "initial_energy": 1000,
+                "half_life": 100,
+                "default_face": 1000
+            }),
+            "Native demurrage money. ONE note = ONE contract instance, exactly the proven future_self_vault.es / mortal_message.es / energy_pool.es pattern. The note's own `energy` builtin IS its spendable value — the chain's evaporation engine decays it by physics, so a hoarded note loses value with no keeper bot, no in-contract decay formula, and no off-chain timer. The Wörgl / Gesell 'money rots if you hoard it' incentive, native. Deployer (caller == owner) calls one-shot issue(to, face_value) to bind the bearer; current holder calls one-shot spend(to) to retire THIS note and emit the event the off-chain coordinator watches to reissue a fresh note carrying the live value. live_value() returns the chain's current `energy` builtin — NOT the issue-time `face` snapshot — so the two-value separation (face for accounting, energy for what you can spend) is structural, not by convention. on_evaporate emits 'value lost to hoarding' iff spent == false: the demurrage taken to its physical limit. Reference contract: contracts/evaporscript/evaporcash_note.es.",
+            "evaporchain-evaporcash-note",
+        )
+        .expect("EvaporCashNote descriptor is constant"),
     ];
 
     // Sort by class id; dedupe (defensive).
@@ -431,11 +445,13 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_covers_all_seven_lanes() {
+    fn catalogue_covers_all_eight_lanes() {
         let cat = catalogue();
         let lanes: std::collections::BTreeSet<&str> = cat.iter().map(|d| d.lane.as_str()).collect();
-        // The 7 lanes the doctrine ships (Governance added 2026-05-30
-        // with MortalDAO — see class.rs comment block).
+        // The 8 lanes the doctrine ships (Governance added 2026-05-30
+        // with MortalDAO; Money added 2026-06-03 with EvaporCashNote
+        // — primitives of circulating value itself, distinct from
+        // Marketplace bid/escrow mechanics).
         for l in [
             "NFT",
             "Marketplace",
@@ -444,13 +460,14 @@ mod tests {
             "Cultural",
             "Paradigm",
             "Governance",
+            "Money",
         ] {
             assert!(lanes.contains(l), "lane {l} missing from catalogue");
         }
     }
 
     #[test]
-    fn catalogue_lists_36_templates() {
+    fn catalogue_lists_37_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -483,11 +500,16 @@ mod tests {
         // 36 promoted Oracle Feed (generic decaying oracle in the
         // Paradigm lane — companion to Bell-Oracle; freshness is a
         // structural property of the read, not a consumer convention,
-        // and on_evaporate removing stale data from chain is a feature).
+        // and on_evaporate removing stale data from chain is a feature);
+        // 37 OPENED THE MONEY LANE with EvaporCashNote (native demurrage
+        // bearer-note: ONE note = ONE contract instance, live_value
+        // reads the energy builtin so a hoarded note loses value by
+        // physics, on_evaporate-with-spent==false delivers the
+        // Wörgl/Gesell incentive native).
         // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
         // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 36);
+        assert_eq!(cat.len(), 37);
     }
 
     #[test]

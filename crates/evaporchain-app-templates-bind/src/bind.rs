@@ -618,6 +618,24 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("OracleFeed", "default_max_age must be > 0"));
             }
         }
+        // EvaporCashNote — energy + half_life + default_face all > 0.
+        // The doctrine "live_value reads the chain's energy" means
+        // initial_energy IS the note's value at issue; deploying with
+        // zero energy would issue an instantly-evaporated note.
+        // default_face = 0 would seed the wallet form with the
+        // rejected `face_value > 0` contract guard, making the
+        // catalogue default unusable from the UI.
+        TypedInit::EvaporCashNote(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("EvaporCashNote", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("EvaporCashNote", "half_life must be > 0"));
+            }
+            if c.default_face == 0 {
+                return Err(invariant("EvaporCashNote", "default_face must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))
