@@ -129,6 +129,13 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // monotonic claimed_amount + cancellation flags + forfeit
         // accumulator) — sits in marketplace tier.
         TypedInit::VestingSchedule(_) => SURCHARGE_MARKETPLACE,
+        // Payment Split — Marketplace-lane pull-payment revenue
+        // splitter. State carries TWO per-recipient maps (shares +
+        // claimed), counters, lifecycle flags. Same surcharge as lane
+        // peers; the map growth at add_recipient time is gas-paid per
+        // call so the per-deploy floor matches the rest of the
+        // marketplace tier.
+        TypedInit::PaymentSplit(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

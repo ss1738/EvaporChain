@@ -57,6 +57,7 @@ pub mod init_mortal_message;
 pub mod init_mortal_nft;
 pub mod init_multisig;
 pub mod init_open_bounty;
+pub mod init_payment_split;
 pub mod init_refresh_market;
 pub mod init_sap;
 pub mod init_sbav;

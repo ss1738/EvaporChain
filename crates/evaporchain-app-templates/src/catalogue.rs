@@ -168,6 +168,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("VestingSchedule descriptor is constant"),
         TemplateDescriptor::new(
+            PAYMENT_SPLIT_CLASS,
+            "Payment Split (Pull-Payment Revenue Splitter)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "half_life": 100}),
+            "Pull-payment revenue splitter with basis-point shares. Deployer adds N recipients with bps shares that must sum to exactly 10_000 (100.00% — no dust, no over-allocation), then seals. Any address may deposit; recipients pull their cumulative share on demand via SPLIT-1 division-first formula (whole * bps + rem * bps / 10000) that avoids u64 overflow at total_deposited > u64::MAX/bps. Per-recipient claimed[] tracking makes claims idempotent — re-claim with no new deposit reverts. Doctrine claim: at evaporation, unclaimed amounts forfeit; on_evaporate stamps unclaimed_at_evaporate + flips forfeit_signaled so the off-chain coordinator returns the pool residue to the deployer. The runtime is the closer — no off-chain recovery sweep needed. Reference contract: contracts/evaporscript/payment_split.es.",
+            "evaporchain-payment-split",
+        )
+        .expect("PaymentSplit descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -410,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_32_templates() {
+    fn catalogue_lists_33_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -432,11 +441,13 @@ mod tests {
         // promoted Vesting Schedule (linear vest with cliff) into the
         // Marketplace lane (the classic financial primitive every
         // VC-backed startup needs, with the doctrine twist that the
-        // post-vest claim window is bounded by the contract's energy).
-        // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
-        // different framings.)
+        // post-vest claim window is bounded by the contract's energy);
+        // 33 promoted Payment Split (pull-payment revenue splitter
+        // with bps-shares-summing-to-10000 + SPLIT-1 division-first
+        // overflow-safe entitlement math). (Mayfly + Singh-Posthuma
+        // were ALREADY in the catalogue under different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 32);
+        assert_eq!(cat.len(), 33);
     }
 
     #[test]

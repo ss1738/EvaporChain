@@ -550,6 +550,19 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 ));
             }
         }
+        // Payment Split — both lifetime params must be positive. The
+        // recipient set + bps shares (must sum to exactly 10_000) are
+        // set at runtime via add_recipient() + seal(); they're
+        // variable-shape so they don't fit the typed init. The .es
+        // contract enforces the bps invariants at runtime.
+        TypedInit::PaymentSplit(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("PaymentSplit", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("PaymentSplit", "half_life must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

@@ -1,0 +1,10 @@
+{
+  "name": "payment-split",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "PaymentSplit typed client — chain client for contracts/evaporscript/payment_split.es. Pull-payment revenue splitter with basis-point shares (must sum to 10_000). Any address deposits; recipients pull cumulative share. on_evaporate flips forfeit_signaled to return residue to deployer.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

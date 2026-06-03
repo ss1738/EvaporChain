@@ -136,6 +136,21 @@ pub const TIME_LOCK: TemplateClass = TemplateClass(0x0001_010B);
 /// Verified cargo pilot:
 /// `crates/evaporchain-script/tests/vesting_schedule_pilot.rs`.
 pub const VESTING_SCHEDULE_CLASS: TemplateClass = TemplateClass(0x0001_010C);
+/// Payment Split — pull-payment revenue splitter with basis-point
+/// shares. Deployer adds N recipients with bps shares that must sum
+/// to exactly 10_000 (100.00%), then seals. Any address deposits;
+/// recipients pull cumulative share on demand via the SPLIT-1
+/// division-first formula (audit 2026-05-17 hardening; avoids u64
+/// overflow at total_deposited > u64::MAX/bps). Per-recipient
+/// `claimed[]` tracking makes the math idempotent — re-claim with no
+/// new deposit reverts. Doctrine claim: at evaporation, unclaimed
+/// amounts forfeit; on_evaporate stamps `unclaimed_at_evaporate` +
+/// flips `forfeit_signaled` so the coordinator returns the residue
+/// to the deployer. No off-chain recovery sweep — the runtime is the
+/// closer. Reference contract: `contracts/evaporscript/payment_split.es`.
+/// Verified cargo pilot:
+/// `crates/evaporchain-script/tests/payment_split_pilot.rs`.
+pub const PAYMENT_SPLIT_CLASS: TemplateClass = TemplateClass(0x0001_010D);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -226,6 +241,7 @@ mod tests {
             OPEN_BOUNTY,
             TIME_LOCK,
             VESTING_SCHEDULE_CLASS,
+            PAYMENT_SPLIT_CLASS,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -267,6 +283,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&OPEN_BOUNTY.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&TIME_LOCK.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&VESTING_SCHEDULE_CLASS.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&PAYMENT_SPLIT_CLASS.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         assert!((0x0001_0200..=0x0001_02FF).contains(&MULTISIG_PROPOSAL.0));
