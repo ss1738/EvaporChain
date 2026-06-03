@@ -6,6 +6,51 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-03 (deep grind) — Vesting Schedule full atomic arc (32nd template)
+
+**Focus:** the classic financial primitive every VC-backed startup needs. Linear vest with cliff, promoted with the doctrine twist that the post-vest claim window is bounded by the contract's own energy. 8th catalogue promotion of this sprint arc; same 14-file pattern as multisig + time-lock.
+**Commits shipped:** 1 on main (`679aaff0`) — **14 files, 684 insertions**.
+**Catalogue is now 32 templates.** Marketplace lane up to 11 entries — densest of any.
+**Doctrine claim:** vested-but-unclaimed amount forfeits at evaporation. on_evaporate stamps `vested_at_evaporate` and flips `forfeit_signaled` so the off-chain coordinator returns the unclaimed remainder to the grantor.
+**VEST-1 (audit 2026-05-17) hardening surfaced:** all 5 vest-calculation sites use division-first arithmetic (`vest_whole * elapsed + vest_rem * elapsed / duration_epochs`) to avoid u64 overflow at large grants. The TS test pin asserts the pattern appears at exactly 5 sites — a regression to multiply-first overflow form would trip the test.
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| dApp client | `dapps/vesting-schedule/` — 3 mutators (set_terms, claim, cancel) + 7 views + auth-injected Tx wrappers. **10/10 TS tests pass** with 4 pinned-invariant tests: cancel() blocked after first claim; set_terms enforces cliff <= duration; VEST-1 division-first at exactly 5 sites; on_evaporate stamps vested-at-death + flips forfeit. |
+| Class registry | New `VESTING_SCHEDULE_CLASS: TemplateClass(0x0001_010C)`. |
+| Catalogue | Count test 31 → 32. |
+| Engine init module | `init_vesting_schedule.rs` (new) with 5 u64 fields. |
+| Engine dispatch | New `TypedInit::VestingSchedule` variant + dispatch arm. |
+| Fees oracle | `SURCHARGE_MARKETPLACE`. |
+| Bind invariants | energy + half_life + default_grant + default_duration all > 0; default_cliff <= default_duration. Note that cliff=0 (cliff-less vesting) is allowed — that's a valid configuration. |
+| Required keys | New 5-key row. |
+| Catalogue-browser | New entry; display strings 31 → 32. |
+| Landing page | Catalogue-count 31 → 32. |
+**Empirical results on Mini-1 worktree (`679aaff0`):** 220+ tests pass across 5 template crates, 0 failures. The `every_catalogue_default_binds` test continues green for all 32 templates. Worktree cleaned up.
+
+**Marketplace lane now 11 entries** (densest in catalogue):
+
+| Class id | Template |
+|---|---|
+| `0x0001_0101` | SDDC (Decay-Dutch Continuous Auction) |
+| `0x0001_0102` | SFSV (Future-Self Vault) |
+| `0x0001_0103` | SHLM (Skill Half-Life Bounty) |
+| `0x0001_0104` | SCL (Capability Lease) |
+| `0x0001_0105` | SAP (Attention Quantum) |
+| `0x0001_0106` | Refresh-Market (Namespace Rent) |
+| `0x0001_0107` | Decay Access Pass (Credential) |
+| `0x0001_0108` | DeadMan Switch |
+| `0x0001_0109` | Subscription |
+| `0x0001_010A` | Open Bounty |
+| `0x0001_010B` | Time Lock |
+| `0x0001_010C` | **Vesting Schedule** |
+
+**Sprint cumulative: 23 ship commits + 19 session entries = 42 commits over the 2026-06-01 → 2026-06-03 arc.**
+
+**Cross-references:** commit `679aaff0`. Files: 14 changed. Source contract: `contracts/evaporscript/vesting_schedule.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/vesting_schedule_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-02 (keep grinding) — Time Lock full atomic arc (31st template)
 
 **Focus:** pivot from docs back to code. Ship another atomic catalogue arc using the proven 14-file pattern from the multisig commit (`8296c321`). Time-lock fits the chain-as-keeper escrow doctrine — the fourth Marketplace primitive in the family.
