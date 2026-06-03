@@ -6,6 +6,51 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-03 (still grinding) — Lottery full atomic arc (35th template)
+
+**Focus:** 11th catalogue promotion of this sprint arc. Single-draw lottery with chain-VRF winner selection. The doctrine claim — operator influences WHEN to draw but NEVER WHO wins — comes from `random_range(self.entry_count)` deriving the winning index deterministically from the chain's VRF beacon, not from any operator argument. Off-chain randomness oracles cannot claim this influence asymmetry.
+**Commits shipped:** 1 on main (`53bc44c4`) — **14 files, 437 insertions**.
+**Catalogue is now 35 templates.** Marketplace lane now 14 entries (densest by far — 41% of the catalogue).
+**Doctrine claim:** unresolved at evaporation = `voided = true`; coordinator refunds entries off-chain. Same chain-as-keeper pattern as the rest of the escrow family (DeadMan / Subscription / OpenBounty / TimeLock / Vesting / PaymentSplit / SealedBidAuction).
+**LOTTERY-1 (audit 2026-05-17) surfaced in TS test pin:** `draw()` must use `random_range(self.entry_count)` AND `entry_by_index[winner_index]` — if either ever drifts to an operator-supplied input, the security posture collapses. Both lines pinned by string match. Plus three other invariant tests:
+- `enter()` must stamp `entry_by_index[entry_count]` BEFORE incrementing `entry_count` (off-by-one would leave slot 0 empty)
+- `set_event()` must be one-shot (sealed-flag gate; re-config would be a rug-pull)
+- `on_evaporate()` sets `voided = true` only when `drawn == false` (refunding a drawn lottery would confuse the coordinator)
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| dApp client | `dapps/lottery/` — 5 mutators (set_event, enter, draw, claim_prize + deploy) + 7 views + auth-injected Tx wrappers. **13/13 TS tests pass** with **4 pinned-invariant tests** including the LOTTERY-1 dual-line pin. |
+| Class registry | New `LOTTERY_CLASS: TemplateClass(0x0001_010F)`. |
+| Catalogue | Count test 34 → 35. |
+| Engine init module | `init_lottery.rs` (new) — 4 u64 fields (initial_energy, half_life, default_prize, default_stake). Runtime args (exact prize, exact stake) belong to the one-shot `set_event()` mutator. |
+| Engine dispatch | New `TypedInit::Lottery` variant + dispatch arm. |
+| Fees oracle | `SURCHARGE_MARKETPLACE`. |
+| Bind invariants | All 4 numerics > 0. **Unlike SealedBidAuction's `default_reserve_price` (which CAN be zero for "open auction" semantics), Lottery's `default_prize` AND `default_stake` MUST be > 0** — 0 prize is incoherent (nothing to win); 0 stake undermines the VRF-draw integrity via free Sybil wins. |
+| Required keys | New 4-key row. |
+| Catalogue-browser | New entry in class-id order; display strings 34 → 35. |
+| Landing page | Catalogue-count 34 → 35. |
+**Empirical results on Mini-1 worktree (`53bc44c4`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 35 templates. Worktree cleaned up.
+
+**Marketplace lane now 14 entries — over 41% of the catalogue:**
+
+| 0x0001_01... | Template |
+|---|---|
+| `01-07` | (7 legacy entries) |
+| `08` | DeadMan Switch · chain-keeper secret release |
+| `09` | Subscription · chain-keeper recurring payment |
+| `0A` | Open Bounty · chain-keeper task escrow |
+| `0B` | Time Lock · chain-keeper vault |
+| `0C` | Vesting Schedule · linear vest with cliff |
+| `0D` | Payment Split · pull-payment revenue splitter |
+| `0E` | Sealed-Bid Auction · commit/reveal/settle |
+| `0F` | **Lottery · single-draw chain-VRF (LOTTERY-1 influence asymmetry)** |
+
+**Sprint cumulative: 28 ship commits + 24 session entries = 52 commits over the 2026-06-01 → 2026-06-03 arc.** Catalogue 24 → 35 (11 promotions in three calendar days).
+
+**Cross-references:** commit `53bc44c4`. Files: 14 changed. Source contract: `contracts/evaporscript/lottery.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/lottery_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-03 (sustained grind) — Sealed-Bid Auction full atomic arc (34th template)
 
 **Focus:** 10th catalogue promotion of this sprint arc. Classic commit/reveal/settle with the doctrine twist that `effective` (decay-adjusted) bid strength is the comparator, not nominal — early reveal wins on equal-effective ties.
