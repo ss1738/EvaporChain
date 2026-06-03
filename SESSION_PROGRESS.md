@@ -6,6 +6,47 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-03 (sustained grind) — Sealed-Bid Auction full atomic arc (34th template)
+
+**Focus:** 10th catalogue promotion of this sprint arc. Classic commit/reveal/settle with the doctrine twist that `effective` (decay-adjusted) bid strength is the comparator, not nominal — early reveal wins on equal-effective ties.
+**Commits shipped:** 1 on main (`f7e39f6b`) — **14 files, 745 insertions** (largest single ship of the sprint).
+**Catalogue is now 34 templates.** Marketplace lane now 13 entries.
+**Doctrine claim:** `on_evaporate` without settlement = auction void; coordinator refunds bidders off-chain. Same chain-as-keeper pattern as the rest of the Marketplace family.
+**SBA-1 commit-reveal binding (audit 2026-05-17) surfaced in TS test pin:** `commit_hash` stored on-chain at `commit()` + re-verified at `reveal()` against the supplied `commitment_hash`. The Rust NX4 substrate verifies the blake3 pre-image (`chain_id || auction_id || bidder || price || nonce`) so both layers enforce binding — neither can be bypassed alone.
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| dApp client | `dapps/sealed-bid-auction/` — 5 mutators (set_metadata, set_phase, commit, reveal, record_winner) + 8 views + auth-injected Tx wrappers. **14/14 TS tests pass** with **4 pinned-invariant tests**: SBA-1 binding (commit_hash match at reveal); set_phase strict monotone forward only; record_winner verifies (a) winner revealed + (b) claimed effective matches on-chain; on_evaporate void emit gated on `settled == false`. |
+| Class registry | New `SEALED_BID_AUCTION_CLASS: TemplateClass(0x0001_010E)`. |
+| Catalogue | Count test 33 → 34. |
+| Engine init module | `init_sealed_bid_auction.rs` (new) — 3 u64 fields. Item label is variable-shape and set at set_metadata() runtime. |
+| Engine dispatch | New `TypedInit::SealedBidAuction` variant + dispatch arm. |
+| Fees oracle | `SURCHARGE_MARKETPLACE`. |
+| Bind invariants | energy + half_life > 0. `default_reserve_price` IS allowed to be zero (0-reserve "open auction" for free-distribution token allocations — valid configuration). |
+| Required keys | New 3-key row. |
+| Catalogue-browser | New entry in class-id order; display strings 33 → 34. |
+| Landing page | Catalogue-count 33 → 34. |
+**Empirical results on Mini-1 worktree (`f7e39f6b`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 34 templates. Worktree cleaned up.
+
+**Marketplace lane now 13 entries — the densest in the catalogue by far:**
+
+| 0x0001_01... | Template |
+|---|---|
+| `01-07` | (7 legacy entries) |
+| `08` | DeadMan Switch · chain-keeper secret release |
+| `09` | Subscription · chain-keeper recurring payment |
+| `0A` | Open Bounty · chain-keeper task escrow |
+| `0B` | Time Lock · chain-keeper vault |
+| `0C` | Vesting Schedule · linear vest with cliff |
+| `0D` | Payment Split · pull-payment revenue splitter |
+| `0E` | **Sealed-Bid Auction · commit/reveal/settle with decay-adjusted comparator** |
+
+**Sprint cumulative: 27 ship commits + 23 session entries = 50 commits over the 2026-06-01 → 2026-06-03 arc.** Catalogue 24 → 34 (10 promotions in three calendar days).
+
+**Cross-references:** commit `f7e39f6b`. Files: 14 changed. Source contract: `contracts/evaporscript/sealed_bid_auction.es`. Pre-existing cargo pilot: `crates/evaporchain-script/tests/sealed_bid_auction_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-03 (deeper grind) — Payment Split full atomic arc (33rd template)
 
 **Focus:** universal primitive for DAOs / dev-team treasuries / royalty splits. Pull-payment revenue splitter with basis-point shares (must sum to exactly 10_000 by seal-time). 9th catalogue promotion of this sprint arc; same 14-file pattern.
