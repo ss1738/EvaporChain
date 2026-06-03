@@ -62,6 +62,7 @@ pub mod init_refresh_market;
 pub mod init_sap;
 pub mod init_sbav;
 pub mod init_scl;
+pub mod init_sealed_bid_auction;
 pub mod init_sddc;
 pub mod init_sfsv;
 pub mod init_sgb;

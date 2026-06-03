@@ -177,6 +177,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("PaymentSplit descriptor is constant"),
         TemplateDescriptor::new(
+            SEALED_BID_AUCTION_CLASS,
+            "Sealed-Bid Auction (Commit/Reveal/Settle)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "half_life": 100, "default_reserve_price": 100}),
+            "Classic commit/reveal/settle auction with a doctrine twist: `effective` (decay-adjusted) bid strength is the comparator, not nominal — the dApp coordinator decays nominal → effective by reveal-time distance from commit, so early reveal wins on ties. Seller drives the phase machine (0 COMMIT → 1 REVEAL → 2 SETTLE → 3 CLOSED, strict monotone forward only); bidders commit a hash in phase 0, reveal nominal + effective + commitment hash in phase 1; record_winner advances to phase 3 atomically. SBA-1 binding (audit 2026-05-17): commit_hash stored on-chain at commit, re-verified at reveal; the Rust NX4 substrate verifies the blake3 pre-image — both layers enforce binding so neither can be bypassed alone. on_evaporate without settlement emits a void event; coordinator refunds bidders off-chain. Reference contract: contracts/evaporscript/sealed_bid_auction.es.",
+            "evaporchain-sealed-bid-auction",
+        )
+        .expect("SealedBidAuction descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -419,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_33_templates() {
+    fn catalogue_lists_34_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -444,10 +453,13 @@ mod tests {
         // post-vest claim window is bounded by the contract's energy);
         // 33 promoted Payment Split (pull-payment revenue splitter
         // with bps-shares-summing-to-10000 + SPLIT-1 division-first
-        // overflow-safe entitlement math). (Mayfly + Singh-Posthuma
-        // were ALREADY in the catalogue under different framings.)
+        // overflow-safe entitlement math); 34 promoted Sealed-Bid
+        // Auction (commit/reveal/settle with SBA-1 commit-hash binding
+        // + decay-adjusted effective-bid comparator). (Mayfly +
+        // Singh-Posthuma were ALREADY in the catalogue under different
+        // framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 33);
+        assert_eq!(cat.len(), 34);
     }
 
     #[test]

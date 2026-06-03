@@ -22,11 +22,11 @@
     <div class="max-w-6xl mx-auto px-6 py-5 flex items-baseline gap-4">
       <h1 class="text-xl font-semibold tracking-tight">Template Catalogue</h1>
       <span class="text-xs text-slate-500">
-        33 templates · 7 lanes · 100% backed by reference .es contracts
+        34 templates · 7 lanes · 100% backed by reference .es contracts
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 33</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 34</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,7 +35,7 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">33 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">34 shown</span>
     </div>
   </header>
 
@@ -143,6 +143,9 @@
       { id: '0x0001_010D', name: 'Payment Split (Pull-Payment Revenue Splitter)', lane: 'Marketplace', icon: '🪙',
         crate: 'evaporchain-payment-split', src: 'payment_split.es', dapp: 'payment-split',
         desc: "Pull-payment revenue splitter with basis-point shares. Deployer adds N recipients (bps shares must sum to exactly 10_000 — 100.00%), then seals. Any address deposits; recipients pull cumulative share on demand. SPLIT-1 (audit 2026-05-17) division-first entitlement math avoids u64 overflow at large pools. on_evaporate stamps unclaimed_at_evaporate + flips forfeit_signaled — the runtime returns pool residue to the deployer at evaporation." },
+      { id: '0x0001_010E', name: 'Sealed-Bid Auction (Commit/Reveal/Settle)', lane: 'Marketplace', icon: '🔨',
+        crate: 'evaporchain-sealed-bid-auction', src: 'sealed_bid_auction.es', dapp: 'sealed-bid-auction',
+        desc: "Classic commit/reveal/settle with a doctrine twist: effective (decay-adjusted) bid strength is the comparator, not nominal. Seller drives the phase machine (0 COMMIT → 1 REVEAL → 2 SETTLE → 3 CLOSED, strict monotone forward). SBA-1 binding (audit 2026-05-17): commit_hash stored on-chain + re-verified at reveal; the Rust NX4 substrate verifies the blake3 pre-image. on_evaporate without settlement = auction void; coordinator refunds bidders off-chain." },
 
       { id: '0x0001_0201', name: 'Singh-Triage (Wallet Inbox)', lane: 'Wallet UX', icon: '📥',
         crate: 'evaporchain-singh-triage', src: 'singh_triage.es', dapp: null,

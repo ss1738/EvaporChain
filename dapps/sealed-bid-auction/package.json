@@ -1,0 +1,10 @@
+{
+  "name": "sealed-bid-auction",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SealedBidAuction typed client — chain client for contracts/evaporscript/sealed_bid_auction.es. Commit/reveal/settle auction; SBA-1 commit-reveal binding (commit_hash stored on-chain, re-verified at reveal); effective (decay-adjusted) bid strength is the comparator. on_evaporate without settlement = void.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

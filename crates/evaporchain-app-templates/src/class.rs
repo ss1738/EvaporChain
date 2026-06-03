@@ -151,6 +151,21 @@ pub const VESTING_SCHEDULE_CLASS: TemplateClass = TemplateClass(0x0001_010C);
 /// Verified cargo pilot:
 /// `crates/evaporchain-script/tests/payment_split_pilot.rs`.
 pub const PAYMENT_SPLIT_CLASS: TemplateClass = TemplateClass(0x0001_010D);
+/// Sealed-Bid Auction — classic commit/reveal/settle with a doctrine
+/// twist: `effective` (decay-adjusted) bid strength is the comparator,
+/// not nominal. Seller advances the phase machine (0 COMMIT → 1 REVEAL
+/// → 2 SETTLE → 3 CLOSED, strict monotone forward only). Bidders
+/// commit a hash in phase 0, reveal nominal + effective + commitment
+/// hash in phase 1; seller picks winner in phase 2 (record_winner
+/// auto-advances to phase 3). SBA-1 commit-reveal binding (audit
+/// 2026-05-17): commit_hash stored on-chain at commit, re-verified at
+/// reveal; the Rust NX4 substrate verifies the blake3 pre-image —
+/// both layers enforce binding. on_evaporate without settlement
+/// emits a void event; the coordinator refunds bidders off-chain.
+/// Reference contract: `contracts/evaporscript/sealed_bid_auction.es`.
+/// Verified cargo pilot:
+/// `crates/evaporchain-script/tests/sealed_bid_auction_pilot.rs`.
+pub const SEALED_BID_AUCTION_CLASS: TemplateClass = TemplateClass(0x0001_010E);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -242,6 +257,7 @@ mod tests {
             TIME_LOCK,
             VESTING_SCHEDULE_CLASS,
             PAYMENT_SPLIT_CLASS,
+            SEALED_BID_AUCTION_CLASS,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -284,6 +300,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&TIME_LOCK.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&VESTING_SCHEDULE_CLASS.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&PAYMENT_SPLIT_CLASS.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&SEALED_BID_AUCTION_CLASS.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         assert!((0x0001_0200..=0x0001_02FF).contains(&MULTISIG_PROPOSAL.0));

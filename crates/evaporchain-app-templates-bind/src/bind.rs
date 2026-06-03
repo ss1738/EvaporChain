@@ -563,6 +563,19 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("PaymentSplit", "half_life must be > 0"));
             }
         }
+        // Sealed-Bid Auction — energy + half_life > 0. default_reserve_price
+        // is allowed to be zero (0-reserve "open auction" — accepts
+        // any positive nominal bid; valid configuration, e.g., for
+        // free-distribution token allocations). Item label is set at
+        // set_metadata() runtime; reserve_price too.
+        TypedInit::SealedBidAuction(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("SealedBidAuction", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("SealedBidAuction", "half_life must be > 0"));
+            }
+        }
     }
 
     Ok(Bound(typed))

@@ -136,6 +136,13 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // call so the per-deploy floor matches the rest of the
         // marketplace tier.
         TypedInit::PaymentSplit(_) => SURCHARGE_MARKETPLACE,
+        // Sealed-Bid Auction — Marketplace-lane commit/reveal/settle.
+        // State carries 5 per-bidder maps (committed_hashes,
+        // committed, revealed, nominal, effective), phase machine,
+        // counters, winner + lifecycle flags. Same marketplace tier
+        // as lane peers; the map growth at commit + reveal is
+        // gas-paid per call.
+        TypedInit::SealedBidAuction(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }
