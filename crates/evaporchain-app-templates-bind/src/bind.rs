@@ -523,6 +523,33 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("TimeLock", "default_lock_window must be > 0"));
             }
         }
+        // Vesting Schedule — energy + half_life + default_grant +
+        // default_duration all > 0; default_cliff <= default_duration.
+        // The .es contract enforces grant > 0, duration > 0, and
+        // cliff <= duration at set_terms runtime; pre-flight rejection
+        // saves a confusing tx round-trip. default_cliff IS allowed
+        // to be zero (cliff-less vesting is a valid configuration —
+        // linear vest from start to duration).
+        TypedInit::VestingSchedule(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("VestingSchedule", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("VestingSchedule", "half_life must be > 0"));
+            }
+            if c.default_grant == 0 {
+                return Err(invariant("VestingSchedule", "default_grant must be > 0"));
+            }
+            if c.default_duration == 0 {
+                return Err(invariant("VestingSchedule", "default_duration must be > 0"));
+            }
+            if c.default_cliff > c.default_duration {
+                return Err(invariant(
+                    "VestingSchedule",
+                    "default_cliff must be <= default_duration",
+                ));
+            }
+        }
     }
 
     Ok(Bound(typed))

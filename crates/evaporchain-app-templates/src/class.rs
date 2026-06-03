@@ -122,6 +122,20 @@ pub const OPEN_BOUNTY: TemplateClass = TemplateClass(0x0001_010A);
 /// contract: `contracts/evaporscript/time_lock.es`. Verified cargo
 /// pilot: `crates/evaporchain-script/tests/time_lock_pilot.rs`.
 pub const TIME_LOCK: TemplateClass = TemplateClass(0x0001_010B);
+/// Vesting Schedule — classic linear vest with cliff. Grantor locks
+/// `grant` for `beneficiary` over `duration` epochs with a `cliff`;
+/// vested amount rises linearly from 0 to total_grant between cliff
+/// and duration. Doctrine claim: the post-vest claim window is
+/// bounded by the contract's own energy — if the beneficiary stops
+/// claiming and the contract evaporates, on_evaporate stamps
+/// `vested_at_evaporate` and flips `forfeit_signaled` so the
+/// off-chain coordinator returns the unclaimed remainder to the
+/// grantor. VEST-1 (audit 2026-05-17): all five vest-math sites use
+/// division-first arithmetic to avoid u64 overflow at large grants.
+/// Reference contract: `contracts/evaporscript/vesting_schedule.es`.
+/// Verified cargo pilot:
+/// `crates/evaporchain-script/tests/vesting_schedule_pilot.rs`.
+pub const VESTING_SCHEDULE_CLASS: TemplateClass = TemplateClass(0x0001_010C);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -211,6 +225,7 @@ mod tests {
             SUBSCRIPTION_SERVICE,
             OPEN_BOUNTY,
             TIME_LOCK,
+            VESTING_SCHEDULE_CLASS,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,
@@ -251,6 +266,7 @@ mod tests {
         assert!((0x0001_0100..=0x0001_01FF).contains(&SUBSCRIPTION_SERVICE.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&OPEN_BOUNTY.0));
         assert!((0x0001_0100..=0x0001_01FF).contains(&TIME_LOCK.0));
+        assert!((0x0001_0100..=0x0001_01FF).contains(&VESTING_SCHEDULE_CLASS.0));
         // Wallet UX: 0x0001_0200..
         assert!((0x0001_0200..=0x0001_02FF).contains(&SINGH_LINEAGE_POLICY.0));
         assert!((0x0001_0200..=0x0001_02FF).contains(&MULTISIG_PROPOSAL.0));

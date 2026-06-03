@@ -22,11 +22,11 @@
     <div class="max-w-6xl mx-auto px-6 py-5 flex items-baseline gap-4">
       <h1 class="text-xl font-semibold tracking-tight">Template Catalogue</h1>
       <span class="text-xs text-slate-500">
-        31 templates · 7 lanes · 100% backed by reference .es contracts
+        32 templates · 7 lanes · 100% backed by reference .es contracts
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 31</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 32</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,7 +35,7 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">31 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">32 shown</span>
     </div>
   </header>
 
@@ -137,6 +137,9 @@
       { id: '0x0001_010B', name: 'Time Lock (Chain-Keeper Vault)', lane: 'Marketplace', icon: '🔒',
         crate: 'evaporchain-time-lock', src: 'time_lock.es', dapp: 'time-lock',
         desc: "Time-locked vault: grantor locks `amount` for `beneficiary` until `unlock_epoch`. Grantor may revoke pre-unlock; beneficiary may claim post-unlock; once the unlock epoch passes the grantor's clawback is closed. on_evaporate flips forfeit_signaled=true if never claimed and never revoked, so the off-chain coordinator returns the locked amount to the grantor. The fourth chain-as-keeper Marketplace primitive (after DeadMan Switch, Subscription, Open Bounty)." },
+      { id: '0x0001_010C', name: 'Vesting Schedule (Linear Vest with Cliff)', lane: 'Marketplace', icon: '📈',
+        crate: 'evaporchain-vesting-schedule', src: 'vesting_schedule.es', dapp: 'vesting-schedule',
+        desc: "Classic linear vest with cliff. Grantor locks `grant` for `beneficiary` over `duration` epochs starting after `cliff`; vested amount rises linearly from 0 to total_grant between cliff and duration. Beneficiary claims the delta between vested-now and claimed-so-far. Doctrine twist: the post-vest claim window is bounded by the contract's own energy — on_evaporate stamps vested_at_evaporate + flips forfeit_signaled so the coordinator returns the unclaimed remainder to the grantor. VEST-1 (audit 2026-05-17): division-first vest math at all 5 sites avoids u64 overflow." },
 
       { id: '0x0001_0201', name: 'Singh-Triage (Wallet Inbox)', lane: 'Wallet UX', icon: '📥',
         crate: 'evaporchain-singh-triage', src: 'singh_triage.es', dapp: null,

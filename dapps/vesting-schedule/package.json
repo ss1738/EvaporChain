@@ -1,0 +1,10 @@
+{
+  "name": "vesting-schedule",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "VestingSchedule typed client — chain client for contracts/evaporscript/vesting_schedule.es. Linear vest with cliff; vested-but-unclaimed remainder forfeits to grantor on evaporation via on_evaporate. The post-vest claim window is bounded by the contract's own energy.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

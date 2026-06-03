@@ -123,6 +123,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // + unlock_epoch + lifecycle flags + forfeit accumulator) sits
         // squarely in the marketplace tier.
         TypedInit::TimeLock(_) => SURCHARGE_MARKETPLACE,
+        // Vesting Schedule — Marketplace-lane classic linear vest with
+        // cliff. Same surcharge as its lane peers; state shape similar
+        // to Time Lock (grantor + beneficiary + grant/cliff/duration +
+        // monotonic claimed_amount + cancellation flags + forfeit
+        // accumulator) — sits in marketplace tier.
+        TypedInit::VestingSchedule(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

@@ -159,6 +159,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
         )
         .expect("TimeLock descriptor is constant"),
         TemplateDescriptor::new(
+            VESTING_SCHEDULE_CLASS,
+            "Vesting Schedule (Linear Vest with Cliff)",
+            "Marketplace",
+            json!({"initial_energy": 1000, "half_life": 100, "default_grant": 1000, "default_cliff": 100, "default_duration": 400}),
+            "Classic linear vest with cliff. Grantor locks `grant` for `beneficiary` over `duration` epochs; vesting starts after `cliff` epochs; vested amount rises linearly from 0 to total_grant between cliff and duration. Beneficiary may claim() periodically (returns delta between vested-now and claimed-so-far). Doctrine claim: the post-vest claim window is bounded by the contract's own energy — if the beneficiary stops claiming and the contract evaporates, on_evaporate stamps vested_at_evaporate + flips forfeit_signaled, so the off-chain coordinator returns the unclaimed remainder to the grantor. VEST-1 (audit 2026-05-17): all five vest-math sites use division-first arithmetic (vest_whole * elapsed + vest_rem * elapsed / duration_epochs) to avoid u64 overflow at large grants. Reference contract: contracts/evaporscript/vesting_schedule.es.",
+            "evaporchain-vesting-schedule",
+        )
+        .expect("VestingSchedule descriptor is constant"),
+        TemplateDescriptor::new(
             SAP_AQ,
             "SAP (Attention Quantum)",
             "Marketplace",
@@ -401,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_31_templates() {
+    fn catalogue_lists_32_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -419,11 +428,15 @@ mod tests {
         // lane (one-decision-per-contract doctrine inversion of
         // Gnosis-Safe-style proposal maps); 31 promoted Time Lock into
         // the Marketplace lane as the fourth chain-as-keeper escrow
-        // primitive (escrow over an epoch boundary, 2026-06-02).
+        // primitive (escrow over an epoch boundary, 2026-06-02); 32
+        // promoted Vesting Schedule (linear vest with cliff) into the
+        // Marketplace lane (the classic financial primitive every
+        // VC-backed startup needs, with the doctrine twist that the
+        // post-vest claim window is bounded by the contract's energy).
         // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
         // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 31);
+        assert_eq!(cat.len(), 32);
     }
 
     #[test]
