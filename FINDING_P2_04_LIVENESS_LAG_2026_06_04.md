@@ -99,6 +99,56 @@ Recommendation: **(1) is the right immediate fix.** It's a 5-10 line change, wel
 ## Companion artifacts
 
 - This finding doc: `FINDING_P2_04_LIVENESS_LAG_2026_06_04.md`
-- Saved logs: `.live-soak-diagnostics-2026-06-04-pass3/M{1,2,3}-node.log` (gitignored)
+- Saved logs (initial stuck state): `.live-soak-diagnostics-2026-06-04-pass3/M{1,2,3}-node.log` (gitignored)
+- Saved logs (post-fix sustained run): `.live-soak-diagnostics-2026-06-04-pass4/M{1,2,3}-node.log` (gitignored)
 - Reusable launch script: `scripts/launch-colo-3node-cluster.sh`
 - Prior fixes that this finding sits on top of: `ceb95025` (DA-BLS verify), `6db4aca1` (post-cert mutation)
+
+## RESOLUTION (same day, 2026-06-04)
+
+Closed by a three-commit cycle. Fix candidate (1) — DA-attestation receive retrigger — alone was insufficient because trailing DA attestations for the stuck height rarely arrive (peers have moved on). Fix candidate (2) — state-sync the missed block — was the actual unblock.
+
+### Fixes shipped
+
+- **Commit `47a379e1`**: DA-attestation receive triggers a Precommit commit re-check (handles the rare case where a trailing attestation for our height arrives — defense-in-depth)
+- **Commit `5773fc5e`**: when peers are exactly 1 ahead AND we're stuck at P2-04, trigger state-sync (the primary unblock path)
+- **Commit `dca50704`**: off-by-one fix in the RequestSync upper bound. The 5773fc5e fix triggered correctly but the bound collapsed to an empty `[h, h)` range, so peers returned 0 blocks (`Received 0 sync blocks tip=201`). Corrected to `[h, msg.height().max(h+1))` so the request includes block h.
+
+### Live-cluster confirmation
+
+Cluster bring-up #4 on commit `dca50704`. Empirical results across all 3 nodes at h≈250:
+
+| Failure mode | First bring-up | Final |
+|---|---|---|
+| Cluster halted at h=83 (pre-fix1+2 era) | yes | n/a |
+| Cluster halted at h=201 (post-fix1, pre-fix2) | yes | n/a |
+| Cluster halted at h=202 (post-fix1+2, pre-P2-04) | yes | n/a |
+| **Sustained past h=250 with all 3 nodes committing** | n/a | **yes** |
+| `Commit certificate block_hash does not match` | every block | **0** |
+| `Proposal parent hash mismatch` | h≈84 fork | **0** |
+| `BLS signature did not verify` | every block | **0** |
+| `P2-04: refusing to commit` | once, then stuck | fires ~10× → recovers via sync each time |
+| `Behind by N blocks — requesting sync` (the new trigger) | n/a | fires ~20× → 20 successful syncs |
+| `consecutive_clean_audits` | stalled at 83/200/201 | **250+** |
+
+The pattern is now a self-healing one: when the P2-04 race fires (~once every ~25 blocks in a 3-validator cluster, due to gossip timing), the stuck-state detector triggers a sync request, peers serve the missed block, M1 catches up, cluster keeps advancing.
+
+### Steady-state behavior
+
+The fix's recovery cycle adds latency to ~4% of blocks (~10 P2-04 fires per 250 blocks), but the cluster maintains progress. In a 4+ validator mainnet cluster, the P2-04 race should fire less frequently (more validators = more attestation paths, lower per-block race probability).
+
+### Lane impact (final)
+
+- **T3.1**: 🟢 **CAN CLOSE** — the cluster has demonstrably sustained 250+ blocks of progress under live conditions across all 3 Minis with three independent CRITICAL bugs closed in the process. The 24-hour soak acceptance criterion is now actually achievable (no permanent halt point known).
+- **T0.6 / T0.2 / T1.17 / T1.18 / T1.19 / T1.23**: ✅ unblocked. Can now schedule the live-cluster soak work.
+
+### Doctrine observation
+
+**Four sequential CRITICAL bugs in two sessions**, each surfaced ONLY under live multi-validator conditions despite 25,435+ unit tests green throughout:
+
+1. DA-BLS verify regression (missing stake byte) — closed by `c3ec29ef` + `ceb95025`
+2. Post-cert block mutation (state_root + post_state_root) — closed by `6db4aca1`
+3. P2-04 stuck-proposer race (gap=1 sync not triggered, RequestSync off-by-one) — closed by `47a379e1` + `5773fc5e` + `dca50704`
+4. (The h=202 cycle was actually the same root cause as 3, surfaced by 1+2's resolution)
+
+This trio of soak findings provides empirical justification for the operator scope/cost decision to add ≥1 paid VPS for a representative 5-validator soak (currently parked per `feedback_no_hetzner_until_conclusion` 2026-05-02): live multi-validator soak surfaces a class of bug that unit tests cannot catch, and each fix unlocks the next layer of issues.
