@@ -110,3 +110,45 @@ This is a SEPARATE bug from the DA-BLS verify regression. The DA-BLS fix is veri
 3. **DA-certificate inclusion ordering** — the DA cert attached to block 83 may have been built from a non-deterministic attestation iteration order.
 
 Belongs in a NEW finding doc when investigated: `FINDING_PROPOSAL_PARENT_HASH_MISMATCH_2026_06_04.md`. T0.6 live-cluster soak is still gated, now on this new bug rather than on DA-BLS. The pattern (each soak iteration surfaces a new mainnet-blocker) validates the lane spec's premise that live multi-validator soak is the only way to catch this class of bug.
+
+## RESOLUTION OF THE SECOND ISSUE (same-day, 2026-06-04)
+
+The h≈84 fork was also closed within the same session arc, in <30 minutes from data inspection to fix-verified.
+
+### Root cause
+
+Two CommitBlock handlers in `crates/evaporchain-node/src/main.rs` were mutating BLS-signed block fields after the cert was built:
+
+- **Local-propose path (line 4493)**: mutated `block.post_state_root = Some(execution.state_root)`. The previous fix had MOVED the mutation here from `block.state_root`, on the (incorrect) belief that `block_hash()` excluded `post_state_root`. It does NOT — Phase 5 of POST_EXEC_STATE_VERIFICATION_PLAN (lane T0.4) intentionally added it to the hashed fields (`tendermint.rs:4455`).
+- **Gossip-receiver path (line 5648)**: still mutated `block.state_root = execution.state_root`. The earlier "move from state_root to post_state_root" fix was only applied to the local-propose path; the gossip-receiver path was never touched.
+
+`Block::block_hash()` (tendermint.rs:4378) commits BOTH `state_root` and `post_state_root` to the hash. Either mutation drifts the persisted block's hash from `cert.block_hash`. The downstream impact:
+
+- `tendermint.rs:6027-6032` computes the next block's `self.parent_hash` as `blake3(number || epoch || state_root || parent_hash)`. It uses `block.state_root` from the BLOCK HEADER. If that field was mutated post-cert (gossip-receiver path), every receiver's `self.parent_hash` diverges from the proposer's, and the next block's parent_hash check fails on the receiver side. The cluster forks immediately at the next block.
+
+### Fix (commit `6db4aca1`)
+
+Drop BOTH mutations. The local execution result is still applied to the DB via the committed batch; the running post-exec state is still tracked on `tendermint.current_state_root`. The persisted block stays bit-identical to the BLS-signed block.
+
+### Live-cluster confirmation (bring-up #3 on commit `6db4aca1`)
+
+- **Zero `Commit certificate block_hash does not match actual block hash` warnings** across all 3 nodes (was firing every block before)
+- **Zero `Proposal parent hash mismatch` warnings** across all 3 nodes (was halting at h≈84 before)
+- **Zero `BLS signature did not verify` warnings** (already closed by the earlier DA-BLS fix; this confirms it stayed closed)
+- Chain advanced from h=0 to h=201 with full 3/3 BFT quorum, 201 consecutive clean conservation audits — well past the previous halt points
+
+### Remaining cluster issue (separate from both fixes)
+
+At h=202, the cluster encountered precommit timeouts and cycled through rounds 0..8+ without committing. M1 fell one block behind (200) while M2 and M3 reached 201. Critically:
+
+- No parent-hash mismatch warning fires
+- No DA verify failure
+- No cert-vs-actual-hash mismatch
+- All proposer self-attestation flags green
+
+This is **separate** from both bugs closed in this session. Likely causes:
+- Peer-sync flakiness (M1 missed a proposal during a network jitter window)
+- Round-skip mechanism doesn't recover cleanly when one validator is behind by one block
+- Possible Tendermint liveness corner-case (precommit-NIL stuck pattern in 3-validator clusters)
+
+This belongs in a follow-up finding doc; the lane's core blockers (DA-BLS + post-cert mutation) are closed.

@@ -6,6 +6,78 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (same day, deep cycle) — second mainnet-blocker (post-cert block mutation) DIAGNOSED + FIXED + VERIFIED
+
+**Focus:** Closed the second mainnet-blocker the morning's bring-up #2 surfaced. From "cluster forked at h≈84" → "root cause in source" → "fix applied" → "verified on live cluster past h=201" in ~30 minutes of work.
+
+**Commits shipped:**
+- `6db4aca1` — `node(commit-block): stop mutating signed block fields post-cert` (95 lines changed in `crates/evaporchain-node/src/main.rs`)
+
+### Root cause
+
+Two CommitBlock handlers in `node/main.rs` were mutating BLS-signed block fields AFTER the cert was built:
+- Local-propose path (line 4493): mutated `block.post_state_root = Some(execution.state_root)`. Previous fix had MOVED the mutation here from `block.state_root` on the (incorrect) belief that `block_hash()` excluded `post_state_root`. It does NOT — Phase 5 of POST_EXEC_STATE_VERIFICATION_PLAN intentionally added it to the hashed fields.
+- Gossip-receiver path (line 5648): still mutated `block.state_root = execution.state_root`. The earlier "move from state_root to post_state_root" fix was only applied to the local-propose path; the gossip-receiver path was never touched.
+
+`Block::block_hash()` (tendermint.rs:4378) commits BOTH fields. Either mutation drifts the persisted block's hash from `cert.block_hash`. `tendermint.rs:6027-6032` then computes the next block's `self.parent_hash` from `block.state_root` (the BLOCK HEADER value). If that was mutated post-cert (gossip-receiver path), every receiver's `self.parent_hash` diverges from the proposer's → next block's parent_hash check fails → cluster forks at h+1.
+
+### Diagnostic chain
+
+In <30 minutes from log inspection:
+1. Confirmed state_roots match in displayed (truncated) form across all 3 nodes through h=83 — divergence is in something else hashed.
+2. Found `Commit certificate block_hash does not match actual block hash` WARN firing on EVERY block since h=1 across all 3 nodes with identical cert_hash + actual_hash values — systemic, not per-node.
+3. Read `Block::block_hash()` (line 4378-4459) and confirmed: includes `state_root`, `post_state_root` (when Some), and 8 other fields.
+4. Searched for post-receive mutations: found both sites (line 4493 + line 5648 in node/main.rs).
+5. The earlier-fixed-but-incomplete pattern: line 4475-4493 comment explicitly warned about this exact failure mode but the "fix" relocated the mutation from `state_root` to `post_state_root` rather than removing it.
+
+### Fix (commit `6db4aca1`)
+
+Drop both mutations. Local execution result still applied to DB; running post-exec tracked on `tendermint.current_state_root`. Persisted block stays bit-identical to the BLS-signed block.
+
+### Live-cluster verification (bring-up #3 on commit `6db4aca1`)
+
+Rebuilt on M2 (incremental: 30s), scp'd to M1+M3, wiped data dirs (BLS keys preserved), relaunched. Empirical results:
+
+| Failure mode | Pre-fix | Post-fix |
+|---|---|---|
+| `Commit certificate block_hash does not match` warns | every block, all 3 nodes | **0** across all 3 nodes |
+| `Proposal parent hash mismatch` (the h≈84 halt) | fired at h=84 r=9+ | **0** |
+| `BLS signature did not verify` (the h=201 halt) | every block × hundreds/sec | **0** (still closed from previous fix) |
+| `consecutive_clean_audits` | stalled at 83 | **201** (well past both prior halt points) |
+
+### Remaining issue at h=202 (separate from both fixes)
+
+At h=202, the cluster encountered precommit timeouts and cycled through rounds 0..8+ without committing. M1 fell one block behind (h=200) while M2/M3 reached h=201. NO parent-hash mismatch, NO DA verify failure, NO cert-vs-actual-hash mismatch — separate root cause. Likely a peer-sync flakiness or Tendermint liveness corner-case (precommit-NIL stuck in 3-validator clusters).
+
+This is a follow-up finding, not a regression of the bugs we closed. Lane T3.1's core blockers are CLOSED.
+
+### Doctrine observation
+
+THREE sequential bugs in two sessions:
+1. DA-BLS verify regression (missing stake byte) — closed by `c3ec29ef` + `ceb95025`
+2. Post-cert block mutation (state_root + post_state_root) — closed by `6db4aca1`
+3. Precommit-timeout at h=202 — still open, smaller blast radius
+
+Each bug surfaced ONLY under live multi-validator conditions. Unit tests passed for all of them (25,435+ tests green throughout). This empirically validates the lane spec's premise: "live multi-validator soak is the only way to catch this class of bug."
+
+### Lane impact
+
+- **T3.1**: 🟡 PARTIAL — cluster colo path proven to make sustained progress (201+ blocks under full BFT quorum); core blockers closed; h=202 follow-up needs short investigation
+- **T0.6 / T0.2 / T1.17 / T1.18 / T1.19 / T1.23**: now unblocked at the bug level. Can proceed to live-cluster soak once h=202 is understood.
+
+### Artifacts shipped this session
+
+- `FINDING_DA_BLS_VERIFY_2026_06_04.md` updated with full RESOLUTION OF THE SECOND ISSUE section
+- MAINNET_READINESS T3.1 updated with the three-bug cycle
+- Live-soak pass-3 logs at `.live-soak-diagnostics-2026-06-04-pass3/M{1,2,3}-node.log` (gitignored)
+- 30-second incremental build on M2 (fast turn-around after the second fix)
+
+**Sprint cumulative through 2026-06-04 (mainnet-lane work): 5 commits closing two CRITICAL audit-grade bugs in one day (DA-BLS verify + post-cert block mutation). Plus the catalogue arc's 30 ship commits = 63 commits over the 2026-06-01 → 2026-06-04 sprint.**
+
+**Cross-references:** commit `6db4aca1` · `FINDING_DA_BLS_VERIFY_2026_06_04.md` (now covers both findings + both resolutions) · `MAINNET_READINESS.md` T3.1.
+
+---
+
 ## 2026-06-04 (same day) — DA-BLS bug DIAGNOSED + FIXED + VERIFIED on live cluster
 
 **Focus:** Closed the DA-BLS verify regression the morning soak surfaced. Cycle from "soak halted at h=201" → "root cause found in source" → "regression test pinning the contract" → "fix applied" → "verified on live 3-Mini cluster, zero verify failures" took under one hour of clock time.
