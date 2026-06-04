@@ -6,6 +6,66 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (sixth cycle, T1.19 DONE) — EVPL plaintext → EVK1 key migration validated end-to-end on the cluster
+
+**Focus:** Second downstream lane to flip ✅ DONE after T3.1 closed. Drove the full T1.19 plaintext→EVK1 migration on the 3-Mini cluster + verified the round-trip recovers byte-identical plaintext.
+
+**Commit shipped:** `(this cycle, push pending after this entry lands)` — adds `docs/runbooks/evpl-plaintext-migration-report-2026-06-04.md` + flips MAINNET_READINESS T1.19 to ✅.
+
+### What ran
+
+Per-Mini, in parallel:
+1. Backup the live plaintext bls_key.bin (32 bytes) to `~/bls-keys-backup-2026-06-04/_pre-t1.19_<timestamp>.bin`
+2. Move plaintext to `/tmp/bls_plaintext_<pid>.bin` (so `encrypt-bls-key` can read from a different path than it writes)
+3. `EVAPORCHAIN_VALIDATOR_KEY_PASS=<ephemeral-pass> evaporchain encrypt-bls-key --in-file /tmp/<temp> --out-file <data_dir>/bls_key.bin`
+4. Confirm output is 92 bytes with `EVK1` magic header
+5. Scrub the plaintext temp
+
+Then relaunched the cluster on all 3 Minis with `EVAPORCHAIN_VALIDATOR_KEY_PASS=<pass>` in env. Empirical results:
+- All 3 nodes logged `BLS12-381 keypair loaded from disk (pk=48B)` + `BLS key matches genesis entry for validator-id=N`
+- The `WARNING: BLS key file is legacy raw-32 plaintext` notice is GONE (was firing every restart pre-migration)
+- Chain advanced past h=200 with full 3/3 BFT quorum, 200 consecutive clean conservation audits
+
+### Round-trip verification
+
+On M1, `evaporchain decrypt-bls-key --in-file <evk1_path> --out-file <tmp>` recovered a 32-byte plaintext. md5 vs the pre-migration plaintext backup:
+
+```
+a6c738609bf155b6850809475f2f959d  (decrypted)
+a6c738609bf155b6850809475f2f959d  (pre-migration backup)
+```
+
+**Byte-perfect** — the EVK1 format loses zero bits. Recoverable given the passphrase.
+
+### CLI binary footnote
+
+The `evaporchain-cli` Cargo package produces a binary named `evaporchain` (NOT `evaporchain-cli`). The runbook implicitly assumed `evaporchain-cli`. Discovered + worked-around during the migration; noted in the report.
+
+### Post-run state
+
+- Cluster stopped
+- Plaintext (32-byte) keys restored on all 3 Minis from the pre-migration backups — the default cluster config stays plaintext (this was a validated rehearsal, not a persistent state change)
+- Ephemeral passphrase scrubbed
+- EVK1 versions not retained (would require persistent passphrase storage; out of scope)
+
+### Lane status
+
+- **T1.19**: 🟡 OPEN → ✅ **DONE**
+- **T1.18** (validator-passphrase env→file migration): natural follow-up on the same cluster; the env-var form was already used by this T1.19 run, so flipping to the file form is a small additional step (a follow-up cycle could close T1.18 in <15 min).
+- **T1.17** (BLS key rotation under live cluster): different shape — needs a coordinator-side genesis-amendment to register a new pubkey, NOT just a key-format migration. Not closed by this work.
+
+### Operational notes worth pinning
+
+- The CLI binary's name is `evaporchain`, not `evaporchain-cli` (the package is `evaporchain-cli` but `[[bin]] name = "evaporchain"` in its Cargo.toml). The MAINNET_READINESS lane spec referenced `evaporchain-cli key-migrate` — the subcommand is actually `encrypt-bls-key`, and the binary is `evaporchain`.
+- The AAD binding in `cmd_encrypt_bls_key` (`crates/evaporchain-cli/src/main.rs:4283`) makes the EVK1 ciphertext path-bound. For the migration to be node-readable, the `--out-file` path MUST match the node's `<data_dir>/bls_key.bin` absolute path. Mismatching paths fail decrypt indistinguishably from a wrong passphrase (per `t1_20_aad_mismatch_fails_decryption`).
+- The `BLS validator key encrypted at rest (Argon2id+XChaCha20-Poly1305, path-bound AAD)` log line documented in `docs/runbooks/validator-passphrase-migration.md` did NOT fire in this run — log format has evolved. The current proof of successful EVK1 decrypt is the absence of the legacy-plaintext WARN + the `BLS key matches genesis entry` line. The `validator-passphrase-migration.md` runbook should be updated to reflect the current log surface (small follow-up).
+
+**Sprint cumulative through 2026-06-04 (mainnet-lane track):** 13 commits across the bug-cycle + T1.23 dry-run + audit-grade test pinning + T1.19 migration. Plus the catalogue arc's 30 ship commits = **76 commits over 2026-06-01 → 2026-06-04**.
+
+**Cross-references:** `docs/runbooks/evpl-plaintext-migration-report-2026-06-04.md` · `MAINNET_READINESS.md` T1.19 (now ✅) · `FINDING_DA_BLS_VERIFY_2026_06_04.md` + `FINDING_P2_04_LIVENESS_LAG_2026_06_04.md` (the cluster trail this rehearsal sits on top of).
+
+---
+
 ## 2026-06-04 (fifth cycle, audit-prep) — Regression tests pinning the three live-soak consensus fixes
 
 **Focus:** Each CRITICAL fix from today's bug-cycle now has a paired unit test that would fail CI if the fix is regressed. This is the audit-grade closing piece — the live-cluster soak is no longer the only guardrail against the bug class.
