@@ -4472,25 +4472,44 @@ async fn main() -> Result<()> {
 
                         match result {
                             Ok(result) => {
-                                // Don't overwrite block.state_root — it commits
-                                // to the parent's post-exec state at proposal
-                                // time and is part of block_hash. Overwriting
-                                // it with execution.state_root (THIS block's
-                                // post-exec) made block_hash unstable and
-                                // produced 'Commit certificate block_hash does
-                                // not match actual block hash' warnings on
-                                // every commit because the cert was signed
-                                // over the proposal-time hash but the
-                                // persisted block had been mutated.
+                                // 2026-06-04 fix (live-soak finding):
+                                // DO NOT mutate `block.post_state_root` after
+                                // the block has been BLS-signed by the cert.
                                 //
-                                // Write the post-execution state to the
-                                // dedicated `post_state_root` field added in
-                                // Phase 1 of POST_EXEC_STATE_VERIFICATION_PLAN.
-                                // The chain still tracks the running post-exec
-                                // via tendermint's `current_state_root`; this
-                                // just preserves it on the persisted block
-                                // record without breaking block-hash stability.
-                                block.post_state_root = Some(result.execution.state_root);
+                                // The earlier fix moved the mutation from
+                                // `block.state_root` to `block.post_state_root`
+                                // believing post_state_root was excluded from
+                                // `block_hash()`. It is NOT — Phase 5 of
+                                // POST_EXEC_STATE_VERIFICATION_PLAN
+                                // intentionally added `post_state_root` to
+                                // the hashed fields (`tendermint.rs:4455`)
+                                // because the proposer's post-exec claim is
+                                // meant to be consensus-load-bearing.
+                                //
+                                // The proposer fills `post_state_root` via
+                                // speculative-execute in `create_proposal`
+                                // (`tendermint.rs:7269`). When the
+                                // speculative execute returns `Err` (or
+                                // governance sets `post_state_verify_mode=off`)
+                                // the proposer's block ships with
+                                // `post_state_root=None`. The BLS-signed cert
+                                // is over `block_hash(block_with_None)`.
+                                // Mutating to `Some(...)` here changes
+                                // `block_hash()` to include the appended
+                                // post_root bytes — the persisted block's
+                                // hash drifts from the cert's, producing the
+                                // every-block warning
+                                // "Commit certificate block_hash does not
+                                // match actual block hash" observed in the
+                                // 2026-06-04 colo soak. See
+                                // FINDING_POST_STATE_ROOT_MUTATION_2026_06_04.md.
+                                //
+                                // The running post-exec is still tracked on
+                                // `tendermint.current_state_root` (used by
+                                // the next block's `state_root` field at
+                                // proposal time). No mutation of the
+                                // BLS-signed block is required for that.
+                                let _local_post_state_root = result.execution.state_root;
 
                                 // C3 (audit 2026-05-02): durability ordering.
                                 // Persist the cert-bearing block to chain_store
@@ -5626,7 +5645,45 @@ async fn main() -> Result<()> {
 
                             match result {
                                 Ok(result) => {
-                                    block.state_root = result.execution.state_root;
+                                    // 2026-06-04 fix (live-soak finding):
+                                    // DO NOT mutate `block.state_root` after
+                                    // the block has been BLS-signed by the
+                                    // cert. The earlier local-propose path
+                                    // (~line 4473) had this same mutation
+                                    // removed; the gossip-receiver path
+                                    // here was missed and continued to
+                                    // overwrite state_root with the local
+                                    // execution result.
+                                    //
+                                    // Why this caused the 3-Mini colo fork
+                                    // at h≈84 (FINDING_DA_BLS_VERIFY_2026_06_04.md
+                                    // "NEW issue surfaced by the same soak"):
+                                    // `tendermint.rs:6027-6032` computes the
+                                    // next-block parent_hash as
+                                    //   blake3(number || epoch || state_root || parent_hash)
+                                    // using `block.state_root` from the
+                                    // block header. The proposer of h=N+1
+                                    // uses `self.parent_hash` (= this 4-field
+                                    // hash) as h=N+1's parent_hash. Receivers
+                                    // compare the proposer's claimed parent
+                                    // against their own `self.parent_hash`.
+                                    // If `block.state_root` was mutated to
+                                    // the receiver's local execution result
+                                    // (potentially != the proposer's set
+                                    // value if executor isn't bit-deterministic
+                                    // OR if the proposer never ran the same
+                                    // execution before stamping), the
+                                    // receiver's `self.parent_hash` diverges
+                                    // from the proposer's, h=N+1 forks,
+                                    // round-cycling forever.
+                                    //
+                                    // Fix: leave `block.state_root`
+                                    // untouched. The local execution result
+                                    // is still applied to the DB (via the
+                                    // committed batch below); the running
+                                    // post-exec state is tracked separately
+                                    // on `tendermint.current_state_root`.
+                                    let _local_exec_state_root = result.execution.state_root;
                                     // C3: pre-commit durable cert before state.
                                     log_persist_err(
                                         "full_block:pre_commit",
