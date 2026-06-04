@@ -6,6 +6,60 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (overnight grind, cont'd) — ErasureAttestation completes the Privacy pair (39th template)
+
+**Focus:** 15th catalogue promotion of the sprint arc. Pair for GdprVault (shipped earlier this session). Together they form the complete Privacy-lane disposition surface: GdprVault is the retention clock + shred trigger; ErasureAttestation is the immutable proof the shred was performed AND verified, with a regulator-grade NEGATIVE-proof path for missed deadlines.
+**Commits shipped:** 2 on main (`26b94a55` cargo pilot, `85a21f05` atomic arc) — pilot 489 LOC + atomic arc 14 files / 663 insertions.
+**Catalogue is now 39 templates. Privacy lane = 2 entries (complete disposition pair).**
+
+**Why this matters:** the negative-proof path is the unsolved frontier in the right-to-be-forgotten / AI machine-unlearning space (EDPS/NeurIPS/IAPP all flag it). Regulators currently have no standardised way to PROVE a deletion deadline was missed. ErasureAttestation closes that gap — `on_evaporate` emits "obligation window CLOSED with no attestation" ONLY when `attested == false`, making the missed-deadline outcome as immutable as the positive proof.
+
+**Cargo pilot first (26b94a55):** Wrote `erasure_attestation_pilot.rs` (7 tests, 489 LOC) and verified it on Mini-1 BEFORE the atomic arc. The pilot pins:
+- parses + compiles + all public methods + 3 lifecycle hooks present
+- `seal()` one-shot + controller-only + basis > 0 + method > 0
+- `attest_erasure()` one-shot + controller-only + requires sealed + verification_code > 0; flips attested + stamps attested_at
+- `status()` codes ordered: 0 not-opened, 1 sealed-not-attested, 2 attested (canonical disposition lifecycle)
+- `on_evaporate` emits negative-proof ONLY when attested == false; attested vault's evap is silent (positive proof already stands; emitting negative-proof on attested vault would CONTRADICT the existing positive proof)
+- Audit fields (data_ref, subject, obligation_basis, method, sealed_at) survive a later attest_erasure intact — attest only adds attested_at; chain of custody preserved
+
+**4 pinned-invariant TS tests** (in `dapps/erasure-attestation/test/`):
+- `on_evaporate` negative-proof gated on `attested == false` — pin BOTH the gate AND the marker string. Catastrophic if drift let it fire unconditionally.
+- `seal()` controller-only + one-shot + writes all 5 audit fields + rejects basis/method == 0
+- `attest_erasure()` controller-only + one-shot + requires sealed + verification > 0 + flips/stamps
+- `status()` lifecycle ordering pinned at structural level (sealed check FIRST, attested check AFTER, return 1 AFTER attested check fails) — every off-chain consumer depends on this canonical order
+
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| Cargo pilot | NEW `erasure_attestation_pilot.rs` (489 LOC, 7 pinned tests) — committed and verified ahead of atomic arc |
+| dApp client | `dapps/erasure-attestation/` — 2 mutators (seal, attest_erasure + deploy) + 7 views + auth-injected Tx wrappers. **10/10 TS tests pass** with **4 pinned-invariant tests**. |
+| Class registry | New `ERASURE_ATTESTATION: TemplateClass(0x0001_0802)` + lane test |
+| Catalogue | New Privacy-lane entry; count test 38 → 39 |
+| Engine init module | `init_erasure_attestation.rs` (new) — 4 u64 fields (initial_energy, half_life, default_obligation_basis, default_method) |
+| Engine dispatch | New `TypedInit::ErasureAttestation` variant + dispatch arm |
+| Fees oracle | `SURCHARGE_PRIVACY` (same regulatory tier as GdprVault) |
+| Bind invariants | All 4 numerics > 0. Contract's `seal()` runtime guards make 0 catalogue defaults useless. |
+| Required keys | New 4-key row under Privacy lane; **import list cleanup** — re-sorted alphabetically after the recent Money + Privacy lane additions had broken the established ordering |
+| Catalogue-browser | New entry; display strings 38 → 39 |
+| Landing page | Catalogue-count 38 → 39 |
+
+**Empirical results on Mini-1 worktree (`85a21f05`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 39 templates. Worktree cleaned up.
+
+**Privacy lane now COMPLETE for the GDPR/NIST disposition surface:**
+
+| 0x0001_08... | Template | Doctrine role |
+|---|---|---|
+| `01` | GDPR Vault | Retention clock + shred trigger (the "DO it" half) |
+| `02` | **Erasure Attestation** | Tamper-evident proof + negative-proof for missed deadlines (the "PROVE it" half) |
+
+A controller flow now looks like: deploy GdprVault for the data → deploy ErasureAttestation alongside → at retention-end OR consent-withdraw, GdprVault emits shred trigger → controller performs off-chain sanitization → controller calls `attest_erasure(verification_code)` on the ErasureAttestation contract → audit-grade certificate of disposition is on-chain. If step 4 is skipped, ErasureAttestation's `on_evaporate` emits the immutable negative proof.
+
+**Sprint cumulative: 34 ship commits + 28 session entries = 62 commits over the 2026-06-01 → 2026-06-04 arc.** Catalogue 24 → 39 (15 promotions in four calendar days). **Privacy lane is the third "frontier" lane shipped this run (Money + Privacy in one push).**
+
+**Cross-references:** commits `26b94a55` (pilot) + `85a21f05` (arc). Files: pilot 1 + atomic 14. Source contract: `contracts/evaporscript/erasure_attestation.es`. New pilot: `crates/evaporchain-script/tests/erasure_attestation_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-04 (overnight grind) — GdprVault OPENS THE PRIVACY LANE (38th template)
 
 **Focus:** 14th catalogue promotion of the sprint arc and the **second NEW lane opened in this session run** (Money lane opened earlier with EvaporCashNote). GdprVault is GDPR Erasure-as-a-Service via crypto-shred. The doctrine inversion: instead of trying to byte-erase from an immutable ledger (impossible — verified at Dead Drop §9), the chain provides the audit-grade proof and the regulatory clock; off-chain holds the data and acts on the shred trigger. The on-chain record IS the NIST 800-88 / GDPR Art. 17 certificate of disposition.
