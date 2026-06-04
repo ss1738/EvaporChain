@@ -5155,10 +5155,17 @@ impl TendermintConsensus {
                     "Behind by {} blocks — requesting sync",
                     msg.height() - self.height
                 );
-                actions.push(ConsensusAction::RequestSync(
-                    self.height,
-                    msg.height().saturating_sub(1).max(self.height),
-                ));
+                // RequestSync(from, to) semantics: server serves
+                // blocks in `[from, to)`. The network handler at
+                // `evaporchain-network/src/service.rs:1897-1899`
+                // documents this. Want at least block `self.height`
+                // included → upper bound must be `> self.height`. For
+                // the stuck_at_p2_04 case (peer 1 ahead), serve block
+                // self.height — pass `to = self.height + 1`. For the
+                // gap > 1 case, request up to `msg.height()` exclusive
+                // so we receive blocks self.height..msg.height-1.
+                let upper = msg.height().max(self.height + 1);
+                actions.push(ConsensusAction::RequestSync(self.height, upper));
             }
             return actions;
         }

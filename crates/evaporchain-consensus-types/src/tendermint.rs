@@ -4746,10 +4746,9 @@ impl TendermintConsensus {
                     "Behind by {} blocks — requesting sync",
                     msg.height() - self.height
                 );
-                actions.push(ConsensusAction::RequestSync(
-                    self.height,
-                    msg.height().saturating_sub(1).max(self.height),
-                ));
+                // `[from, to)` semantics — must include self.height.
+                let upper = msg.height().max(self.height + 1);
+                actions.push(ConsensusAction::RequestSync(self.height, upper));
             }
             return actions;
         }
