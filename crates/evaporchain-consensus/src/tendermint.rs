@@ -5004,14 +5004,25 @@ impl TendermintConsensus {
             }
             // Reconstruct and verify the signed message exactly as
             // `evaporchain_da::certificate::create_attestation` builds it.
+            //
+            // 2026-06-04 (live-cluster regression): the trailing stake
+            // field was missing here, which Q3 (audit 2026-05-17) had
+            // added to the signed message in `create_attestation`.
+            // Under soft-DA (height < enforcement_height) the
+            // verify-failure printed WARNs but didn't block; at the
+            // enforcement boundary the cluster HALTED. See
+            // `FINDING_DA_BLS_VERIFY_2026_06_04.md` + regression test
+            // `da_attestation_signed_message_must_include_stake` in
+            // `evaporchain-da/src/certificate.rs`.
             let mut signed = Vec::with_capacity(
-                evaporchain_da::certificate::DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4,
+                evaporchain_da::certificate::DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8,
             );
             signed.extend_from_slice(evaporchain_da::certificate::DA_ATTESTATION_DST);
             signed.extend_from_slice(&block_number.to_le_bytes());
             signed.extend_from_slice(&data_root);
             signed.extend_from_slice(&validator_id.to_le_bytes());
             signed.extend_from_slice(&samples_verified.to_le_bytes());
+            signed.extend_from_slice(&stake.to_le_bytes());
             let pk = evaporchain_crypto::signatures::BlsPublicKey(public_key.clone());
             let sig = evaporchain_crypto::signatures::BlsSignature(signature.clone());
             if !evaporchain_crypto::signatures::BlsVerifier::verify(&signed, &sig, &pk) {
