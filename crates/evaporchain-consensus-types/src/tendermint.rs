@@ -4663,7 +4663,7 @@ impl TendermintConsensus {
             };
             let atts = self.da_attestations.entry(block_number).or_default();
             // Deduplicate by validator_id
-            if !atts.iter().any(|a| a.validator_id == validator_id) {
+            let stored = if !atts.iter().any(|a| a.validator_id == validator_id) {
                 atts.push(att);
                 debug!(
                     block = block_number,
@@ -4671,6 +4671,48 @@ impl TendermintConsensus {
                     total_atts = atts.len(),
                     "DA attestation received (verified)"
                 );
+                true
+            } else {
+                false
+            };
+
+            // 2026-06-04 fix (P2-04 liveness corner-case; mirrors
+            // crates/evaporchain-consensus/src/tendermint.rs). See
+            // FINDING_P2_04_LIVENESS_LAG_2026_06_04.md.
+            if stored
+                && block_number == self.height
+                && self.round_state.phase == Phase::Precommit
+            {
+                if let Some(Some(quorum_hash)) = self.check_precommit_quorum() {
+                    if let Some(block) = self.round_state.proposed_block.as_ref() {
+                        let bhash = Self::block_hash(block);
+                        if bhash == quorum_hash {
+                            let mainnet = block.chain_id.starts_with("mainnet-");
+                            let enforce_da =
+                                mainnet || self.height >= self.da_enforcement_height;
+                            if !enforce_da
+                                || block.data_root.is_none()
+                                || self.has_da_supermajority(block.number)
+                            {
+                                let mut block = self
+                                    .round_state
+                                    .proposed_block
+                                    .take()
+                                    .expect("proposed_block was Some above");
+                                if block.commit_certificate.is_none() {
+                                    block.commit_certificate =
+                                        self.try_build_commit_certificate(quorum_hash);
+                                }
+                                self.round_state.phase = Phase::Commit;
+                                info!(
+                                    height = block.number,
+                                    "P2-04 unstuck via late DA attestation — committing"
+                                );
+                                actions.push(ConsensusAction::CommitBlock(block));
+                            }
+                        }
+                    }
+                }
             }
             return actions;
         }

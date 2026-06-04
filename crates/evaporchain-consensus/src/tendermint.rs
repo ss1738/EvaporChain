@@ -5043,7 +5043,7 @@ impl TendermintConsensus {
             };
             let atts = self.da_attestations.entry(block_number).or_default();
             // Deduplicate by validator_id
-            if !atts.iter().any(|a| a.validator_id == validator_id) {
+            let stored = if !atts.iter().any(|a| a.validator_id == validator_id) {
                 atts.push(att);
                 debug!(
                     block = block_number,
@@ -5051,6 +5051,66 @@ impl TendermintConsensus {
                     total_atts = atts.len(),
                     "DA attestation received (verified)"
                 );
+                true
+            } else {
+                false
+            };
+
+            // 2026-06-04 fix (P2-04 liveness corner-case, FINDING_P2_04_LIVENESS_LAG_2026_06_04.md):
+            // After storing a NEW DA attestation, re-trigger the
+            // Precommit-phase commit check if we were stuck waiting on
+            // DA supermajority. Without this re-trigger, the flow:
+            //   1. precommit quorum reached
+            //   2. P2-04 blocks apply (DA quorum not yet reached)
+            //   3. trailing DA attestations arrive
+            //   4. NO retrigger — DA attestation reception didn't poke
+            //      the precommit commit check
+            //   5. tick-path retry exists but evidently doesn't fire
+            //      reliably in 3-validator clusters
+            //   6. validator stuck in Precommit phase forever
+            // The fix: when the stored attestation might have just
+            // tipped us over the supermajority line, AND we have a
+            // proposed_block at this height with precommit quorum, AND
+            // we're in Precommit phase, run the commit path inline.
+            if stored
+                && block_number == self.height
+                && self.round_state.phase == Phase::Precommit
+            {
+                if let Some(Some(quorum_hash)) = self.check_precommit_quorum() {
+                    if let Some(block) = self.round_state.proposed_block.as_ref() {
+                        let bhash = Self::block_hash(block);
+                        if bhash == quorum_hash {
+                            let mainnet = block.chain_id.starts_with("mainnet-");
+                            let enforce_da =
+                                mainnet || self.height >= self.da_enforcement_height;
+                            // Only commit on retrigger if the new
+                            // attestation actually tipped us over DA
+                            // supermajority. If still under, keep
+                            // waiting silently (the warn was already
+                            // emitted by the earlier P2-04 firing).
+                            if !enforce_da
+                                || block.data_root.is_none()
+                                || self.has_da_supermajority(block.number)
+                            {
+                                let mut block = self
+                                    .round_state
+                                    .proposed_block
+                                    .take()
+                                    .expect("proposed_block was Some above");
+                                if block.commit_certificate.is_none() {
+                                    block.commit_certificate =
+                                        self.try_build_commit_certificate(quorum_hash);
+                                }
+                                self.round_state.phase = Phase::Commit;
+                                info!(
+                                    height = block.number,
+                                    "P2-04 unstuck via late DA attestation — committing"
+                                );
+                                actions.push(ConsensusAction::CommitBlock(block));
+                            }
+                        }
+                    }
+                }
             }
             return actions;
         }
