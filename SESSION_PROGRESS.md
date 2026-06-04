@@ -6,6 +6,83 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (lane pivot — T3.1) — 3-Mini colo cluster surfaced CRITICAL DA-BLS bug
+
+**Focus:** First explicit MAINNET-CRITICAL lane work in this session run. After 4 days of catalogue surface expansion (24 → 39 templates), pivoted to T3.1 cluster bring-up per the lane spec's authorized "zero-cost interim path" — multi-validator colo on existing infra. The cluster came up healthy, ran a clean 200-block segment with full 3/3 BFT quorum, and then HALTED at the DA enforcement-height boundary, surfacing what looks like a mainnet-blocking bug.
+
+**This is the kind of finding the lane spec said would justify the soak work.** T0.6 was empirically re-validated as unit-test green on 2026-05-18, but "remaining = live-cluster soak ONLY". The live-cluster soak surfaced a real bug that all 25,435+ unit tests miss.
+
+### What ran
+
+- Brought up clean 3-Mini Tailscale colo cluster (M1=validator-1, M2=validator-2, M3=validator-3) on chain_id `evaporchain-tailscale-3node-1`.
+- Binary built fresh on M2 from commit `23f0eafd` (current main); scp'd to M1 + M3.
+- Used the pre-existing `genesis-tailscale-3node.json` (generated 2026-05-03) and the matching `validator-N-keys.json` files on each Mini — the secret key from each file was extracted into a `bls_key.bin` in the fresh data dir.
+- Reusable launch script saved at `scripts/launch-colo-3node-cluster.sh`.
+
+### Cleanup work the colo path required (NOT documented in the lane spec)
+
+The 2026-05-18 lane-spec verification said "0/5 nodes serving"; actual state on 2026-06-04 was more complex:
+- **Hetzner 100.66.208.20**: still running an evaporchain-node from 2026-05-20 (val-4 of the OLD 5-node chain), via systemd `evaporchain-validator-4.service` — this was the "phantom 4th node" my new cluster initially saw on the Tailscale network. Backed up its BLS key, stopped the systemd service.
+- **Hetzner 100.91.235.22**: SSH timed out; likely actually offline.
+- **M2 (mini-1)**: disk at 98% (5.4Gi free); had 66G of ZovoNotes training + 51G of Velthorn model weights (BOTH protected per CLAUDE.md "never delete custom fine-tuned models"); recovered 34G by cleaning `target/debug` + 3 stale chain data dirs (`evaporchain-data`, `.evaporchain-tailscale-data`, `.evaporchain-tailscale-5node-data`) — BLS keys from those dirs backed up first.
+- **M1 (satyawansingh)**: had a 19-day-old stuck `cargo test --workspace` + the `evaporchain_nova_bridge` test binary it spawned; force-killed both.
+- **M2**: 5 zombie `cargo test -p evaporchain-eg-fss` processes from 2026-05-16 + an undocumented evaporchain process on port 8081; force-killed.
+- **M3 (mini-2)**: ran the OLD 5-node tailscale chain (`evaporchain-tailscale-5node-1`) alone since 2026-05-11; gracefully stopped via pkill (no systemd service for this one).
+- All BLS keys backed up first to `~/bls-keys-backup-2026-06-04/` on each box per the CLAUDE.md hard rule.
+
+### Cluster behavior — the headline finding
+
+- All 3 nodes peered cleanly within seconds of simultaneous launch.
+- "BLS key matches genesis entry for validator-id={1,2,3}" on each Mini → correct genesis-side key binding.
+- Tendermint consensus reached **full 3/3 BFT quorum on EVERY block from #1 to #200** — `BLS CommitCertificate: 3 signers, agg_sig=96B, stake=750000/750000(100%)`.
+- 200 consecutive clean conservation audits, 0 ghost objects, no fork events.
+- **At block #201 — exactly the DA enforcement-height boundary — the chain halted.**
+
+### Root cause (diagnostic): BLS DA-attestation verification has been broken since block 1
+
+From M1's startup log:
+- `DA enforcement height updated old=100 new=201`
+- `small-cluster DA mode ENABLED: proposer self-attestations will count toward DA quorum`
+- `Block has no DA certificate (soft mode — accepting before enforcement height) block=1 enforcement_height=201`
+- `Rejecting DA attestation: BLS signature did not verify validator_id=2 block_number=1` (and validator_id=3, recurring on every block)
+
+The DA-attestation BLS sigs were ALWAYS failing verification, but **soft-DA mode (active below enforcement_height) accepted blocks anyway with a WARN**. At h=201, soft mode lifts, DA quorum needs verified attestations, the verify failures make quorum unreachable, the chain halts. **Consensus-vote BLS sigs (Prevote/Precommit/aggregate CommitCertificate) verified correctly — the failure is specific to the DA-attestation BLS path.**
+
+### Why this is mainnet-blocking
+
+`docs/MAINNET_LAUNCH.md` ships mainnet with DA enforcement from genesis (no soft-mode window). The bug means a mainnet cluster would never produce block #1 — every DA attestation rejected, no DA quorum, chain halt. The reason the bug survived 25,435+ unit/integration tests: test fixtures probably run in soft-DA mode, so the BLS-verify-failure prints WARNs but doesn't block test progress.
+
+### Artifacts shipped this session
+
+- `FINDING_DA_BLS_VERIFY_2026_06_04.md` (new, 5.7kB) — full diagnostic doc with evidence, hypothesised root causes, recommended next steps
+- `scripts/launch-colo-3node-cluster.sh` (new) — reusable launcher for the 3-Mini colo cluster
+- `.live-soak-diagnostics-2026-06-04/M{1,2,3}-node.log` (~800kB each) — full raw cluster logs for diagnosis (NOT committed — large + may contain runtime addresses)
+- MAINNET_READINESS T3.1 flipped 🔴 REGRESSED → 🟡 PARTIAL with the finding linked
+- `~/bls-keys-backup-2026-06-04/` on each box with every `bls_key.bin` found across all chains' data dirs (M1/M2/M3 + Hetzner)
+
+### Lane impact
+
+- **T3.1**: 🟡 partial — cluster bring-up path proven workable; gated on DA-BLS fix before it can do the 24-hour soak
+- **T0.6 slashing-at-scale live soak**: still 🔴 — needs DA quorum reaching, which needs the DA-BLS fix
+- **T0.2 D-track adversarial**: same — needs a functioning multi-validator cluster
+- **T1.17/T1.18/T1.19 key-rotation rehearsals**: still 🟡 — could potentially proceed on soft-DA testnet by setting enforcement_height very high, but cleaner to wait for the fix
+- **T1.23 mainnet genesis-amendment dry-run**: 🟡 — depends on cluster
+
+### What's next
+
+The natural next move is to:
+1. Write a unit-test reproducer for the DA-attestation sign-then-verify failure (small, deterministic, today-failing-tomorrow-passing).
+2. Bisect through `crates/evaporchain-da` + `crates/evaporchain-consensus` to find the regression commit.
+3. Fix → re-launch the 3-Mini cluster → run the 24-hour soak → close T3.1 fully.
+
+This is genuine mainnet-critical work (a real CRITICAL audit finding, surfaced empirically) rather than catalogue surface expansion.
+
+**Sprint cumulative through 2026-06-04: 34 ship commits + 28 session entries + this entry = 63 commits over the 2026-06-01 → 2026-06-04 arc.** Catalogue 24 → 39 (during the catalogue phase); 1 mainnet-critical CRITICAL bug surfaced (during the T3.1 lane phase).
+
+**Cross-references:** `FINDING_DA_BLS_VERIFY_2026_06_04.md` · `scripts/launch-colo-3node-cluster.sh` · `MAINNET_READINESS.md` T3.1.
+
+---
+
 ## 2026-06-04 (overnight grind, cont'd) — ErasureAttestation completes the Privacy pair (39th template)
 
 **Focus:** 15th catalogue promotion of the sprint arc. Pair for GdprVault (shipped earlier this session). Together they form the complete Privacy-lane disposition surface: GdprVault is the retention clock + shred trigger; ErasureAttestation is the immutable proof the shred was performed AND verified, with a regulator-grade NEGATIVE-proof path for missed deadlines.

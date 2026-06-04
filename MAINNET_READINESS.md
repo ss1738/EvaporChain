@@ -122,7 +122,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
-| T3.1 | Phase C cluster deploy + bring-up | 🔴 REGRESSED — deployed 2026-05-13 (PR #209) but **VERIFIED DOWN 2026-05-18** (0/5 nodes serving: Minis SSH-dead / no listening sockets, both Hetzners no API). Re-bring-up REQUIRED before any T0.2/T0.6 soak. Reliable rebuild anchor = the always-on permanent single node `89.167.52.40:8099` (this session). See lane spec. | OPS |
+| T3.1 | Phase C cluster deploy + bring-up | 🟡 **PARTIAL 2026-06-04 — 3-Mini colo bring-up executed; surfaced CRITICAL DA-BLS bug**. All 3 Minis peered cleanly with full 3/3 BFT quorum (stake=750000/750000), 200 consecutive clean conservation audits, then **chain HALTED at h=201 (DA enforcement-height boundary)**. Diagnostic: BLS DA-attestation verification was failing from block #1, masked by soft-DA mode below enforcement height. **Mainnet-blocking** — mainnet ships DA enforcement from genesis. See `FINDING_DA_BLS_VERIFY_2026_06_04.md`. Cluster currently stopped; reusable launch script at `scripts/launch-colo-3node-cluster.sh`. T0.6 live-soak still gated on the DA-BLS fix, not on cluster availability. | OPS |
 | T3.2 | 5-node Tailscale genesis switch | ✅ DONE — folded into T3.1; 5-node genesis live since PR #209 | OPS |
 
 ### Tier 0 — Critical path (mainnet-blocking)

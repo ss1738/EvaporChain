@@ -3,6 +3,9 @@
 **/target/
 **/*.rs.bk
 
+# Live-soak diagnostic dumps (cluster runtime logs; large, may contain peer IDs)
+.live-soak-diagnostics-*/
+
 # Node
 node_modules/
 dist/
