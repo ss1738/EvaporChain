@@ -6,6 +6,66 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (seventh cycle, T1.18 DONE) — Validator-passphrase file-form migration validated on live cluster
+
+**Focus:** Third downstream lane to flip ✅ DONE after T3.1 closed (T1.23 + T1.19 closed in cycles 4-6; T1.18 here). Tight loop on the same cluster used for T1.19 — encrypt the keys to EVK1 again, then exercise the file-form passphrase path (`EVAPORCHAIN_VALIDATOR_KEY_PASS_FILE` env var pointing at a 0600 file) instead of the env-var-form path.
+
+**Commit shipped (after this entry):** adds `docs/runbooks/validator-passphrase-file-form-report-2026-06-04.md` + flips MAINNET_READINESS T1.18 to ✅.
+
+### What ran
+
+Per-Mini, in parallel:
+1. Re-encrypt plaintext → EVK1 using T1.19's pattern (`encrypt-bls-key` with passphrase in env)
+2. Write the same passphrase to `<data_dir>/validator_pass` at mode 0600 via `printf '%s' '$PASS'` (no trailing newline per the runbook's safety guidance)
+3. Verify file content matches the passphrase exactly (byte-identical via `[ "$(cat $PASS_FILE)" = "$PASS" ]`)
+
+Then relaunched the cluster on all 3 Minis with **`EVAPORCHAIN_VALIDATOR_KEY_PASS_FILE=<data_dir>/validator_pass`** set (and `EVAPORCHAIN_VALIDATOR_KEY_PASS` UNSET — so the file-form path is the ONLY path that could supply the passphrase).
+
+### Startup-log proof
+
+All 3 nodes logged:
+- `BLS12-381 keypair loaded from disk (pk=48B)` — `passphrase_from_env()` read PASS_FILE, decrypted the 92-byte EVK1 into a valid 32-byte secret
+- `BLS key matches genesis entry for validator-id=N` — pubkey from the recovered secret matches the genesis-registered pubkey → bit-identical plaintext recovery via the FILE-form path
+- `legacy raw-32 plaintext` WARN absent (would have fired if PASS_FILE failed and keys had reverted to plaintext)
+
+### Chain-advancement evidence
+
+Sustained past h=200 across all 3 Minis: M1 h=202, M2 h=203, M3 h=203, full 3/3 BFT quorum, zero cert mismatch / parent mismatch / DA verify fail. Self-healing P2-04+sync from earlier this session continues to operate under encrypted keys + file-form passphrase.
+
+### Coverage check
+
+| Passphrase source | Status |
+|---|---|
+| `EVAPORCHAIN_VALIDATOR_KEY_PASS` env var (legacy) | ✅ exercised in T1.19 cycle |
+| `EVAPORCHAIN_VALIDATOR_KEY_PASS_FILE` file form (production-recommended) | ✅ exercised in THIS T1.18 cycle |
+| Both set (file takes precedence) | not exercised — out of scope for this dry-run; runbook documents the behavior |
+
+### Post-run state
+
+- Cluster stopped
+- Plaintext keys restored from `~/bls-keys-backup-2026-06-04/_pre-t1.19_<timestamp>.bin` on all 3 Minis
+- `<data_dir>/validator_pass` files removed from all 3 Minis
+- Ephemeral passphrase scrubbed locally
+
+### Lane state after this cycle
+
+| Lane | Before today | After this cycle |
+|---|---|---|
+| T3.1 cluster bring-up | 🔴 REGRESSED | 🟢 CAN CLOSE |
+| T1.23 genesis-amendment dry-run | 🟡 OPS-ONLY | ✅ DONE |
+| T1.19 EVPL plaintext → EVK1 migration | 🟡 OPEN | ✅ DONE |
+| **T1.18 passphrase env-var → file form** | 🟡 OPEN | ✅ **DONE** |
+| T1.17 BLS key rotation | 🟡 cluster-gated | 🟡 still — different shape (needs coordinator-side genesis amendment) |
+| T0.6 Byzantine-slashing live soak | 🔴 SOAK-BLOCKED | 🟡 unblocked, harness not yet built |
+
+**T3.1 + 3 downstream lanes closed in one session.** The cluster-rehearsal track is now substantially done for the 3-validator colo path. Remaining items either need a different cluster topology (T0.2 perf soak) or a different code-build (T0.6 Byzantine harness).
+
+**Sprint cumulative through 2026-06-04 (mainnet-lane track):** 14 commits across the bug-cycle + 3 downstream lane closures (T1.23, T1.19, T1.18) + audit-grade regression test pinning. Plus the catalogue arc's 30 ship commits = **77 commits over 2026-06-01 → 2026-06-04**.
+
+**Cross-references:** `docs/runbooks/validator-passphrase-file-form-report-2026-06-04.md` · `MAINNET_READINESS.md` T1.18 (now ✅) · `docs/runbooks/evpl-plaintext-migration-report-2026-06-04.md` (the T1.19 work this sits on top of).
+
+---
+
 ## 2026-06-04 (sixth cycle, T1.19 DONE) — EVPL plaintext → EVK1 key migration validated end-to-end on the cluster
 
 **Focus:** Second downstream lane to flip ✅ DONE after T3.1 closed. Drove the full T1.19 plaintext→EVK1 migration on the 3-Mini cluster + verified the round-trip recovers byte-identical plaintext.
