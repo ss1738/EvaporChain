@@ -1,0 +1,10 @@
+{
+  "name": "gdpr-vault",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "GdprVault typed client — chain client for contracts/evaporscript/gdpr_vault.es. GDPR Erasure-as-a-Service via crypto-shred (Privacy lane): chain holds NO personal data (only a ciphertext commitment); the contract's own energy IS the retention clock; on_evaporate emits the natural-deadline shred trigger that off-chain key-custody/HSM subscribes to.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

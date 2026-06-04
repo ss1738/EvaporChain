@@ -39,6 +39,15 @@ const SURCHARGE_PARADIGM: u64 = 800;
 // hoarding-loss settlement on evaporate) makes it a real ecosystem
 // integration.
 const SURCHARGE_MONEY: u64 = 350;
+// Privacy lane — Erasure-as-a-Service via crypto-shred. State is
+// minimal (two addresses + lifecycle scalars), and the chain holds
+// NO personal data (Dead Drop §9 constraint). But the contract is
+// REGULATORY-GRADE — the immutable audit trail it produces is what
+// a DPO/regulator reads, so the surcharge reflects the compliance
+// integration burden, not state complexity. Priced at the
+// Marketplace tier: it's a real production-system primitive, not a
+// cheap deploy.
+const SURCHARGE_PRIVACY: u64 = 600;
 
 // ── Per-unit costs for variable-shape params.
 
@@ -171,6 +180,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // spendable accounting, not the contract. Priced between
         // Consumer and Marketplace.
         TypedInit::EvaporCashNote(_) => SURCHARGE_MONEY,
+        // GdprVault — Privacy lane. Minimal state (chain holds NO
+        // personal data, only commitments — Dead Drop §9), but the
+        // immutable audit trail is regulator-grade. Surcharge
+        // reflects the compliance integration burden, not state
+        // complexity.
+        TypedInit::GdprVault(_) => SURCHARGE_PRIVACY,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

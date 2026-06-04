@@ -390,6 +390,20 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-evaporcash-note",
         )
         .expect("EvaporCashNote descriptor is constant"),
+        // ── Privacy lane ───────────────────────────────────────────
+        TemplateDescriptor::new(
+            GDPR_VAULT,
+            "GDPR Vault (Erasure-as-a-Service / Crypto-Shred)",
+            "Privacy",
+            json!({
+                "initial_energy": 1000,
+                "half_life": 100,
+                "default_lawful_basis": 1
+            }),
+            "GDPR Erasure-as-a-Service via crypto-shred (research/GDPR_ERASURE_ARCHITECTURE.md model A). ONE retained record = ONE contract instance. State carries ONLY a 32-byte ciphertext commitment (ct_commit), the subject reference, the Art. 6 lawful-basis code, and the lifecycle flags — NEVER the personal data itself (Dead Drop §9 founding constraint: the chain does NOT byte-erase). The contract's own energy IS the retention clock; on_evaporate emits 'erasure-due: shred key for this ct_commit' — the natural-deadline trigger that off-chain key-custody/HSM subscribes to. withdraw_consent is dual-keyed (subject OR controller — Art. 7(3) right cannot be gatekept by the controller); its emit carries the 'consent withdrawn' marker so the audit log distinguishes Art. 7(3) from natural-deadline shred. extend_retention is controller-only AND rejects once consent is withdrawn (the subject's erasure right cannot be silently overridden by a retention extension). The immutable on-chain record is the audit artefact a DPO/regulator reads. Reference contract: contracts/evaporscript/gdpr_vault.es.",
+            "evaporchain-gdpr-vault",
+        )
+        .expect("GdprVault descriptor is constant"),
     ];
 
     // Sort by class id; dedupe (defensive).
@@ -445,13 +459,16 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_covers_all_eight_lanes() {
+    fn catalogue_covers_all_nine_lanes() {
         let cat = catalogue();
         let lanes: std::collections::BTreeSet<&str> = cat.iter().map(|d| d.lane.as_str()).collect();
-        // The 8 lanes the doctrine ships (Governance added 2026-05-30
+        // The 9 lanes the doctrine ships (Governance added 2026-05-30
         // with MortalDAO; Money added 2026-06-03 with EvaporCashNote
         // — primitives of circulating value itself, distinct from
-        // Marketplace bid/escrow mechanics).
+        // Marketplace bid/escrow mechanics; Privacy added 2026-06-03
+        // with GdprVault — chain-as-tamper-evident-clock for
+        // off-chain crypto-shred, holding NO personal data per the
+        // Dead Drop §9 founding constraint).
         for l in [
             "NFT",
             "Marketplace",
@@ -461,13 +478,14 @@ mod tests {
             "Paradigm",
             "Governance",
             "Money",
+            "Privacy",
         ] {
             assert!(lanes.contains(l), "lane {l} missing from catalogue");
         }
     }
 
     #[test]
-    fn catalogue_lists_37_templates() {
+    fn catalogue_lists_38_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -505,11 +523,17 @@ mod tests {
         // bearer-note: ONE note = ONE contract instance, live_value
         // reads the energy builtin so a hoarded note loses value by
         // physics, on_evaporate-with-spent==false delivers the
-        // Wörgl/Gesell incentive native).
+        // Wörgl/Gesell incentive native);
+        // 38 OPENED THE PRIVACY LANE with GdprVault (Erasure-as-a-
+        // Service via crypto-shred; chain holds NO personal data, only
+        // a 32-byte ciphertext commitment + lifecycle; the contract's
+        // energy IS the retention clock; on_evaporate emits the
+        // natural-deadline shred trigger; withdraw_consent dual-keyed
+        // so the subject's Art. 7(3) right cannot be gatekept).
         // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
         // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 37);
+        assert_eq!(cat.len(), 38);
     }
 
     #[test]

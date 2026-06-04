@@ -26,7 +26,7 @@
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 37</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 38</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -35,8 +35,9 @@
       <button data-lane="Paradigm"     class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Paradigm</button>
       <button data-lane="Governance"   class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Governance</button>
       <button data-lane="Money"        class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Money</button>
+      <button data-lane="Privacy"      class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Privacy</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">37 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">38 shown</span>
     </div>
   </header>
 
@@ -204,6 +205,10 @@
       { id: '0x0001_0701', name: 'EvaporCash Note (Demurrage Bearer-Note)', lane: 'Money', icon: '💵',
         crate: 'evaporchain-evaporcash-note', src: 'evaporcash_note.es', dapp: 'evapor-cash-note',
         desc: "Native demurrage money — ONE note = ONE contract instance, the note's `energy` builtin IS its spendable value. Hoarding loses value by chain physics (the evaporation engine) with no keeper bot. The Wörgl/Gesell incentive native. Deployer one-shot issue(to, face) binds bearer; current holder one-shot spend(to) retires THIS note + emits the event the off-chain coordinator watches to reissue a fresh note carrying the live value. live_value() reads the energy builtin; face_value() returns the issue-time snapshot — the two-value separation is structural. on_evaporate emits 'value lost to hoarding' iff spent == false: demurrage taken to its physical limit." },
+
+      { id: '0x0001_0801', name: 'GDPR Vault (Erasure-as-a-Service / Crypto-Shred)', lane: 'Privacy', icon: '🛡️',
+        crate: 'evaporchain-gdpr-vault', src: 'gdpr_vault.es', dapp: 'gdpr-vault',
+        desc: "GDPR Erasure-as-a-Service via crypto-shred (model A). ONE retained record = ONE contract instance. State carries ONLY a 32-byte ciphertext commitment + the subject ref + the Art. 6 lawful-basis code + lifecycle flags — NEVER the personal data itself (Dead Drop §9 founding constraint: the chain does NOT byte-erase). The contract's energy IS the retention clock; on_evaporate emits 'erasure-due: shred key for this ct_commit' — the natural-deadline trigger that off-chain key-custody/HSM subscribes to. withdraw_consent is dual-keyed (subject OR controller — Art. 7(3) right cannot be gatekept); its emit carries the 'consent withdrawn' marker so the audit log distinguishes Art. 7(3) from natural-deadline shred. extend_retention is controller-only AND rejects once consent is withdrawn — the subject's erasure right cannot be silently overridden." },
     ];
 
     let activeLane = 'all';

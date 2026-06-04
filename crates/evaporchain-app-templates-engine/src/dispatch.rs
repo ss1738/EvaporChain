@@ -29,10 +29,10 @@ use evaporchain_app_templates_materialise::MaterialiseInstruction;
 
 use crate::{
     init_bell_oracle, init_childkey, init_deadman, init_decay_access_pass, init_evaporcash_note,
-    init_gallery_forgets, init_lottery, init_mayfly, init_mnemochain, init_mortal_dao,
-    init_mortal_message, init_mortal_nft, init_multisig, init_open_bounty, init_oracle_feed,
-    init_payment_split, init_refresh_market, init_sap, init_sbav, init_scl, init_sddc,
-    init_sealed_bid_auction,
+    init_gallery_forgets, init_gdpr_vault, init_lottery, init_mayfly, init_mnemochain,
+    init_mortal_dao, init_mortal_message, init_mortal_nft, init_multisig, init_open_bounty,
+    init_oracle_feed, init_payment_split, init_refresh_market, init_sap, init_sbav, init_scl,
+    init_sddc, init_sealed_bid_auction,
     init_sfsv, init_sgb, init_shlm, init_singh_heartbeat, init_singh_lineage, init_singh_migrant,
     init_singh_posthuma, init_singh_resonance, init_singh_sabi, init_singh_triage, init_ssm,
     init_subscription, init_time_lock, init_vesting_schedule, init_witnessfit,
@@ -80,6 +80,7 @@ pub enum TypedInit {
     Lottery(init_lottery::InitConfig),
     OracleFeed(init_oracle_feed::InitConfig),
     EvaporCashNote(init_evaporcash_note::InitConfig),
+    GdprVault(init_gdpr_vault::InitConfig),
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -196,6 +197,8 @@ pub fn materialise(instr: &MaterialiseInstruction) -> Result<TypedInit, EngineEr
         TypedInit::OracleFeed(init_oracle_feed::parse(cd).map_err(parse_err)?)
     } else if cls == EVAPORCASH_NOTE {
         TypedInit::EvaporCashNote(init_evaporcash_note::parse(cd).map_err(parse_err)?)
+    } else if cls == GDPR_VAULT {
+        TypedInit::GdprVault(init_gdpr_vault::parse(cd).map_err(parse_err)?)
     } else {
         return Err(EngineError::UnknownTemplate(cls.0));
     };

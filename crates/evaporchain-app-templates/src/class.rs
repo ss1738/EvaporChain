@@ -274,6 +274,38 @@ pub const ORACLE_FEED: TemplateClass = TemplateClass(0x0001_0505);
 /// `crates/evaporchain-script/tests/evaporcash_note_pilot.rs`.
 pub const EVAPORCASH_NOTE: TemplateClass = TemplateClass(0x0001_0701);
 
+// Privacy lane — primitives where the chain holds NO personal data
+// (only commitments) and the contract's own energy is a tamper-
+// evident regulatory clock. Doctrine inversion: instead of trying to
+// byte-erase from an immutable ledger (impossible — verified at Dead
+// Drop §9), the contract's evaporation IS the trigger that the
+// off-chain key-custody/HSM watches to crypto-shred the data. The
+// chain provides the proof; off-chain holds the data. This is the
+// audit-grade certificate of disposition every GDPR DPO and NIST
+// 800-88 reviewer needs.
+/// GDPR Vault — Erasure-as-a-Service via crypto-shred (model A;
+/// research/GDPR_ERASURE_ARCHITECTURE.md). ONE retained record = ONE
+/// contract instance. State carries ONLY a 32-byte ciphertext
+/// commitment (`ct_commit`), the subject reference, the Art. 6
+/// lawful-basis code, and the lifecycle flags — NEVER the personal
+/// data itself (Dead Drop §9 founding constraint: the chain does NOT
+/// byte-erase). The contract's own energy IS the retention clock;
+/// `on_evaporate` emits "erasure-due: shred key for this ct_commit",
+/// the natural-deadline trigger that off-chain key-custody/HSM
+/// subscribes to. `withdraw_consent` is dual-keyed (subject OR
+/// controller — Art. 7(3) right cannot be gatekept by the
+/// controller); its emit carries the "consent withdrawn" marker so
+/// the audit log distinguishes Art. 7(3) from natural-deadline.
+/// `extend_retention` is controller-only AND rejects once consent is
+/// withdrawn (the subject's erasure right cannot be silently
+/// overridden). The immutable on-chain record (finalised seal +
+/// terminal evaporation at/after the retention epoch, OR an explicit
+/// withdraw_consent) is the audit artefact a DPO/regulator needs.
+/// Reference contract: `contracts/evaporscript/gdpr_vault.es`.
+/// Verified cargo pilot:
+/// `crates/evaporchain-script/tests/gdpr_vault_pilot.rs`.
+pub const GDPR_VAULT: TemplateClass = TemplateClass(0x0001_0801);
+
 // Governance lane — on-chain coordination primitives that compose
 // the decay substrate (credential / rate-limit / reputation / quorum)
 // into runnable contracts.
@@ -329,6 +361,7 @@ mod tests {
             BELL_ORACLE,
             ORACLE_FEED,
             EVAPORCASH_NOTE,
+            GDPR_VAULT,
             MORTAL_DAO,
         ] {
             assert!(c.is_in_app_range(), "{:#010x} not in app range", c.0);
@@ -377,6 +410,10 @@ mod tests {
         // Money: 0x0001_0700.. — primitives of circulating value
         // itself (distinct from Marketplace bid/escrow mechanics)
         assert!((0x0001_0700..=0x0001_07FF).contains(&EVAPORCASH_NOTE.0));
+        // Privacy: 0x0001_0800.. — chain-as-tamper-evident-clock for
+        // off-chain crypto-shred; chain holds NO personal data, only
+        // commitments + lifecycle (Dead Drop §9 founding constraint)
+        assert!((0x0001_0800..=0x0001_08FF).contains(&GDPR_VAULT.0));
     }
 
     #[test]

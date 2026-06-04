@@ -51,6 +51,7 @@ pub mod init_deadman;
 pub mod init_decay_access_pass;
 pub mod init_evaporcash_note;
 pub mod init_gallery_forgets;
+pub mod init_gdpr_vault;
 pub mod init_lottery;
 pub mod init_mayfly;
 pub mod init_mnemochain;

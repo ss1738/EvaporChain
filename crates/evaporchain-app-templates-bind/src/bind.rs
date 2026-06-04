@@ -636,6 +636,26 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("EvaporCashNote", "default_face must be > 0"));
             }
         }
+        // GdprVault — energy + half_life + default_lawful_basis all > 0.
+        // The contract's own `lawful_basis > 0` runtime guard makes a
+        // 0 catalogue default useless for the wallet form. The
+        // initial_energy IS the retention budget; 0 would deploy an
+        // already-expired retention period (the audit trail would
+        // show terminal-evaporated with no useful retention window).
+        TypedInit::GdprVault(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("GdprVault", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("GdprVault", "half_life must be > 0"));
+            }
+            if c.default_lawful_basis == 0 {
+                return Err(invariant(
+                    "GdprVault",
+                    "default_lawful_basis must be > 0 (Art. 6 basis code required)",
+                ));
+            }
+        }
     }
 
     Ok(Bound(typed))

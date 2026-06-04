@@ -20,7 +20,7 @@ use evaporchain_app_templates::{
         OPEN_BOUNTY, REFRESH_MARKET_NAMESPACE, SAP_AQ, SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION,
         SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY,
         SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT,
-        EVAPORCASH_NOTE, LOTTERY_CLASS, ORACLE_FEED, PAYMENT_SPLIT_CLASS,
+        EVAPORCASH_NOTE, GDPR_VAULT, LOTTERY_CLASS, ORACLE_FEED, PAYMENT_SPLIT_CLASS,
         SEALED_BID_AUCTION_CLASS, SSM_GAME_SEMANTICS, SUBSCRIPTION_SERVICE, TIME_LOCK,
         VESTING_SCHEDULE_CLASS, WITNESSFIT_STREAK,
     },
@@ -126,6 +126,8 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
         // ── Governance lane ───────────────────────────────────────
         // ── Money lane ──────────────────────────────────────────
         c if c == EVAPORCASH_NOTE => &["initial_energy", "half_life", "default_face"],
+        // ── Privacy lane ────────────────────────────────────────
+        c if c == GDPR_VAULT => &["initial_energy", "half_life", "default_lawful_basis"],
         c if c == MORTAL_DAO => &[
             "energy",
             "half_life",
