@@ -6,6 +6,68 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (overnight grind) — GdprVault OPENS THE PRIVACY LANE (38th template)
+
+**Focus:** 14th catalogue promotion of the sprint arc and the **second NEW lane opened in this session run** (Money lane opened earlier with EvaporCashNote). GdprVault is GDPR Erasure-as-a-Service via crypto-shred. The doctrine inversion: instead of trying to byte-erase from an immutable ledger (impossible — verified at Dead Drop §9), the chain provides the audit-grade proof and the regulatory clock; off-chain holds the data and acts on the shred trigger. The on-chain record IS the NIST 800-88 / GDPR Art. 17 certificate of disposition.
+**Commits shipped:** 2 on main (`d5aed88b` cargo pilot, `1fcd9323` atomic arc) — pilot 439 LOC + atomic arc 14 files / 596 insertions.
+**Catalogue is now 38 templates. Lanes 8 → 9.**
+
+**Why a new Privacy lane:** Privacy templates are structurally distinct from every other lane. They embody a single doctrine inversion: the chain holds NO personal data, only commitments + lifecycle; the contract's energy IS the regulatory clock; on_evaporate triggers off-chain key destruction (crypto-shred). This is the answer to "how do you do GDPR Art. 17 on an immutable ledger" — you don't; you make the chain the tamper-evident shred clock.
+
+**Cargo pilot first (d5aed88b):** Wrote `gdpr_vault_pilot.rs` (8 tests, 439 LOC) and verified it on Mini-1 BEFORE the atomic arc. The pilot pins:
+- parses + compiles + all public methods + 3 lifecycle hooks present
+- `seal()` one-shot + controller-only + lawful_basis > 0
+- `withdraw_consent` dual-keyed (subject OR controller); flips expiry_forced; emit carries 'consent withdrawn' marker
+- `extend_retention` controller-only AND rejected once expiry_forced (subject's erasure right cannot be silently overridden)
+- `status()` codes ordered correctly: 0 unsealed, 1 erasure-forced (urgent), 2 sealed-normal
+- `on_evaporate` emits the natural-deadline shred trigger
+- Audit views (ct_commitment, subject, lawful_basis_code, sealed_epoch) survive a withdraw_consent intact
+
+**4 pinned-invariant TS tests** (in `dapps/gdpr-vault/test/`):
+- `withdraw_consent` is dual-keyed — pin `caller == self.subject_ref || caller == owner` (string match). If this ever drifts to controller-only OR subject-only, the audit-grade premise collapses.
+- `extend_retention` rejects after consent withdrawn — pin `require(self.expiry_forced == false, ...)` so a controller cannot extend retention on a vault the subject already asked to be erased.
+- `seal()` controller-only + one-shot + writes all 4 audit fields (ct_commit, subject_ref, lawful_basis, sealed_at)
+- `withdraw_consent` emit carries 'consent withdrawn' marker AND `on_evaporate` emit does NOT — pin BOTH so the audit log differentiates Art. 7(3) from natural-deadline shred
+
+**Atomic-commit shape:**
+| Layer | Change |
+|---|---|
+| Cargo pilot | NEW `gdpr_vault_pilot.rs` (439 LOC, 8 pinned tests) — committed and verified ahead of atomic arc |
+| dApp client | `dapps/gdpr-vault/` — 3 mutators (seal, withdraw_consent, extend_retention + deploy) + 5 views + auth-injected Tx wrappers. **11/11 TS tests pass** with **4 pinned-invariant tests**. |
+| Class registry | New `GDPR_VAULT: TemplateClass(0x0001_0801)` + new Privacy-lane comment block + lane test |
+| Catalogue | New "Privacy" lane entry; count test 37 → 38; lane test renamed `eight_lanes` → `nine_lanes` |
+| Engine init module | `init_gdpr_vault.rs` (new) — 3 u64 fields (initial_energy, half_life, default_lawful_basis). Runtime args (ct_commit + subject + actual basis) belong to the one-shot `seal()` mutator. |
+| Engine dispatch | New `TypedInit::GdprVault` variant + dispatch arm |
+| Fees oracle | New `SURCHARGE_PRIVACY = 600` constant (Marketplace tier — state is minimal but the compliance integration is regulator-grade; the surcharge reflects the integration burden, not state complexity) |
+| Bind invariants | All 3 numerics > 0. `default_lawful_basis = 0` would seed a wallet form that the contract's `basis > 0` runtime guard would reject |
+| Required keys | New 3-key row under "Privacy lane" section heading |
+| Catalogue-browser | New "Privacy" lane button (9 lanes total) + new entry; display strings 37 → 38 |
+| Landing page | Catalogue-count 37 → 38 |
+
+**Empirical results on Mini-1 worktree (`1fcd9323`):** 220+ tests pass across 5 template crates, 0 failures. `every_catalogue_default_binds` continues green for all 38 templates. `catalogue_covers_all_nine_lanes` green. Worktree cleaned up.
+
+**The 9 lanes now ship:**
+
+| Lane | Range | Count | Doctrine |
+|---|---|---|---|
+| NFT | `0x0001_00XX` | 6 | Non-fungible decaying tokens |
+| Marketplace | `0x0001_01XX` | 14 | Bid/escrow/auction mechanics OVER value |
+| Wallet UX | `0x0001_02XX` | 4 | Wallet-side primitives |
+| Consumer | `0x0001_03XX` | 4 | Consumer-facing apps |
+| Cultural | `0x0001_04XX` | 1 | Cultural-wedge primitives |
+| Paradigm | `0x0001_05XX` | 5 | Paradigm-grade type systems + oracles |
+| Governance | `0x0001_06XX` | 1 | On-chain coordination |
+| Money | `0x0001_07XX` | 1 | Circulating value itself; chain IS the demurrage engine |
+| **Privacy** | `0x0001_08XX` | **1** (new) | **Chain-as-tamper-evident-clock for off-chain crypto-shred** |
+
+**Companion contract on deck:** `erasure_attestation.es` is the natural pair (NIST 800-88 Certificate of Media Disposition / proof-of-erasure for AI machine-unlearning) and would slot at `0x0001_0802`. Not shipped yet — single-arc cadence.
+
+**Sprint cumulative: 32 ship commits + 27 session entries = 59 commits over the 2026-06-01 → 2026-06-04 arc.** Catalogue 24 → 38 (14 promotions in four calendar days). **Lane count 7 → 9 (two new lanes in one push).**
+
+**Cross-references:** commits `d5aed88b` (pilot) + `1fcd9323` (arc). Files: pilot 1 + atomic 14. Source contract: `contracts/evaporscript/gdpr_vault.es`. New pilot: `crates/evaporchain-script/tests/gdpr_vault_pilot.rs`. Verified on Mini-1 worktree.
+
+---
+
 ## 2026-06-03 (heavy ship) — EvaporCashNote OPENS THE MONEY LANE (37th template)
 
 **Focus:** 13th catalogue promotion of the sprint arc, and the **first NEW lane opened since Governance (2026-05-30, MortalDAO)**. Native demurrage money: ONE note = ONE contract instance; the note's own `energy` builtin IS its spendable value, so a hoarded note loses value by chain physics (the evaporation engine) with no keeper bot, no in-contract decay formula, no off-chain timer. The Wörgl / Gesell "money rots if you hoard it" incentive, native.
