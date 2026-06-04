@@ -757,4 +757,78 @@ mod tests {
             "2/3 + 1 of near-max stake must be strict supermajority"
         );
     }
+
+    /// REGRESSION (2026-06-04, live-cluster soak): the consensus-side
+    /// DA-attestation verifier in `crates/evaporchain-consensus/src/
+    /// tendermint.rs` (and the WASM-extract twin in
+    /// `evaporchain-consensus-types/src/tendermint.rs`) reconstructs
+    /// the signed message INLINE and must mirror `create_attestation`
+    /// byte-for-byte. Q3 (audit 2026-05-17) added the trailing `stake`
+    /// field to the signed message; the verifier sites listed above
+    /// were not updated and reconstruct only
+    /// `DST || block || data_root || vid || samples` (missing the
+    /// trailing 8 stake bytes). Under soft-DA mode (height <
+    /// enforcement_height) this prints WARNs but doesn't block
+    /// progress; at the enforcement boundary the chain HALTS because
+    /// DA quorum becomes unreachable. Empirically surfaced in the
+    /// 3-Mini Tailscale colo soak 2026-06-04 (see
+    /// `FINDING_DA_BLS_VERIFY_2026_06_04.md`).
+    ///
+    /// This test pins the byte-level contract: an attestation built
+    /// by `create_attestation` MUST verify against the canonical
+    /// message including stake, and MUST FAIL against the stake-less
+    /// message. The pinning is independent of any consensus-side
+    /// verifier; the test guards the contract that every verifier
+    /// must conform to.
+    #[test]
+    fn da_attestation_signed_message_must_include_stake() {
+        let data_root = [0x55u8; 32];
+        let kp = BlsKeypair::generate();
+        let block_number: u64 = 7;
+        let validator_id: u64 = 3;
+        let samples_verified: u32 = 8;
+        let stake: u64 = 250_000;
+
+        let att = create_attestation(
+            block_number,
+            &data_root,
+            validator_id,
+            samples_verified,
+            stake,
+            &kp,
+        );
+
+        // Canonical (correct) reconstruction — must verify.
+        let mut canonical = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
+        canonical.extend_from_slice(DA_ATTESTATION_DST);
+        canonical.extend_from_slice(&block_number.to_le_bytes());
+        canonical.extend_from_slice(&data_root);
+        canonical.extend_from_slice(&validator_id.to_le_bytes());
+        canonical.extend_from_slice(&samples_verified.to_le_bytes());
+        canonical.extend_from_slice(&stake.to_le_bytes());
+
+        let pk = evaporchain_crypto::signatures::BlsPublicKey(att.public_key.clone());
+        let sig = evaporchain_crypto::signatures::BlsSignature(att.signature.clone());
+        assert!(
+            evaporchain_crypto::signatures::BlsVerifier::verify(&canonical, &sig, &pk),
+            "canonical (stake-inclusive) message must verify against the attestation's sig",
+        );
+
+        // Stake-less reconstruction — the shape used by the buggy
+        // verifier in `tendermint.rs:5007-5014` / consensus-types
+        // `tendermint.rs:4629-4636` on 2026-06-04. MUST fail verify.
+        // If this assertion ever flips to true, the BLS-domain
+        // separation between attestations of equal (block, root, vid,
+        // samples) but different stake is broken.
+        let mut stake_less = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+        stake_less.extend_from_slice(DA_ATTESTATION_DST);
+        stake_less.extend_from_slice(&block_number.to_le_bytes());
+        stake_less.extend_from_slice(&data_root);
+        stake_less.extend_from_slice(&validator_id.to_le_bytes());
+        stake_less.extend_from_slice(&samples_verified.to_le_bytes());
+        assert!(
+            !evaporchain_crypto::signatures::BlsVerifier::verify(&stake_less, &sig, &pk),
+            "stake-less reconstruction MUST fail verify — that's the bug shape that halted the cluster at h=201",
+        );
+    }
 }
