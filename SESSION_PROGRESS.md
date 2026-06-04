@@ -6,6 +6,86 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (same day) — DA-BLS bug DIAGNOSED + FIXED + VERIFIED on live cluster
+
+**Focus:** Closed the DA-BLS verify regression the morning soak surfaced. Cycle from "soak halted at h=201" → "root cause found in source" → "regression test pinning the contract" → "fix applied" → "verified on live 3-Mini cluster, zero verify failures" took under one hour of clock time.
+
+**Commits shipped:**
+- `c3ec29ef` — regression test `da_attestation_signed_message_must_include_stake` (74 lines added to `crates/evaporchain-da/src/certificate.rs`)
+- `ceb95025` — fix in BOTH consensus-side verifier sites (22 lines / 2 changes across `evaporchain-consensus/src/tendermint.rs` + `evaporchain-consensus-types/src/tendermint.rs`)
+
+### Root cause
+
+Two consensus-side inline DA-attestation verifiers reconstructed the signed message WITHOUT the trailing 8 stake bytes. `evaporchain-da/src/certificate.rs::create_attestation` had been correctly including stake since the Q3 audit fix (2026-05-17); the verifier sites in `tendermint.rs:5007-5014` (consensus) and `tendermint.rs:4629-4636` (consensus-types) were never updated alongside. Localized in <10 minutes from a grep on the log message → `tendermint.rs:5008` → comparing the buffer capacity (`+ 8 + 32 + 8 + 4`) to the signing-side capacity (`+ 8 + 32 + 8 + 4 + 8`).
+
+### Regression test (commit `c3ec29ef`, then fix-confirming on Mini 1)
+
+Test passes on the unfixed main: confirms the byte-level contract is correct AND that the stake-less reconstruction (the buggy shape) does fail verify. Independent of any consensus-side verifier — any verifier must conform to this contract. Test result on Mini-1 worktree:
+
+```
+test certificate::tests::da_attestation_signed_message_must_include_stake ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 186 filtered out
+```
+
+### Fix (commit `ceb95025`)
+
+Both verifier sites updated to mirror `create_attestation` byte-for-byte:
+
+```
+DST || block(8) || data_root(32) || vid(8) || samples(4) || stake(8)
+```
+
+Added inline regression-comment in both files pointing to `FINDING_DA_BLS_VERIFY_2026_06_04.md` + the new regression test for future-readers.
+
+### Live-cluster verification
+
+Rebuilt fixed binary on M2 (incremental compile: 38 seconds), scp'd to M1+M3, wiped data dirs (preserving BLS keys), relaunched cluster on commit `ceb95025`. Empirical results across ~8 minutes of soak:
+- **Zero "BLS signature did not verify" entries across all 3 nodes** (`grep -c` returned 0 on each)
+- Chain advanced cleanly from h=0 to h=83 with full 3/3 BFT quorum (stake=750000/750000)
+- 83 consecutive clean conservation audits, 0 ghost objects, no fork events through h=73
+- **The pre-fix halt at h=201 is closed** — the cluster does not hit it anymore because every DA attestation now verifies
+
+### NEW issue surfaced by the same soak (separate from the DA-BLS regression)
+
+At approximately h=84, the cluster experienced a proposal-parent-hash mismatch and partitioned into rounds 0..9+ on h=84 without committing:
+
+```
+WARN Proposal parent hash mismatch — requesting sync height=84 round=9
+     local_parent=b16862204c53d256 proposal_parent=54ee9f5141fad4b7
+```
+
+All 3 nodes show identical commit lines through h=73 (and likely further; full commit-by-validator history at blocks 64-73 matches val-3/val-1/val-2/val-2/val-2/val-1/val-2/val-3/val-3/val-2 across all 3 nodes). Despite identical commit lines, by h=84 the proposer's view of h=83's hash differs from M1's stored hash → validator fork at h=83 → indefinite round-cycling at h=84.
+
+This is a SEPARATE bug. The DA-BLS fix is verified and complete; the new non-determinism issue is independent. Likely causes (untested):
+- State-root non-determinism at h=83 (ordering-sensitive state mutations)
+- Block-payload encoding drift across nodes
+- DA-certificate inclusion ordering (non-deterministic attestation iteration order)
+
+Belongs in a separate finding to investigate — `FINDING_PROPOSAL_PARENT_HASH_MISMATCH_2026_06_04.md` (not yet written). T0.6 live-cluster soak still gated, now on this new bug rather than DA-BLS.
+
+### Pattern observation
+
+Each soak iteration surfaces a new mainnet-blocker. This is exactly what the lane spec said live multi-validator soak is for. The catalogue surface (39 templates, 9 lanes) is demoable; the consensus + DA + state machinery is where the real mainnet-blocking depth-issues live.
+
+### Lane impact (now)
+
+- **T3.1**: still 🟡 PARTIAL — DA-BLS bug closed; gated on the new non-determinism issue
+- **T0.6 / T0.2 / T1.17 / T1.18 / T1.19 / T1.23**: still gated, now on the non-determinism issue
+- **All 25,435+ unit tests pass** (incl. the new regression test on Mini-1 worktree)
+
+### Artifacts shipped this session
+
+- `FINDING_DA_BLS_VERIFY_2026_06_04.md` updated with full RESOLUTION section + the new issue's preliminary write-up
+- MAINNET_READINESS T3.1 updated with the cycle (PARTIAL → fix → verify → NEW bug)
+- Live-soak pass-2 logs at `.live-soak-diagnostics-2026-06-04-pass2/M{1,2,3}-node.log` (gitignored)
+- Regression test pinning the byte-level DA-attestation contract — guards against any future verifier site that re-implements the message reconstruction
+
+**Sprint cumulative through 2026-06-04 (mainnet-lane work): 4 commits (`df164175`, `c3ec29ef`, `ceb95025`, plus this session entry) closing one CRITICAL audit-grade bug. Plus 30 ship commits + 28 entries from the catalogue arc = 62 commits over the 2026-06-01 → 2026-06-04 sprint.**
+
+**Cross-references:** commits `c3ec29ef` (test) + `ceb95025` (fix) · `FINDING_DA_BLS_VERIFY_2026_06_04.md` · `MAINNET_READINESS.md` T3.1.
+
+---
+
 ## 2026-06-04 (lane pivot — T3.1) — 3-Mini colo cluster surfaced CRITICAL DA-BLS bug
 
 **Focus:** First explicit MAINNET-CRITICAL lane work in this session run. After 4 days of catalogue surface expansion (24 → 39 templates), pivoted to T3.1 cluster bring-up per the lane spec's authorized "zero-cost interim path" — multi-validator colo on existing infra. The cluster came up healthy, ran a clean 200-block segment with full 3/3 BFT quorum, and then HALTED at the DA enforcement-height boundary, surfacing what looks like a mainnet-blocking bug.

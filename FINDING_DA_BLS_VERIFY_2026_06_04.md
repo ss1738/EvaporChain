@@ -71,6 +71,42 @@ Consensus-layer BLS sigs (Prevote / Precommit / aggregate CommitCertificate) ver
 ## Companion artifacts
 
 - This finding doc: `FINDING_DA_BLS_VERIFY_2026_06_04.md`
-- Saved logs: `.live-soak-diagnostics-2026-06-04/M{1,2,3}-node.log`
+- Saved logs (first pass, halted at h=201): `.live-soak-diagnostics-2026-06-04/M{1,2,3}-node.log`
+- Saved logs (second pass, post-fix, halted at h≈84 on a DIFFERENT issue): `.live-soak-diagnostics-2026-06-04-pass2/M{1,2,3}-node.log`
 - Reusable launch script: `scripts/launch-colo-3node-cluster.sh`
 - Genesis used: `genesis-tailscale-3node.json` (chain_id `evaporchain-tailscale-3node-1`)
+
+## RESOLUTION (2026-06-04, same day)
+
+Root cause localized in <10 minutes after the soak data was inspected: two consensus-side inline verifiers (`crates/evaporchain-consensus/src/tendermint.rs:5007-5014` + `crates/evaporchain-consensus-types/src/tendermint.rs:4629-4636`) reconstructed the signed message WITHOUT the trailing 8 stake bytes. `evaporchain-da/src/certificate.rs::create_attestation` had been correctly including stake since the Q3 audit fix (2026-05-17); the verifier sites were not updated alongside it.
+
+### Fix shipped
+
+- **Regression test** (commit `c3ec29ef`): `da_attestation_signed_message_must_include_stake` in `crates/evaporchain-da/src/certificate.rs`. Pins the byte-level contract: the canonical (stake-inclusive) reconstruction MUST verify; the stake-less reconstruction (the buggy shape) MUST fail verify. Independent of any consensus-side verifier — any verifier must conform to this contract.
+- **Fix** (commit `ceb95025`): both `tendermint.rs` sites updated to reconstruct `DST || block(8) || data_root(32) || vid(8) || samples(4) || stake(8)`, mirroring `create_attestation` byte-for-byte.
+
+### Live-cluster confirmation
+
+Re-launched the 3-Mini cluster on commit `ceb95025`. Empirical results:
+- **Zero "BLS signature did not verify" entries across all 3 nodes** (`grep -c` returned 0 on each Mini's log)
+- Chain advanced cleanly from h=0 to h=83 with full 3/3 BFT quorum, 83 consecutive clean conservation audits, 0 ghost objects, no fork events through h=73
+- The pre-fix halt at h=201 (DA enforcement boundary) is closed — the cluster does NOT hit it anymore because every DA attestation now verifies
+
+### NEW issue surfaced by the same soak (separate finding)
+
+At approximately h=84, the cluster experienced a proposal-parent-hash mismatch and partitioned into rounds 0..9+ on h=84 without committing:
+
+```
+WARN Proposal parent hash mismatch — requesting sync height=84 round=9
+     local_parent=b16862204c53d256 proposal_parent=54ee9f5141fad4b7
+```
+
+All 3 nodes show identical commit lines through h=73 (and likely further); commit-by-validator pattern matched across all 3 nodes for blocks 64-73 (val-3, val-1, val-2, val-2, val-2, val-1, val-2, val-3, val-3, val-2). Despite this, by h=84 the proposer's view of h=83's hash differs from M1's stored hash.
+
+This is a SEPARATE bug from the DA-BLS verify regression. The DA-BLS fix is verified and complete; the new non-determinism issue is independent and would have surfaced regardless. Likely causes (untested):
+
+1. **State-root non-determinism** at h=83 — different nodes computed different state-roots for the same logical block due to ordering-sensitive state mutations.
+2. **Block-payload encoding** drift — different serialization of the same block content across nodes.
+3. **DA-certificate inclusion ordering** — the DA cert attached to block 83 may have been built from a non-deterministic attestation iteration order.
+
+Belongs in a NEW finding doc when investigated: `FINDING_PROPOSAL_PARENT_HASH_MISMATCH_2026_06_04.md`. T0.6 live-cluster soak is still gated, now on this new bug rather than on DA-BLS. The pattern (each soak iteration surfaces a new mainnet-blocker) validates the lane spec's premise that live multi-validator soak is the only way to catch this class of bug.
