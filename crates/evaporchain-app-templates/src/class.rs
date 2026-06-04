@@ -305,6 +305,28 @@ pub const EVAPORCASH_NOTE: TemplateClass = TemplateClass(0x0001_0701);
 /// Verified cargo pilot:
 /// `crates/evaporchain-script/tests/gdpr_vault_pilot.rs`.
 pub const GDPR_VAULT: TemplateClass = TemplateClass(0x0001_0801);
+/// Erasure Attestation — Proof-of-Erasure-as-a-Service for the
+/// right-to-be-forgotten / AI machine-unlearning frontier
+/// (research/GDPR_ERASURE_ARCHITECTURE.md). NIST SP 800-88
+/// Certificate of Media Disposition (data ref + sanitization
+/// METHOD + VERIFICATION result + who/when), on-chain and tamper-
+/// evident. ONE attestation = ONE contract instance. Pair with
+/// `gdpr_vault.es` (the retention clock + shred trigger):
+/// GdprVault destroys the key; ErasureAttestation immutably proves
+/// the destruction was performed and verified. Lifecycle: (1)
+/// controller calls one-shot `seal(data_commitment, subject,
+/// basis, method)` to open the attestation (basis: 1=GDPR-Art17,
+/// 2=CCPA/AB1008, 3=NIST-program; method: 1=crypto-shred,
+/// 2=clear, 3=purge, 4=destroy, 5=ML-unlearn). (2) Controller
+/// performs the off-chain sanitization. (3) Controller calls
+/// one-shot `attest_erasure(verification_code)` to record the
+/// proof event. `on_evaporate` emits the regulator-grade NEGATIVE
+/// proof "obligation window CLOSED with no attestation" ONLY when
+/// `attested == false` — an attested vault's evaporation is silent
+/// because the positive proof already stands. Reference contract:
+/// `contracts/evaporscript/erasure_attestation.es`. Verified cargo
+/// pilot: `crates/evaporchain-script/tests/erasure_attestation_pilot.rs`.
+pub const ERASURE_ATTESTATION: TemplateClass = TemplateClass(0x0001_0802);
 
 // Governance lane — on-chain coordination primitives that compose
 // the decay substrate (credential / rate-limit / reputation / quorum)
@@ -362,6 +384,7 @@ mod tests {
             ORACLE_FEED,
             EVAPORCASH_NOTE,
             GDPR_VAULT,
+            ERASURE_ATTESTATION,
             MORTAL_DAO,
         ] {
             assert!(c.is_in_app_range(), "{:#010x} not in app range", c.0);
@@ -414,6 +437,7 @@ mod tests {
         // off-chain crypto-shred; chain holds NO personal data, only
         // commitments + lifecycle (Dead Drop §9 founding constraint)
         assert!((0x0001_0800..=0x0001_08FF).contains(&GDPR_VAULT.0));
+        assert!((0x0001_0800..=0x0001_08FF).contains(&ERASURE_ATTESTATION.0));
     }
 
     #[test]

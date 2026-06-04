@@ -1,0 +1,10 @@
+{
+  "name": "erasure-attestation",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ErasureAttestation typed client — chain client for contracts/evaporscript/erasure_attestation.es. NIST 800-88 Certificate of Disposition (Privacy lane). Pair with GdprVault: GdprVault is the shred trigger; ErasureAttestation is the immutable proof the shred was performed AND verified, with a regulator-grade NEGATIVE-proof path for missed deadlines.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

@@ -26,7 +26,7 @@
       </span>
     </div>
     <div class="max-w-6xl mx-auto px-6 pb-4 flex flex-wrap items-center gap-2 text-xs">
-      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 38</button>
+      <button data-lane="all"          class="lane-btn px-3 py-1 rounded bg-slate-800 text-white">all 39</button>
       <button data-lane="NFT"          class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">NFT</button>
       <button data-lane="Marketplace"  class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Marketplace</button>
       <button data-lane="Wallet UX"    class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Wallet UX</button>
@@ -37,7 +37,7 @@
       <button data-lane="Money"        class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Money</button>
       <button data-lane="Privacy"      class="lane-btn px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Privacy</button>
       <input id="search" class="ml-auto border rounded px-3 py-1 text-xs w-64" placeholder="search name / description…" />
-      <span id="count" class="text-slate-500 text-xs ml-2">38 shown</span>
+      <span id="count" class="text-slate-500 text-xs ml-2">39 shown</span>
     </div>
   </header>
 
@@ -209,6 +209,9 @@
       { id: '0x0001_0801', name: 'GDPR Vault (Erasure-as-a-Service / Crypto-Shred)', lane: 'Privacy', icon: '🛡️',
         crate: 'evaporchain-gdpr-vault', src: 'gdpr_vault.es', dapp: 'gdpr-vault',
         desc: "GDPR Erasure-as-a-Service via crypto-shred (model A). ONE retained record = ONE contract instance. State carries ONLY a 32-byte ciphertext commitment + the subject ref + the Art. 6 lawful-basis code + lifecycle flags — NEVER the personal data itself (Dead Drop §9 founding constraint: the chain does NOT byte-erase). The contract's energy IS the retention clock; on_evaporate emits 'erasure-due: shred key for this ct_commit' — the natural-deadline trigger that off-chain key-custody/HSM subscribes to. withdraw_consent is dual-keyed (subject OR controller — Art. 7(3) right cannot be gatekept); its emit carries the 'consent withdrawn' marker so the audit log distinguishes Art. 7(3) from natural-deadline shred. extend_retention is controller-only AND rejects once consent is withdrawn — the subject's erasure right cannot be silently overridden." },
+      { id: '0x0001_0802', name: 'Erasure Attestation (NIST 800-88 Certificate of Disposition)', lane: 'Privacy', icon: '📜',
+        crate: 'evaporchain-erasure-attestation', src: 'erasure_attestation.es', dapp: 'erasure-attestation',
+        desc: "Proof-of-Erasure-as-a-Service for the right-to-be-forgotten / AI machine-unlearning frontier. NIST SP 800-88 Certificate of Media Disposition (data ref + sanitization METHOD + VERIFICATION result + who/when), on-chain and tamper-evident. Pair with GdprVault (the shred trigger); ErasureAttestation immutably proves the destruction was performed AND verified. Lifecycle: (1) controller one-shot seal opens the attestation (basis: 1=GDPR-Art17, 2=CCPA, 3=NIST; method: 1=crypto-shred, 2=clear, 3=purge, 4=destroy, 5=ML-unlearn); (2) controller performs off-chain sanitization; (3) controller one-shot attest_erasure(verification_code) records the proof. on_evaporate emits the regulator-grade NEGATIVE proof ONLY when attested == false — makes the missed-deadline outcome as immutable as the positive. The negative-proof path is the unsolved frontier in the right-to-be-forgotten space: regulators currently have no standardised way to PROVE a deletion deadline was missed; this contract closes that gap." },
     ];
 
     let activeLane = 'all';

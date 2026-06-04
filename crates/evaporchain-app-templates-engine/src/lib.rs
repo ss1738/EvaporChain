@@ -49,6 +49,7 @@ pub mod init_bell_oracle;
 pub mod init_childkey;
 pub mod init_deadman;
 pub mod init_decay_access_pass;
+pub mod init_erasure_attestation;
 pub mod init_evaporcash_note;
 pub mod init_gallery_forgets;
 pub mod init_gdpr_vault;

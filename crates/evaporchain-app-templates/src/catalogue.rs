@@ -404,6 +404,20 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-gdpr-vault",
         )
         .expect("GdprVault descriptor is constant"),
+        TemplateDescriptor::new(
+            ERASURE_ATTESTATION,
+            "Erasure Attestation (NIST 800-88 Certificate of Disposition)",
+            "Privacy",
+            json!({
+                "initial_energy": 1000,
+                "half_life": 100,
+                "default_obligation_basis": 1,
+                "default_method": 1
+            }),
+            "Proof-of-Erasure-as-a-Service for the right-to-be-forgotten / AI machine-unlearning frontier. NIST SP 800-88 Certificate of Media Disposition (data ref + sanitization METHOD + VERIFICATION result + who/when), on-chain and tamper-evident. ONE attestation = ONE contract instance. Pair with gdpr_vault.es (the retention clock + shred trigger): GdprVault destroys the key; ErasureAttestation immutably proves the destruction was performed AND verified. Lifecycle: (1) controller one-shot seal(data_commitment, subject, basis, method) opens the attestation — basis: 1=GDPR-Art17, 2=CCPA/AB1008, 3=NIST-program; method: 1=crypto-shred, 2=clear, 3=purge, 4=destroy, 5=ML-unlearn. (2) Controller performs the off-chain sanitization. (3) Controller one-shot attest_erasure(verification_code) records the proof event. on_evaporate emits the regulator-grade NEGATIVE proof 'obligation window CLOSED with no attestation' ONLY when attested == false — an attested vault's evaporation is silent because the positive proof already stands. The negative-proof path is the unsolved frontier in the right-to-be-forgotten space: regulators currently have no standardised way to PROVE a deletion deadline was missed; this contract makes the negative outcome as immutable as the positive. Reference contract: contracts/evaporscript/erasure_attestation.es.",
+            "evaporchain-erasure-attestation",
+        )
+        .expect("ErasureAttestation descriptor is constant"),
     ];
 
     // Sort by class id; dedupe (defensive).
@@ -485,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_38_templates() {
+    fn catalogue_lists_39_templates() {
         // Anti-regression: dropping a primitive accidentally would
         // shrink the catalogue. 20 was the original Singh-named set;
         // 21 added RefreshMarket (2026-05-09); 22 added the Decay
@@ -529,11 +543,16 @@ mod tests {
         // a 32-byte ciphertext commitment + lifecycle; the contract's
         // energy IS the retention clock; on_evaporate emits the
         // natural-deadline shred trigger; withdraw_consent dual-keyed
-        // so the subject's Art. 7(3) right cannot be gatekept).
+        // so the subject's Art. 7(3) right cannot be gatekept);
+        // 39 added ErasureAttestation alongside GdprVault — the
+        // NIST 800-88 Certificate of Disposition pair (GdprVault is
+        // the shred trigger; ErasureAttestation is the immutable proof
+        // the shred was performed AND verified, with a regulator-grade
+        // NEGATIVE-proof path for missed deadlines).
         // (Mayfly + Singh-Posthuma were ALREADY in the catalogue under
         // different framings.)
         let cat = catalogue();
-        assert_eq!(cat.len(), 38);
+        assert_eq!(cat.len(), 39);
     }
 
     #[test]

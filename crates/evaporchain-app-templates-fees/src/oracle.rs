@@ -186,6 +186,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         // reflects the compliance integration burden, not state
         // complexity.
         TypedInit::GdprVault(_) => SURCHARGE_PRIVACY,
+        // ErasureAttestation — Privacy lane. Same regulatory tier as
+        // GdprVault: minimal state (data ref + sanitization metadata),
+        // chain holds NO personal data, the immutable audit trail is
+        // what a DPO/regulator reads. NIST 800-88 Certificate of
+        // Disposition surface.
+        TypedInit::ErasureAttestation(_) => SURCHARGE_PRIVACY,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }

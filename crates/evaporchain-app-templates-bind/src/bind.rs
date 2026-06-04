@@ -656,6 +656,31 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 ));
             }
         }
+        // ErasureAttestation — energy + half_life + default_obligation_basis
+        // + default_method all > 0. The contract's seal() runtime guards
+        // (basis > 0; method > 0) make 0 catalogue defaults useless for
+        // the wallet form. initial_energy IS the obligation-window
+        // budget; 0 would deploy an already-expired window.
+        TypedInit::ErasureAttestation(c) => {
+            if c.initial_energy == 0 {
+                return Err(invariant("ErasureAttestation", "initial_energy must be > 0"));
+            }
+            if c.half_life == 0 {
+                return Err(invariant("ErasureAttestation", "half_life must be > 0"));
+            }
+            if c.default_obligation_basis == 0 {
+                return Err(invariant(
+                    "ErasureAttestation",
+                    "default_obligation_basis must be > 0 (1=GDPR-Art17, 2=CCPA, 3=NIST)",
+                ));
+            }
+            if c.default_method == 0 {
+                return Err(invariant(
+                    "ErasureAttestation",
+                    "default_method must be > 0 (NIST 800-88 method code)",
+                ));
+            }
+        }
     }
 
     Ok(Bound(typed))
