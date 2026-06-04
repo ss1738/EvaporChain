@@ -5129,20 +5129,35 @@ impl TendermintConsensus {
         }
 
         // If we receive a message for a future height, we are behind — request sync.
-        // Only trigger sync for gap > 1: gap=1 means the peer just committed our
-        // current round and moved on; those peers still gossip precommits that let
-        // our round succeed without needing external sync.
+        // Normally only trigger sync for gap > 1: gap=1 means the peer just
+        // committed our current round and moved on; those peers still gossip
+        // precommits that let our round succeed without needing external sync.
+        //
+        // 2026-06-04 fix (FINDING_P2_04_LIVENESS_LAG_2026_06_04.md): when
+        // gap=1 AND we are in Precommit phase with a proposed_block whose
+        // P2-04 DA-supermajority gate is still blocked, the cluster won't
+        // self-recover via more precommits (all 3 validators have already
+        // precommitted; gossip dedupes). The peers that moved to h+1 also
+        // stop sending DA attestations for our height (their attestation
+        // queue is for THEIR current height). We must explicitly state-sync
+        // the missed block from a peer. Empirically, this is the exact
+        // race that wedged the proposer at h=201 in the 2026-06-04 colo
+        // bring-up #3.
         if msg.height() > self.height {
-            if msg.height() > self.height + 1 {
+            let stuck_at_p2_04 = msg.height() == self.height + 1
+                && self.round_state.phase == Phase::Precommit
+                && self.round_state.proposed_block.is_some();
+            if msg.height() > self.height + 1 || stuck_at_p2_04 {
                 tracing::warn!(
                     local_height = self.height,
                     msg_height = msg.height(),
+                    stuck_at_p2_04 = stuck_at_p2_04,
                     "Behind by {} blocks — requesting sync",
                     msg.height() - self.height
                 );
                 actions.push(ConsensusAction::RequestSync(
                     self.height,
-                    msg.height().saturating_sub(1),
+                    msg.height().saturating_sub(1).max(self.height),
                 ));
             }
             return actions;
