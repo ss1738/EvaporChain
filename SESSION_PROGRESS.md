@@ -6,6 +6,45 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (fourth cycle, T1.23 DONE) — Mainnet genesis-amendment dry-run executed end-to-end on the colo cluster
+
+**Focus:** First downstream lane unblocked by T3.1's closure. Drove the full T1.23 runbook on the 3-Mini cluster running commit `dca50704`. All 6 acceptance criteria met. Lane flips from 🟡 OPS-ONLY → ✅ DONE.
+
+**Artifacts shipped:**
+- `docs/runbooks/genesis-amendment-dry-run-report-2026-06-04.md` (new) — full execution log with every step's input/output
+- `docs/runbooks/genesis-amendment-dry-run.md` updated with the missing `EVAPORCHAIN_ADMIN_KEY` Authorization-header section (the runbook predated the admin-auth gating; flagged in the report's operational notes)
+- `MAINNET_READINESS.md` T1.23 flipped to ✅ DONE
+
+**Runbook results (all ✅):**
+- Step 1: `amendment_hash_is_deterministic` + 2 sibling unit tests pass on Mini-1
+- Step 2a: `from_version=99` unregistered → `"amendment from_version 99 is not currently registered"`
+- Step 2b: `to_version=1` collision → `"amendment to_version 1 is already registered (collision)"`
+- Step 2c: happy path `from=3, to=4` → `{"status":"ok","total_versions":4}`
+- Steps 3+4: EPV registry shows v1, v2, v3, v4 all `is_runnable=true` post-amendment; total_versions: 3 → 4
+- Step 5: 18/18 `evaporchain-llsa` unit tests pass (amendment_hash_*, apply_*, proof_*, multi_auditor_*)
+- Step 6: per-node propagation confirmed — happy-path POST returned ok on M2 and M3 independently
+
+**Operational notes:**
+- The runbook was admin-gated by `EVAPORCHAIN_ADMIN_KEY` (security default = fail-closed); the cluster was relaunched with an ephemeral key in env for the dry-run, then scrubbed. The runbook's auth-header section was missing and has been added.
+- The cluster ships with 3 EPV versions pre-seeded at genesis (vs the runbook's assumed 1). Amendment parameters adjusted from 1→2 to 3→4.
+- Cluster ran bit-clean throughout the dry-run: zero cert-vs-actual mismatch, zero parent-hash mismatch, zero DA verify failures, full 3/3 BFT quorum on every block.
+
+**Lane state after this cycle:**
+
+| Lane | Pre-T3.1-close | Post-T3.1-close + T1.23 done |
+|---|---|---|
+| T3.1 (cluster bring-up) | 🔴 REGRESSED | 🟢 CAN CLOSE (this session run) |
+| T1.23 (genesis-amendment dry-run) | 🟡 OPS-ONLY | ✅ DONE (this session run) |
+| T0.6 (slashing-at-scale live soak) | 🔴 SOAK-BLOCKED | 🟡 unblocked (needs Byzantine-injection harness, not yet written) |
+| T0.2 (D-track adversarial + perf + 72h soak) | 🔴 SOAK-BLOCKED | 🟡 unblocked (representative perf soak still needs >2-vCPU box) |
+| T1.17/T1.18/T1.19 (key-rotation rehearsals) | 🟡 cluster-gated | 🟡 unblocked — each is a runbook to drive |
+
+**Sprint cumulative through 2026-06-04 (mainnet-lane track):** 11 commits across two lanes — 7 closing 4 CRITICAL bugs (T3.1 cycle) + 4 for T1.23 dry-run report + runbook + lane flip. Plus the catalogue arc's 30 ship commits = **74 commits over 2026-06-01 → 2026-06-04**.
+
+**Cross-references:** `docs/runbooks/genesis-amendment-dry-run-report-2026-06-04.md` · `docs/runbooks/genesis-amendment-dry-run.md` (updated) · `MAINNET_READINESS.md` T1.23 (now ✅) · `FINDING_DA_BLS_VERIFY_2026_06_04.md` + `FINDING_P2_04_LIVENESS_LAG_2026_06_04.md` (the cluster-bring-up trail this T1.23 work sits on top of).
+
+---
+
 ## 2026-06-04 (third cycle, lane T3.1 CLOSEABLE) — P2-04 stuck-proposer + sync off-by-one DIAGNOSED + FIXED + cluster sustained past h=250
 
 **Focus:** Closed the third (and final) CRITICAL bug the soak surfaced. The cluster now sustains live BFT consensus past h=250 across all 3 Minis with a self-healing recovery cycle.

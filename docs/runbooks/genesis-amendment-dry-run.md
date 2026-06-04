@@ -75,11 +75,25 @@ Expected: `test amendment_hash_is_deterministic ... ok`
 
 ### Step 2 — POST amendment to node 1
 
+### Admin authentication
+
+`/api/llsa/apply_amendment` is admin-gated. Set `EVAPORCHAIN_ADMIN_KEY` in the node's
+launch env and pass it as `Authorization: Bearer <key>` on every admin request.
+Default is fail-closed (no key set → endpoint returns "admin endpoints disabled").
+
+Recommended: generate a strong random key and store it out-of-band:
+
 ```bash
-MINI1=http://localhost:8080    # run on Mini 1 via SSH, or replace with Tailscale IP
+export EVAPORCHAIN_ADMIN_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+# Persist out-of-band (1Password, KMS, etc.) — needed for every admin request.
+```
+
+```bash
+MINI1=http://localhost:8080    # adjust the port (e.g. 8081 on the colo cluster)
 
 curl -s -X POST "$MINI1/api/llsa/apply_amendment" \
      -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $EVAPORCHAIN_ADMIN_KEY" \
      -d '{
        "from_version": 1,
        "to_version":   2,

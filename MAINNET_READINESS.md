@@ -158,7 +158,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | ✅ DONE — false-positive from audit reconciliation; both EVR docs already carry detailed implementation-status tables ahead of the spec body | docs |
 | T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | ✅ DONE — `docs/runbooks/monitoring.md` + `scripts/prometheus-scrape-config.example.yml` + `scripts/grafana-dashboards/evaporchain-chain.json` (cherry-picked `a1646a7f` 2026-05-14) | OPS-RUNBOOK |
 | T1.22 | Network upgrade rehearsal (live flag-flip + rollback) | ✅ DONE — `docs/runbooks/governance-rehearsal.md` (cherry-picked `49b1a4e1` 2026-05-14) | OPS-RUNBOOK |
-| T1.23 | Mainnet genesis-amendment dry-run | 🟡 **CODE-COMPLETE — OPS-ONLY** — runbook at `docs/runbooks/genesis-amendment-dry-run.md`; operator to execute on live cluster (Step 2 + 3 + error-path tests) and commit report | OPS-RUNBOOK |
+| T1.23 | Mainnet genesis-amendment dry-run | ✅ **DONE 2026-06-04** — executed on the 3-Mini colo cluster (commit `dca50704`). All 6 runbook steps passed: amendment_hash determinism unit test (3/3 pass), both error paths (from_version unregistered + to_version collision) returned canonical errors, happy-path POST registered v4, EPV registry shows 4 runnable versions on each Mini, 18/18 evaporchain-llsa unit tests pass (incl. all MultiAuditorVerifier k-of-n cases), per-node propagation confirmed on M1+M2+M3. Report: `docs/runbooks/genesis-amendment-dry-run-report-2026-06-04.md`. Follow-up: runbook updated with the missing `EVAPORCHAIN_ADMIN_KEY` Authorization-header section. | OPS-RUNBOOK |
 
 ### Tier 2 — Defer to V1.5 (NOT blocking mainnet)
 
