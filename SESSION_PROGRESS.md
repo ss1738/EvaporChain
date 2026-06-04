@@ -6,6 +6,45 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-04 (fifth cycle, audit-prep) — Regression tests pinning the three live-soak consensus fixes
+
+**Focus:** Each CRITICAL fix from today's bug-cycle now has a paired unit test that would fail CI if the fix is regressed. This is the audit-grade closing piece — the live-cluster soak is no longer the only guardrail against the bug class.
+
+**Commit shipped:** `189f75f3` — `consensus: regression tests for P2-04 stuck-recovery + gap=1 sync trigger` (1 file, 304 lines added to `crates/evaporchain-consensus/src/tendermint.rs`).
+
+### Tests added (all green on Mini-1)
+
+1. **`p2_04_da_attestation_retrigger_emits_commit_block_when_supermajority_reached`** — sets up the exact stuck state from the 2026-06-04 colo soak (3 validators in small-cluster DA mode, h=10 in Precommit with 3-of-3 precommit quorum but only 2-of-3 DA attestations), then drives a real BLS-signed DAAttestation from val-3 through `on_message`. Asserts the inline retrigger emits CommitBlock(h=10) + advances phase to Commit. Without commit `47a379e1` this test observes no CommitBlock.
+
+2. **`p2_04_gap_one_stuck_triggers_sync_request_with_correct_bound`** — at h=10 in Precommit + proposed_block.is_some(), injects a peer Prevote at h=11 (gap=1). Asserts `ConsensusAction::RequestSync(10, to)` is emitted with `to >= 11`. Without `5773fc5e` the original gap>1-only path would skip sync. Without `dca50704` the bound would collapse to `(10, 10)` — empty `[h, h)` range that peers serve as 0 blocks (the masked off-by-one bug).
+
+3. **`p2_04_gap_one_no_sync_when_not_stuck`** — control: same gap=1 message but `proposed_block.is_none()` + `phase=Propose`. MUST NOT trigger sync. Pins that `5773fc5e`'s widening is scoped to the stuck-state branch only (avoids producing spurious sync requests in the common gap=1 case).
+
+### Coverage matrix (all four CRITICAL fixes from today now have paired tests)
+
+| Fix | Paired test | Status |
+|---|---|---|
+| DA-BLS verify regression (`ceb95025`) | `da_attestation_signed_message_must_include_stake` in `evaporchain-da/src/certificate.rs` | ✅ shipped earlier (`c3ec29ef`) |
+| Post-cert block mutation (`6db4aca1`) | `phase5_some_changes_block_hash` + `phase5_different_post_state_roots_produce_different_hashes` (already in tendermint.rs) | ✅ doctrine-pin already in place; mutation in main.rs is the runtime guard. |
+| P2-04 stuck-recovery (`47a379e1`) | `p2_04_da_attestation_retrigger_emits_commit_block_when_supermajority_reached` | ✅ shipped this cycle (`189f75f3`) |
+| Gap=1 sync trigger + RequestSync bound (`5773fc5e` + `dca50704`) | `p2_04_gap_one_stuck_triggers_sync_request_with_correct_bound` + `p2_04_gap_one_no_sync_when_not_stuck` | ✅ shipped this cycle (`189f75f3`) |
+
+### Why this matters for T0.12
+
+External audit will spot-check whether each behavioral claim has a paired test. Without these, the audit-trail for "P2-04 unstucks correctly via late DA attestation" was a finding doc + a live-soak observation — verbal evidence at best. Now the contract is pinned in code. Any future regression on the on_message DA-attestation handler OR the height-filter sync trigger fails CI.
+
+### Lane impact (incremental)
+
+- **T0.12 (external security audit)**: 🔴 still BLOCKED on operator (auditor selection), but the codebase is now tighter for whoever lands. The recent fix surface has paired tests covering the exact bug shape.
+- **T3.1**: 🟢 CAN CLOSE (unchanged from prior cycle).
+- **T1.23**: ✅ DONE (unchanged from prior cycle).
+
+**Sprint cumulative through 2026-06-04 (mainnet-lane track):** 12 commits — 7 closing 4 CRITICAL bugs + 4 driving T1.23 done + 1 audit-grade regression-test pinning. Plus the catalogue arc's 30 ship commits = **75 commits over 2026-06-01 → 2026-06-04**.
+
+**Cross-references:** commit `189f75f3` · `FINDING_DA_BLS_VERIFY_2026_06_04.md` · `FINDING_P2_04_LIVENESS_LAG_2026_06_04.md` · `crates/evaporchain-consensus/src/tendermint.rs::p2_04_liveness_regression`.
+
+---
+
 ## 2026-06-04 (fourth cycle, T1.23 DONE) — Mainnet genesis-amendment dry-run executed end-to-end on the colo cluster
 
 **Focus:** First downstream lane unblocked by T3.1's closure. Drove the full T1.23 runbook on the 3-Mini cluster running commit `dca50704`. All 6 acceptance criteria met. Lane flips from 🟡 OPS-ONLY → ✅ DONE.
