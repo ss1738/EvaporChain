@@ -25340,3 +25340,307 @@ mod governance_defaults_per_chain_tests {
         assert_eq!(lookup.get("conservation_enforcement"), Some(&"enforce"));
     }
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// 2026-06-04 P2-04 liveness regression tests
+//
+// Pins the two consensus-level fixes shipped after the 3-Mini Tailscale colo
+// soak surfaced the P2-04 stuck-proposer race (see
+// FINDING_P2_04_LIVENESS_LAG_2026_06_04.md):
+//
+//   1. (commit 47a379e1) DA-attestation receipt at our current height +
+//      Precommit phase + matching precommit-quorum + DA supermajority NOW
+//      reached → emit CommitBlock immediately (don't wait for the next
+//      tick, which empirically didn't fire). Defense-in-depth path.
+//
+//   2. (commits 5773fc5e + dca50704) Receiving a message at height H+1
+//      while we're in Precommit phase with proposed_block.is_some() means
+//      we're stuck at the P2-04 gate — peers committed and moved on
+//      without us. Trigger state-sync to pull the missed block. The
+//      RequestSync upper bound must be > self.height (inclusive of block
+//      H) — the original gap>1-only path had this same off-by-one but it
+//      was masked because gap>=2 still served block H via [H, H+1).
+//
+// Block-hash sensitivity to `post_state_root` (the doctrine pin behind
+// commit 6db4aca1's "don't mutate signed block fields post-cert") is
+// already covered by `phase5_some_changes_block_hash` and
+// `phase5_different_post_state_roots_produce_different_hashes` higher up
+// in this file. No new test added for that fix here.
+// ───────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod p2_04_liveness_regression {
+    use super::*;
+    use evaporchain_crypto::signatures::BlsKeypair;
+    use evaporchain_types::Block;
+
+    fn make_block_with_data_root(number: u64, parent: [u8; 32]) -> Block {
+        Block {
+            number,
+            epoch: number,
+            parent_hash: parent,
+            state_root: [0xCAu8; 32],
+            transactions: vec![],
+            timestamp: number * 1000,
+            chain_id: String::from("evaporchain-p2-04-regression"),
+            producer_id: Some(1),
+            vrf_output: None,
+            vrf_proof: None,
+            // CRITICAL: data_root must be Some so P2-04 actually gates.
+            data_root: Some([0xDAu8; 32]),
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    /// Pre-inject a DA attestation directly (bypassing on_message's
+    /// BLS verify path) so the test can set up the "n−1 of n attested"
+    /// state cheaply. Mirrors the helper used in the DA-quorum tests
+    /// higher in this file.
+    fn inject_da_att(
+        tc: &mut TendermintConsensus,
+        block_number: u64,
+        data_root: [u8; 32],
+        validator_id: u64,
+        stake: u64,
+    ) {
+        let kp = BlsKeypair::generate();
+        let att = evaporchain_da::certificate::create_attestation(
+            block_number,
+            &data_root,
+            validator_id,
+            8,
+            stake,
+            &kp,
+        );
+        let atts = tc.da_attestations.entry(block_number).or_default();
+        if !atts.iter().any(|a| a.validator_id == validator_id) {
+            atts.push(att);
+        }
+    }
+
+    /// Construct a real, BLS-signed `ConsensusMessage::DAAttestation`
+    /// using the supplied keypair. Needed for the test that drives
+    /// `on_message` end-to-end (the verify path requires a real sig).
+    fn signed_da_attestation_msg(
+        block_number: u64,
+        data_root: [u8; 32],
+        validator_id: u64,
+        stake: u64,
+        kp: &BlsKeypair,
+    ) -> ConsensusMessage {
+        let att = evaporchain_da::certificate::create_attestation(
+            block_number,
+            &data_root,
+            validator_id,
+            8,
+            stake,
+            kp,
+        );
+        ConsensusMessage::DAAttestation {
+            block_number: att.block_number,
+            data_root: att.data_root,
+            validator_id: att.validator_id,
+            samples_verified: att.samples_verified,
+            stake: att.stake,
+            signature: att.signature,
+            public_key: att.public_key,
+        }
+    }
+
+    /// REGRESSION (commit `47a379e1`): a late-arriving DA attestation
+    /// that tips us over DA supermajority while we're stuck at
+    /// P2-04 must immediately emit a `CommitBlock` action — NOT wait
+    /// for the next tick (which empirically did not fire reliably and
+    /// caused the 2026-06-04 colo cluster to wedge at h≈84/202).
+    #[test]
+    fn p2_04_da_attestation_retrigger_emits_commit_block_when_supermajority_reached() {
+        // Build a 3-validator set; bind val-3's BLS pubkey so the
+        // on_message verify path accepts its attestation.
+        let kp3 = BlsKeypair::generate();
+        let pk3_bytes = kp3.public_key_bytes().0;
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        let mut v3 = ValidatorInfo::new(3, 1000, [3u8; 32]);
+        v3.bls_public_key = Some(pk3_bytes);
+        vs.add_validator(v3);
+
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
+        // Force small-cluster DA mode so the proposer's self-attestation
+        // counts toward supermajority — matches the production
+        // 3-validator cluster path.
+        tc.set_small_cluster_da_mode(true);
+
+        // Set up the stuck state: height=10, Precommit phase, with a
+        // proposed_block carrying data_root + precommit quorum already
+        // reached on the block_hash.
+        let block = make_block_with_data_root(10, [0u8; 32]);
+        let block_hash = TendermintConsensus::block_hash(&block);
+        tc.height = 10;
+        tc.da_block_proposers.insert(10, 1); // val-1 was the proposer
+        tc.round_state.proposed_block = Some(block.clone());
+        tc.round_state.phase = Phase::Precommit;
+        tc.round_state.precommits.insert(1, Some(block_hash));
+        tc.round_state.precommits.insert(2, Some(block_hash));
+        tc.round_state.precommits.insert(3, Some(block_hash));
+
+        // Pre-attest val-1 and val-2 only (2000 stake; strict 2/3 of
+        // 3000 is >2000, so 2-of-3 is NOT supermajority). DA quorum is
+        // BLOCKED at this point.
+        inject_da_att(&mut tc, 10, [0xDAu8; 32], 1, 1000);
+        inject_da_att(&mut tc, 10, [0xDAu8; 32], 2, 1000);
+        assert!(
+            !tc.has_da_supermajority(10),
+            "precondition: 2-of-3 attestations must NOT clear strict supermajority"
+        );
+
+        // Drive on_message with a signed DAAttestation from val-3 —
+        // this brings attested_stake to 3000 (full quorum). The fix
+        // path should detect the just-reached supermajority + the
+        // stuck Precommit state and emit CommitBlock immediately.
+        let msg = signed_da_attestation_msg(10, [0xDAu8; 32], 3, 1000, &kp3);
+        let actions = tc.on_message(msg);
+
+        // POST: supermajority is now reached.
+        assert!(
+            tc.has_da_supermajority(10),
+            "post-fix: 3-of-3 attestations must clear strict supermajority"
+        );
+
+        // The fix: on_message MUST emit CommitBlock for the proposed
+        // block.
+        let committed = actions
+            .iter()
+            .find_map(|a| {
+                if let ConsensusAction::CommitBlock(b) = a {
+                    Some(b.number)
+                } else {
+                    None
+                }
+            });
+        assert_eq!(
+            committed,
+            Some(10),
+            "47a379e1 regression: late DA attestation tipping supermajority MUST emit CommitBlock(h=10); actions: {:?}",
+            actions.iter().map(|a| match a {
+                ConsensusAction::CommitBlock(_) => "CommitBlock",
+                ConsensusAction::RequestSync(_, _) => "RequestSync",
+                ConsensusAction::BroadcastMessage(_) => "BroadcastMessage",
+                _ => "Other",
+            }).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            tc.round_state.phase,
+            Phase::Commit,
+            "phase must advance to Commit after the retrigger fires"
+        );
+    }
+
+    /// REGRESSION (commits `5773fc5e` + `dca50704`): a message at
+    /// height H+1 received while we're stuck at P2-04 (Precommit phase
+    /// + proposed_block.is_some()) must emit `RequestSync(H, H+1)` so
+    /// we can pull the missed block from the peer that committed it
+    /// without us. The upper bound MUST include block H (i.e.
+    /// `to = H + 1`, not `to = H` which was the dca50704 off-by-one
+    /// that masked 5773fc5e's intent).
+    #[test]
+    fn p2_04_gap_one_stuck_triggers_sync_request_with_correct_bound() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
+
+        // Stuck at h=10 with a proposed_block (mirrors the production
+        // race: M1 was the proposer, M2/M3 raced ahead and committed,
+        // M1's P2-04 gate held its own commit).
+        let block = make_block_with_data_root(10, [0u8; 32]);
+        tc.height = 10;
+        tc.round_state.proposed_block = Some(block);
+        tc.round_state.phase = Phase::Precommit;
+
+        // Peer sends a Prevote at h=11 (= self.height + 1). The
+        // pre-fix code would skip sync on gap=1; the 5773fc5e fix
+        // detects we're stuck-at-P2-04 and triggers sync; the
+        // dca50704 fix sets the bound so block 10 IS in the served
+        // range.
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 11,
+            round: 0,
+            block_hash: Some([0xEEu8; 32]),
+            validator_id: 2,
+            bls_signature: None,
+        });
+
+        // Find the RequestSync action and verify its bounds.
+        let sync_bounds = actions.iter().find_map(|a| {
+            if let ConsensusAction::RequestSync(from, to) = a {
+                Some((*from, *to))
+            } else {
+                None
+            }
+        });
+        assert!(
+            sync_bounds.is_some(),
+            "5773fc5e regression: gap=1 stuck-at-P2-04 MUST emit RequestSync; actions: {}",
+            actions.len()
+        );
+        let (from, to) = sync_bounds.unwrap();
+        assert_eq!(from, 10, "RequestSync.from should be self.height (10)");
+        assert!(
+            to >= 11,
+            "dca50704 regression: RequestSync.to MUST be >= self.height + 1 to include block 10 (got from={} to={}); empty [h,h) range was the off-by-one bug",
+            from, to
+        );
+    }
+
+    /// REGRESSION control: when we're NOT stuck at P2-04 (no
+    /// proposed_block, or not in Precommit phase), gap=1 must NOT
+    /// trigger sync — the original behavior is preserved (precommit
+    /// gossip catches us up). Pins that the 5773fc5e widening is
+    /// scoped to the stuck-state branch only.
+    #[test]
+    fn p2_04_gap_one_no_sync_when_not_stuck() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
+
+        // Stuck-shape preconditions ABSENT: no proposed_block, phase=Propose.
+        tc.height = 10;
+        tc.round_state.proposed_block = None;
+        tc.round_state.phase = Phase::Propose;
+
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 11,
+            round: 0,
+            block_hash: Some([0xEEu8; 32]),
+            validator_id: 2,
+            bls_signature: None,
+        });
+
+        let has_sync = actions
+            .iter()
+            .any(|a| matches!(a, ConsensusAction::RequestSync(_, _)));
+        assert!(
+            !has_sync,
+            "control: gap=1 without P2-04 stuck-state MUST NOT trigger sync; saw {} actions",
+            actions.len()
+        );
+    }
+}
