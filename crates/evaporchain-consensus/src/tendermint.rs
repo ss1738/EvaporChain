@@ -25778,6 +25778,200 @@ mod t06_bls_signed_equivocation_regression {
         );
     }
 
+    /// T0.6-S7 — Symmetric to S6 but on the PREVOTE path. The prevote
+    /// handler (`tendermint.rs:5761`) has the same structure as the
+    /// precommit handler: BLS verify gate first (line 5782), then
+    /// equivocation gate (line 5816). The only differences:
+    /// `bls_vote_message` is called with phase=`"prevote"` (vs
+    /// `"precommit"`), and the slash counter increments
+    /// `round_state.prevotes` (vs `precommits`).
+    ///
+    /// This test pins the prevote-path slash + jail with REAL BLS sigs.
+    #[test]
+    fn t06_scenario_7_bls_signed_prevote_equivocation_slashes_and_jails() {
+        let kp3 = validator_kp(3);
+        let pk3_bytes = kp3.public_key_bytes().0;
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        let mut v3 = ValidatorInfo::new(3, 8000, [3u8; 32]);
+        v3.bls_public_key = Some(pk3_bytes);
+        vs.add_validator(v3);
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
+
+        let initial_stake = tc.validator_set().get(3).unwrap().stake;
+        assert_eq!(initial_stake, 8000);
+
+        let hash_a = [0xAAu8; 32];
+        let hash_b = [0xBBu8; 32];
+        // Phase string is "prevote" (NOT "precommit") — the production
+        // signer uses the same `bls_vote_message` with a different
+        // phase to ensure prevote and precommit signatures aren't
+        // interchangeable.
+        let msg_a = TendermintConsensus::bls_vote_message(
+            &tc.chain_id,
+            1,
+            0,
+            &Some(hash_a),
+            "prevote",
+        );
+        let msg_b = TendermintConsensus::bls_vote_message(
+            &tc.chain_id,
+            1,
+            0,
+            &Some(hash_b),
+            "prevote",
+        );
+        let sig_a = kp3.sign(&msg_a).0;
+        let sig_b = kp3.sign(&msg_b).0;
+
+        // First prevote — valid sig + new vote → accepted.
+        let actions_a = tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some(hash_a),
+            validator_id: 3,
+            bls_signature: Some(sig_a),
+        });
+        assert!(
+            !tc.validator_set().get(3).unwrap().jailed,
+            "validator must NOT be jailed after first valid prevote; actions: {}",
+            actions_a.len()
+        );
+
+        // Second prevote at SAME (height, round) for a DIFFERENT
+        // block_hash, signed validly by the SAME key → equivocation.
+        let actions_b = tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some(hash_b),
+            validator_id: 3,
+            bls_signature: Some(sig_b),
+        });
+        assert!(
+            actions_b.is_empty(),
+            "BLS-signed conflicting prevote MUST be rejected; got {} actions",
+            actions_b.len()
+        );
+
+        let v = tc
+            .validator_set()
+            .get(3)
+            .expect("equivocating validator must remain in set (jailed)");
+        assert_eq!(
+            v.stake, 0,
+            "BLS-signed prevote-equivocator MUST be fully slashed"
+        );
+        assert!(
+            v.jailed,
+            "BLS-signed prevote-equivocator MUST be jailed"
+        );
+    }
+
+    /// T0.6-S7 control: prevote-path verify rejection (mirror of the
+    /// precommit S6 control). Attacker signs with a DIFFERENT keypair
+    /// → BLS-verify gate rejects BEFORE the equivocation gate; no slash.
+    #[test]
+    fn t06_scenario_7_control_invalid_bls_sig_on_prevote_rejected_before_equivocation_check() {
+        let kp3 = validator_kp(3);
+        let pk3_bytes = kp3.public_key_bytes().0;
+        let attacker_kp = validator_kp(99);
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        let mut v3 = ValidatorInfo::new(3, 8000, [3u8; 32]);
+        v3.bls_public_key = Some(pk3_bytes);
+        vs.add_validator(v3);
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
+
+        let hash_a = [0xAAu8; 32];
+        let msg_a = TendermintConsensus::bls_vote_message(
+            &tc.chain_id,
+            1,
+            0,
+            &Some(hash_a),
+            "prevote",
+        );
+        let forged_sig = attacker_kp.sign(&msg_a).0;
+
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some(hash_a),
+            validator_id: 3,
+            bls_signature: Some(forged_sig),
+        });
+
+        assert!(actions.is_empty(), "invalid BLS sig on prevote MUST be rejected");
+        let v = tc.validator_set().get(3).unwrap();
+        assert!(
+            !v.jailed,
+            "BLS-verify rejection MUST NOT slash on prevote path"
+        );
+        assert_eq!(v.stake, 8000, "stake unchanged when prevote rejected at BLS verify");
+    }
+
+    /// T0.6 cross-phase pin: a precommit signature signed with
+    /// `phase="prevote"` (or vice versa) must be rejected. The
+    /// production `bls_vote_message` uses the phase string in the
+    /// signed message to make prevote / precommit signatures
+    /// non-interchangeable — otherwise an attacker could replay a
+    /// prevote sig as a precommit (or the reverse) and bypass the
+    /// equivocation check on the OTHER vote bucket. This control
+    /// pins that property.
+    #[test]
+    fn t06_phase_string_prevents_cross_phase_sig_replay() {
+        let kp3 = validator_kp(3);
+
+        // Sign with phase="prevote" but submit as Precommit. The
+        // verifier will reconstruct the message with phase="precommit"
+        // and the signature won't match.
+        let hash_a = [0xAAu8; 32];
+        let prevote_msg = TendermintConsensus::bls_vote_message(
+            "test-chain",
+            1,
+            0,
+            &Some(hash_a),
+            "prevote",
+        );
+        let precommit_msg = TendermintConsensus::bls_vote_message(
+            "test-chain",
+            1,
+            0,
+            &Some(hash_a),
+            "precommit",
+        );
+        // The two messages MUST differ in bytes (otherwise the phase
+        // string isn't being committed to the sig).
+        assert_ne!(
+            prevote_msg, precommit_msg,
+            "phase string must be in the signed message bytes — otherwise sig replay is trivial"
+        );
+
+        // A signature on prevote_msg won't verify against precommit_msg.
+        let prevote_sig = kp3.sign(&prevote_msg);
+        let pk = kp3.public_key_bytes();
+        let verifies_against_prevote = evaporchain_crypto::signatures::BlsVerifier::verify(
+            &prevote_msg,
+            &prevote_sig,
+            &pk,
+        );
+        let verifies_against_precommit = evaporchain_crypto::signatures::BlsVerifier::verify(
+            &precommit_msg,
+            &prevote_sig,
+            &pk,
+        );
+        assert!(verifies_against_prevote, "sig should verify against its own phase");
+        assert!(
+            !verifies_against_precommit,
+            "prevote sig MUST NOT verify against precommit reconstruction"
+        );
+    }
+
     /// T0.6-S6 control: a precommit with an INVALID BLS signature
     /// (signed by a different keypair than the registered one) is
     /// rejected by the BLS verify gate BEFORE reaching the
