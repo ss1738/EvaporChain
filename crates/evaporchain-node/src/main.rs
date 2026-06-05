@@ -3404,6 +3404,31 @@ async fn main() -> Result<()> {
             );
             c.set_small_cluster_da_mode(true);
         }
+        // T0.6 Byzantine double-precommit injection (test-only).
+        // Set via EVAPORCHAIN_BYZANTINE_DOUBLE_PRECOMMIT=true. Mainnet
+        // chain_id refuses the flag — slashing-soak rehearsals only.
+        let want_byz = std::env::var("EVAPORCHAIN_BYZANTINE_DOUBLE_PRECOMMIT")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+        if want_byz {
+            if args.chain_id.starts_with("mainnet-")
+                || args.chain_id.starts_with("evaporchain-mainnet")
+            {
+                tracing::error!(
+                    chain_id = %args.chain_id,
+                    "REFUSING to enable Byzantine double-precommit on mainnet chain_id"
+                );
+            } else {
+                tracing::warn!(
+                    chain_id = %args.chain_id,
+                    validator_id = c.my_id,
+                    "TEST-ONLY: EVAPORCHAIN_BYZANTINE_DOUBLE_PRECOMMIT enabled. This validator \
+                     will emit conflicting precommits at every (h, r) — honest peers will slash \
+                     and jail it. ONLY for T0.6 slashing-soak rehearsals on non-mainnet chains."
+                );
+                c.byzantine_double_precommit = true;
+            }
+        }
     }
 
     // Restore mempool from disk

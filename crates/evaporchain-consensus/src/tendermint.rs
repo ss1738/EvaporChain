@@ -1192,6 +1192,24 @@ pub struct TendermintConsensus {
     /// this is left `false` and standard 2/3 supermajority of
     /// non-proposer stake is required.
     small_cluster_da_mode: bool,
+
+    /// **TEST-ONLY: Byzantine validator simulation.** When `true`, every
+    /// `Precommit` action emitted by this validator is shadowed by a
+    /// SECOND `Precommit` for a different (synthetic) block_hash at the
+    /// same (height, round). This produces a real equivocation that
+    /// honest validators detect via their `Precommit` handler at
+    /// `tendermint.rs:5891` and slash via Sanov-KL. The second precommit
+    /// is BLS-signed with the same key as the first (the equivocation
+    /// is in the block_hash, not the signature — matching the
+    /// `t06_scenario_6` regression test contract).
+    ///
+    /// Enabled at boot ONLY by the node binary reading the
+    /// `EVAPORCHAIN_BYZANTINE_DOUBLE_PRECOMMIT` env var. There is
+    /// **no governance path** to set this — it is a build-time flag
+    /// exercised in slashing-soak rehearsals (T0.6 lane). Mainnet
+    /// binaries should refuse to start with this set (the node binary
+    /// gates it behind a non-mainnet chain_id at startup).
+    pub byzantine_double_precommit: bool,
 }
 
 /// Cap on the per-validator block-production timing ring buffer kept on
@@ -1322,6 +1340,7 @@ impl TendermintConsensus {
             draining: false,
             drain_started_at_epoch: None,
             small_cluster_da_mode: false,
+            byzantine_double_precommit: false,
         }
     }
 
@@ -3825,6 +3844,7 @@ impl TendermintConsensus {
             draining: false,
             drain_started_at_epoch: None,
             small_cluster_da_mode: false,
+            byzantine_double_precommit: false,
         }
     }
 
@@ -4662,6 +4682,50 @@ impl TendermintConsensus {
                         };
                         actions.push(ConsensusAction::BroadcastMessage(precommit));
                         self.round_state.precommits.insert(self.my_id, hash);
+
+                        // TEST-ONLY: Byzantine double-precommit injection.
+                        // Gated by `byzantine_double_precommit` (set from
+                        // EVAPORCHAIN_BYZANTINE_DOUBLE_PRECOMMIT env var
+                        // by the node binary at boot). When set, also
+                        // emit a SECOND precommit at the same (height,
+                        // round) for a SYNTHETIC block_hash, BLS-signed
+                        // with the same key. The second hash is
+                        // deterministically derived from `self.my_id` and
+                        // the legitimate hash so the equivocation is
+                        // observable + bit-stable across nodes for
+                        // diagnostic logs. Honest peers detect the
+                        // conflict and slash via the equivocation gate
+                        // at `tendermint.rs:5946`. Used in the T0.6
+                        // consensus-auto-slashing live-cluster soak.
+                        if self.byzantine_double_precommit {
+                            if let Some(legit) = hash {
+                                let mut fake = legit;
+                                // Flip bytes deterministically per validator.
+                                fake[0] ^= 0xFF;
+                                fake[1] ^= self.my_id as u8;
+                                let fake_hash = Some(fake);
+                                let fake_sig = self.bls_sign_vote(
+                                    self.height,
+                                    self.round_state.round,
+                                    &fake_hash,
+                                    "precommit",
+                                );
+                                let byz_precommit = ConsensusMessage::Precommit {
+                                    height: self.height,
+                                    round: self.round_state.round,
+                                    block_hash: fake_hash,
+                                    validator_id: self.my_id,
+                                    bls_signature: fake_sig,
+                                };
+                                warn!(
+                                    validator = self.my_id,
+                                    height = self.height,
+                                    round = self.round_state.round,
+                                    "BYZANTINE: emitting SECOND conflicting precommit (test-only)"
+                                );
+                                actions.push(ConsensusAction::BroadcastMessage(byz_precommit));
+                            }
+                        }
                     }
                     self.round_state.phase = Phase::Precommit;
                     self.round_state.phase_start = Instant::now();
