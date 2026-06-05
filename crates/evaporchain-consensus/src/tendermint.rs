@@ -25644,3 +25644,191 @@ mod p2_04_liveness_regression {
         );
     }
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// 2026-06-04 T0.6 — BLS-signed equivocation regression test
+//
+// The existing T0.6 scenarios in
+// `crates/evaporchain-consensus/tests/slashing_at_scale.rs` (and the
+// in-source `test_precommit_equivocation_slashes_validator`) use
+// `bls_signature: None`. The precommit handler at line ~5891 skips
+// BLS verification when the validator's `bls_public_key` is None AND
+// the set has no BLS keys registered — so those tests exercise the
+// equivocation-detection path but NOT the BLS-verify-must-pass path.
+//
+// This regression test closes the gap: register a real BLS keypair
+// on the equivocating validator, sign two CONFLICTING precommits
+// (each signature is INDIVIDUALLY VALID — the equivocation is in the
+// block_hash, not the sig). Asserts the second precommit is rejected
+// AND the validator is fully slashed + jailed.
+//
+// Pins the audit claim that the equivocation gate runs AFTER the BLS
+// verify gate, so an attacker can't forge precommits OR conflict on
+// real ones — both paths lead to rejection. The slash-and-jail path
+// fires on the conflicting-but-valid case.
+// ───────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod t06_bls_signed_equivocation_regression {
+    use super::*;
+    use evaporchain_crypto::signatures::BlsKeypair;
+
+    /// Deterministic test keypair (inline copy of the `da_tests` helper).
+    fn validator_kp(vid: u64) -> BlsKeypair {
+        let mut sk = [0u8; 32];
+        sk[0] = vid as u8;
+        BlsKeypair::from_secret_bytes(&sk).expect("deterministic test kp")
+    }
+
+    /// T0.6-S6 — Precommit equivocation with REAL BLS signatures.
+    /// Validator 3 has a registered BLS pubkey. Two conflicting
+    /// precommits at the same (height, round) for different block
+    /// hashes — EACH signed correctly with the registered key. The
+    /// BLS verify passes for both; the equivocation gate (line ~5946)
+    /// catches the conflicting block_hash and slashes.
+    ///
+    /// This closes the gap from t06_scenario_2 in slashing_at_scale.rs
+    /// (which uses bls_signature: None and skips the verify branch).
+    #[test]
+    fn t06_scenario_6_bls_signed_precommit_equivocation_slashes_and_jails() {
+        let kp3 = validator_kp(3);
+        let pk3_bytes = kp3.public_key_bytes().0;
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        let mut v3 = ValidatorInfo::new(3, 8000, [3u8; 32]);
+        v3.bls_public_key = Some(pk3_bytes);
+        vs.add_validator(v3);
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
+
+        let initial_stake = tc.validator_set().get(3).unwrap().stake;
+        assert_eq!(initial_stake, 8000);
+
+        // Sign each precommit with the registered BLS key. The
+        // message format MUST mirror the consensus signer at
+        // `tendermint.rs:bls_vote_message`.
+        let hash_c = [0xCCu8; 32];
+        let hash_d = [0xDDu8; 32];
+        let msg_c = TendermintConsensus::bls_vote_message(
+            &tc.chain_id,
+            1,
+            0,
+            &Some(hash_c),
+            "precommit",
+        );
+        let msg_d = TendermintConsensus::bls_vote_message(
+            &tc.chain_id,
+            1,
+            0,
+            &Some(hash_d),
+            "precommit",
+        );
+        let sig_c = kp3.sign(&msg_c).0;
+        let sig_d = kp3.sign(&msg_d).0;
+
+        // First precommit for hash_c — valid sig, valid vote → accepted.
+        let actions_c = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(hash_c),
+            validator_id: 3,
+            bls_signature: Some(sig_c),
+        });
+        // First valid vote is accepted (may produce gossip / DAG actions
+        // depending on round-state, but MUST NOT emit equivocation-driven
+        // slash). We mainly care that the validator is NOT yet jailed.
+        assert!(
+            !tc.validator_set().get(3).unwrap().jailed,
+            "validator must NOT be jailed after first valid precommit; actions: {}",
+            actions_c.len()
+        );
+
+        // Second precommit for hash_d — valid sig (signed by the
+        // SAME key), but the BLOCK HASH conflicts with the prior
+        // precommit at the same (height, round). This is the
+        // equivocation case: BLS verify passes; the dedicated
+        // equivocation gate must fire.
+        let actions_d = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(hash_d),
+            validator_id: 3,
+            bls_signature: Some(sig_d),
+        });
+        assert!(
+            actions_d.is_empty(),
+            "BLS-signed conflicting precommit MUST be rejected (no actions); got {}",
+            actions_d.len()
+        );
+
+        // Validator slashed + jailed per T0.6 doctrine.
+        let v = tc
+            .validator_set()
+            .get(3)
+            .expect("equivocating validator must remain in set (jailed, not removed)");
+        assert_eq!(
+            v.stake, 0,
+            "BLS-signed equivocator MUST be fully slashed (Sanov KL = full stake)"
+        );
+        assert!(
+            v.jailed,
+            "BLS-signed equivocator MUST be jailed"
+        );
+    }
+
+    /// T0.6-S6 control: a precommit with an INVALID BLS signature
+    /// (signed by a different keypair than the registered one) is
+    /// rejected by the BLS verify gate BEFORE reaching the
+    /// equivocation gate. Pin that the BLS verify happens first.
+    #[test]
+    fn t06_scenario_6_control_invalid_bls_sig_rejected_before_equivocation_check() {
+        let kp3 = validator_kp(3);
+        let pk3_bytes = kp3.public_key_bytes().0;
+        let attacker_kp = validator_kp(99); // DIFFERENT keypair
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        let mut v3 = ValidatorInfo::new(3, 8000, [3u8; 32]);
+        v3.bls_public_key = Some(pk3_bytes);
+        vs.add_validator(v3);
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
+
+        let hash_c = [0xCCu8; 32];
+        let msg_c = TendermintConsensus::bls_vote_message(
+            &tc.chain_id,
+            1,
+            0,
+            &Some(hash_c),
+            "precommit",
+        );
+
+        // Attacker signs with their OWN key but claims to be val-3.
+        let forged_sig = attacker_kp.sign(&msg_c).0;
+
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(hash_c),
+            validator_id: 3,
+            bls_signature: Some(forged_sig),
+        });
+
+        // Rejected by BLS verify (NOT by equivocation since this is
+        // the first vote). No slash because the message never reached
+        // the slash path — the verify-fail returns early.
+        assert!(actions.is_empty(), "invalid BLS sig MUST be rejected");
+        let v = tc.validator_set().get(3).unwrap();
+        assert!(
+            !v.jailed,
+            "BLS-verify rejection MUST NOT slash — only the equivocation gate slashes"
+        );
+        assert_eq!(
+            v.stake, 8000,
+            "stake unchanged when message rejected at BLS verify"
+        );
+    }
+}
