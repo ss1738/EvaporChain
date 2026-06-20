@@ -6,6 +6,26 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-06-20 (audit-grade polish) — Shard-sample WARN dedup + aligned retry timeout
+
+**Focus:** Audit-grade follow-up from the post-Byzantine honest soak. The first honest re-launch surfaced 464 "Shard sample request to X failed" warnings on M1 against a single flaky peer in ~30 min. Two pragmatic fixes commit `f9760337`:
+
+1. **WARN dedup per peer per cool-off window** (`recently_warned: HashMap<PeerId, Instant>` alongside the existing `recently_failed` map). First WARN per cool-off cycle still fires (signal preserved); subsequent ones in the same window go to `debug!()`. Applied to both Block sync and Shard sample OutboundFailure handlers.
+2. **Aligned `DA_SAMPLE_TIMEOUT` (5s → 10s)** with libp2p's `with_request_timeout(10s)` for the shard_sample protocol. The 5s value was causing the node binary to retry while libp2p still had the original request pending — every retry shipped a fresh libp2p request without canceling the first, doubling outstanding requests per sample.
+
+**Empirical comparison (M1 in particular):**
+
+| Run | Shard WARNs | Final h after ~5 min |
+|---|---|---|
+| Pre-fix (commit `dff78340`) | M1: **464**, M2: 8, M3: 89 | uneven 114/85/85 |
+| Post-fix (commit `f9760337`) | M1: **0**, M2: 0, M3: 1 | synchronous 125/140/154 |
+
+Both the log noise AND the per-block latency unevenness collapsed. The retry-overlap was creating a multiplicative explosion of in-flight requests that was the underlying cause of both symptoms.
+
+**Cluster state**: relaunched on commit `f9760337`, staying up indefinitely. All 3 honest, advancing past h=150+ with full 3/3 BFT quorum.
+
+---
+
 ## 2026-06-20 (T0.6 fully closed) — Consensus-automatic Byzantine slashing on the live cluster (15ms gossip-to-converge)
 
 **Focus:** Closed the remaining T0.6 gap from the 2026-06-04 admin-API report. Built + deployed a Byzantine-mode binary on M3 that emits real equivocating precommits; honest M1 + M2 detected via gossiped Precommit handler + equivocation gate, slashed M3 to 0 stake + jailed identically within 15 milliseconds. Full consensus-automatic slashing path demonstrated end-to-end on the live BFT cluster — no admin API, no operator action.
