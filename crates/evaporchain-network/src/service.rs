@@ -1536,6 +1536,16 @@ impl P2pNetworkService {
             const REQ_PEER_COOLOFF: Duration = Duration::from_secs(30);
             const REQ_FAIL_MAP_CAP: usize = 256;
             let mut recently_failed: HashMap<PeerId, Instant> = HashMap::new();
+            // 2026-06-20 (T0.6 follow-up): dedupe per-peer outbound-failure
+            // WARNs by cool-off window. Without this, a flaky peer that times
+            // out N requests in 30s produces N "Shard sample request failed"
+            // warnings — observed M1 emit 464 in ~30 min during the 3-Mini
+            // honest soak. The signal (this peer is flaky) is the SAME
+            // every time; one WARN per cool-off cycle preserves visibility
+            // without drowning the log surface. Re-emission only after the
+            // cool-off has expired (i.e. after the peer is re-admitted to
+            // the healthy pool and fails again).
+            let mut recently_warned: HashMap<PeerId, Instant> = HashMap::new();
             let mut idle_score_timer = tokio::time::interval(Duration::from_secs(300));
             idle_score_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -1983,12 +1993,26 @@ impl P2pNetworkService {
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
                                 request_response::Event::OutboundFailure { peer, error, .. },
                             )) => {
-                                warn!("Block sync request to {peer} failed: {error}");
+                                // Dedupe WARN per peer per cool-off window.
+                                let now_inst = Instant::now();
+                                let warn_now = recently_warned
+                                    .get(&peer)
+                                    .map(|t| now_inst.duration_since(*t) >= REQ_PEER_COOLOFF)
+                                    .unwrap_or(true);
+                                if warn_now {
+                                    warn!("Block sync request to {peer} failed: {error}");
+                                    if recently_warned.len() >= REQ_FAIL_MAP_CAP {
+                                        recently_warned.clear();
+                                    }
+                                    recently_warned.insert(peer, now_inst);
+                                } else {
+                                    debug!("Block sync request to {peer} failed (dedup): {error}");
+                                }
                                 // Cool the failing peer out of the request rotation.
                                 if recently_failed.len() >= REQ_FAIL_MAP_CAP {
                                     recently_failed.clear();
                                 }
-                                recently_failed.insert(peer, Instant::now());
+                                recently_failed.insert(peer, now_inst);
                             }
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
                                 request_response::Event::InboundFailure { peer, error, .. },
@@ -2077,11 +2101,29 @@ impl P2pNetworkService {
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
                                 request_response::Event::OutboundFailure { peer, error, .. },
                             )) => {
-                                warn!("Shard sample request to {peer} failed: {error}");
+                                // Dedupe WARN per peer per cool-off window
+                                // (see comment on `recently_warned`). The
+                                // shard-sample path was the loudest case
+                                // empirically — 464 warns from a single
+                                // flaky peer in ~30 min of soak.
+                                let now_inst = Instant::now();
+                                let warn_now = recently_warned
+                                    .get(&peer)
+                                    .map(|t| now_inst.duration_since(*t) >= REQ_PEER_COOLOFF)
+                                    .unwrap_or(true);
+                                if warn_now {
+                                    warn!("Shard sample request to {peer} failed: {error}");
+                                    if recently_warned.len() >= REQ_FAIL_MAP_CAP {
+                                        recently_warned.clear();
+                                    }
+                                    recently_warned.insert(peer, now_inst);
+                                } else {
+                                    debug!("Shard sample request to {peer} failed (dedup): {error}");
+                                }
                                 if recently_failed.len() >= REQ_FAIL_MAP_CAP {
                                     recently_failed.clear();
                                 }
-                                recently_failed.insert(peer, Instant::now());
+                                recently_failed.insert(peer, now_inst);
                             }
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
                                 request_response::Event::InboundFailure { peer, error, .. },

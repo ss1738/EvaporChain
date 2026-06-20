@@ -75,9 +75,17 @@ struct PendingSample {
 /// have reached every peer's cache by the time we sample — extra retries
 /// give those peers time to ingest before we give up.
 const DA_SAMPLE_MAX_RETRIES: u8 = 5;
+// 2026-06-20 (T0.6 follow-up): align with libp2p shard_sample protocol
+// timeout (10s, set in evaporchain-network/src/service.rs:1319). The
+// previous 5s value caused this retry tick to fire BEFORE libp2p had
+// declared the request failed — every retry overlapped with the still-
+// pending original, doubling outstanding in-flight requests per sample
+// and producing back-to-back "Shard sample request failed" WARNs for
+// the same underlying timeout event. Aligning the two means each retry
+// is issued exactly when libp2p has declared the previous attempt failed.
 
 /// Timeout before retrying a DA sample request (5 seconds).
-const DA_SAMPLE_TIMEOUT: Duration = Duration::from_secs(5);
+const DA_SAMPLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Minimum DA confidence required before sending attestation.
 const DA_MIN_CONFIDENCE: f64 = 0.999;
