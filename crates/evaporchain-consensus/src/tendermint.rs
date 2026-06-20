@@ -5944,6 +5944,41 @@ impl TendermintConsensus {
                                 };
                                 actions.push(ConsensusAction::BroadcastMessage(precommit));
                                 self.round_state.precommits.insert(self.my_id, hash);
+
+                                // T0.6 Byzantine injection — per-msg precommit path
+                                // mirror of the tick-path injection at line ~4663.
+                                // Empirically the per-msg path fires FIRST in fast
+                                // commits (the tick polling lags); the tick-only
+                                // injection never tripped in the 2026-06-04 colo
+                                // soak. See FINDING discussion in the T0.6 report.
+                                if self.byzantine_double_precommit {
+                                    if let Some(legit) = hash {
+                                        let mut fake = legit;
+                                        fake[0] ^= 0xFF;
+                                        fake[1] ^= self.my_id as u8;
+                                        let fake_hash = Some(fake);
+                                        let fake_sig = self.bls_sign_vote(
+                                            self.height,
+                                            self.round_state.round,
+                                            &fake_hash,
+                                            "precommit",
+                                        );
+                                        let byz_precommit = ConsensusMessage::Precommit {
+                                            height: self.height,
+                                            round: self.round_state.round,
+                                            block_hash: fake_hash,
+                                            validator_id: self.my_id,
+                                            bls_signature: fake_sig,
+                                        };
+                                        warn!(
+                                            validator = self.my_id,
+                                            height = self.height,
+                                            round = self.round_state.round,
+                                            "BYZANTINE: emitting SECOND conflicting precommit (msg-path)"
+                                        );
+                                        actions.push(ConsensusAction::BroadcastMessage(byz_precommit));
+                                    }
+                                }
                             }
                             self.round_state.phase = Phase::Precommit;
                             self.round_state.phase_start = Instant::now();
